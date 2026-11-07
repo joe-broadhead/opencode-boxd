@@ -35,6 +35,8 @@ export interface WorkSummary {
 
 export interface FleetStatus {
   readonly snapshot: string
+  /** Whether the golden snapshot exists in the account; null when the listing could not be read. */
+  readonly snapshotPresent: boolean | null
   readonly works: readonly WorkSummary[]
   /** `oc-*` machines the account has that no open work records: a create that timed out, most likely. */
   readonly orphans: readonly string[]
@@ -42,8 +44,34 @@ export interface FleetStatus {
 
 type Awake = "hold" | "sleep"
 
+/** How long a snapshot listing is reused for status: a read that never wakes or bills, but is still a CLI call. */
+const SNAPSHOT_TTL_MS = 30_000
+
 export function createFleet(deps: Deps) {
   const snapshot = assertSnapshot(deps.snapshot)
+  /** The account's snapshot names, and when they were read. */
+  let snapshots: { at: number; names: Set<string> } | undefined
+
+  /** The snapshot names, from a cache unless `fresh`; undefined when the listing could not be read at all. */
+  async function snapshotNames(fresh: boolean): Promise<Set<string> | undefined> {
+    if (!fresh && snapshots && Date.now() - snapshots.at < SNAPSHOT_TTL_MS) return snapshots.names
+    try {
+      const listed = await deps.boxd.listSnapshots()
+      snapshots = { at: Date.now(), names: new Set(listed.map((item) => item.name)) }
+      return snapshots.names
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * Refuses to create a machine from a snapshot that is not in the account, before any create runs: a machine that
+   * boots from nothing bills and holds no session. An unreadable listing is not a refusal; the create reports its own.
+   */
+  async function requireSnapshot(): Promise<void> {
+    const names = await snapshotNames(true)
+    if (names && !names.has(snapshot)) throw boxdError("SNAPSHOT_MISSING", `The golden snapshot "${snapshot}" is not in this boxd account.`)
+  }
 
   const report = (code: string, message: string) => deps.report?.(`${code}: ${message} Next step: Restart OpenCode, then run /boxd-status.`)
 
@@ -131,9 +159,11 @@ export function createFleet(deps: Deps) {
     async status(): Promise<FleetStatus> {
       const works = await deps.ledger.list()
       const listed = await deps.boxd.list().catch(() => undefined)
+      const names = await snapshotNames(false)
       const known = new Set(works.map((work) => work.machine))
       return {
         snapshot,
+        snapshotPresent: names ? names.has(snapshot) : null,
         works: await Promise.all(
           works.map(async (work) => {
             const machine = await deps.boxd.get(work.machine).catch(() => undefined)
@@ -162,6 +192,7 @@ export function createFleet(deps: Deps) {
       let machine = await deps.boxd.get(name)
       refuseUnsafe(machine)
       if (machine.status === "missing" || machine.status === "destroyed") {
+        await requireSnapshot()
         // The intent is recorded before the create: a create that times out must never be an unowned billing machine.
         await deps.ledger.mutate(input.workId, (current) => ({
           workId: input.workId,
@@ -359,6 +390,7 @@ export function createFleet(deps: Deps) {
       }
       let recreated = false
       if (machine.status === "missing" || machine.status === "destroyed") {
+        await requireSnapshot()
         machine = await create(work.machine, work.workId)
         if (machine.sharing === "shared" || machine.isolated) await removeRefused(work.machine)
         recreated = true

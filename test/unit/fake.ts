@@ -36,7 +36,7 @@ export async function world(options?: {
     prover,
     ledger: new Ledger(root),
     now: () => `2026-11-07T12:00:${String(tick++).padStart(2, "0")}.000Z`,
-    snapshot: options && "snapshot" in options ? options.snapshot! : "opencode-claude-final",
+    snapshot: options && "snapshot" in options ? options.snapshot! : "opencode-golden",
     hostVersion: options && "hostVersion" in options ? options.hostVersion! : HOST,
     ...(options?.report ? { report: options.report } : {}),
   }
@@ -50,7 +50,7 @@ export function transfer(id: string, parentID?: string, text = "hello"): Transfe
 export class FakeBoxd implements BoxdPort {
   readonly calls: string[] = []
   readonly machines = new Map<string, MachineInfo>()
-  readonly snapshots: Array<{ name: string; storage: string; status: string }> = []
+  readonly snapshots: Array<{ name: string; storage: string; status: string }> = [{ name: "opencode-golden", storage: "local", status: "ready" }]
   /** How the next `create` answers: normally, by timing out while the machine lands, by timing out with nothing, or shared. */
   createBehaviour: "ok" | "timeout-then-exists" | "timeout-missing" | "shared" = "ok"
   /** Machines the account has that no ledger records. */

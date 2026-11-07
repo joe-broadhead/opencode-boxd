@@ -8,9 +8,9 @@ const host = { version: "2.2.6", range: ">=2.2.3 <2.3.0", tested: true }
 
 const facts = (overrides: Partial<StatusFacts> = {}): StatusFacts => ({
   host,
-  snapshot: "opencode-claude-final",
+  snapshot: "opencode-golden",
   guestVersion: "2.2.6",
-  ledger: { snapshot: "opencode-claude-final", works: [], orphans: [] },
+  ledger: { snapshot: "opencode-golden", works: [], orphans: [], snapshotPresent: true },
   tools: TOOLS.map((tool) => tool.id),
   agents: [{ id: "build", permissions: [{ action: "*", resource: "*", effect: "allow" }, ...defaultRules()] }],
   problems: [],
@@ -21,6 +21,20 @@ describe("the status model", () => {
   test("carries the shared fields under the family's names", () => {
     const status = buildStatus(facts())
     expect(status).toMatchObject({ version: VERSION, state: "connected", unguardedAgents: [], host, nextStep: "Nothing to do." })
+  })
+
+  test("names the golden-image doc, before anything else, when the snapshot is missing", () => {
+    const status = buildStatus(facts({ ledger: { snapshot: "opencode-golden", works: [], orphans: [], snapshotPresent: false } }))
+    expect(status.snapshotPresent).toBe(false)
+    expect(status.nextStep).toContain("docs/golden-image.md")
+    expect(formatStatus(status)).toContain("- Snapshot: opencode-golden (not in this boxd account)")
+  })
+
+  test("an unreadable snapshot list is reported as unchecked, with no next step", () => {
+    const status = buildStatus(facts({ ledger: { snapshot: "opencode-golden", works: [], orphans: [], snapshotPresent: null } }))
+    expect(status.snapshotPresent).toBeNull()
+    expect(formatStatus(status)).toContain("(not checked")
+    expect(status.nextStep).toBe("Nothing to do.")
   })
 
   test("is failed, with a reason, when the ledger cannot be read", () => {
@@ -34,8 +48,9 @@ describe("the status model", () => {
     const status = buildStatus(
       facts({
         ledger: {
-          snapshot: "opencode-claude-final",
+          snapshot: "opencode-golden",
           orphans: [],
+          snapshotPresent: true,
           works: [
             { workId: "review-api", machine: "oc-review-api", sessionId: "ses_1", proof: "fresh", dirty: false, machineStatus: "running", warnings: [] },
             { workId: "docs", machine: "oc-docs", sessionId: null, proof: "missing", dirty: false, machineStatus: "hibernated", warnings: [] },
@@ -75,7 +90,7 @@ describe("the status model", () => {
       .map((line) => line.slice(2, line.indexOf(":", 3) === -1 ? undefined : line.indexOf(":", 3)))
     expect(labels).toEqual(["Connection", "Account", "Access", "Snapshot", "Guest", "Works", "Tools", "Agents without default rules", "OpenCode", "Next step"])
     expect(text.match(/- Next step:/g)).toHaveLength(1)
-    expect(text).toContain("- Snapshot: opencode-claude-final")
+    expect(text).toContain("- Snapshot: opencode-golden")
     expect(text).toContain("the 7 machine changes")
   })
 
@@ -93,9 +108,9 @@ describe("reading the facts", () => {
   test("counts only the boxd namespace's tools", async () => {
     const status = await readStatus(context([], [{ id: "boxd_status", name: "status", options: { namespace: "boxd" } }, { id: "jobs_status", name: "jobs_status", options: { namespace: "jobs" } }]), {
       host,
-      snapshot: "opencode-claude-final",
+      snapshot: "opencode-golden",
       guestVersion: "2.2.6",
-      ledger: async () => ({ snapshot: "opencode-claude-final", works: [], orphans: [] }),
+      ledger: async () => ({ snapshot: "opencode-golden", works: [], orphans: [], snapshotPresent: true }),
     })
     expect(status.tools).toBe(1)
     expect(status.unknownCount).toBe(0)
@@ -104,7 +119,7 @@ describe("reading the facts", () => {
   test("a ledger that throws is the failed state, not a crash", async () => {
     const status = await readStatus(context([], []), {
       host,
-      snapshot: "opencode-claude-final",
+      snapshot: "opencode-golden",
       guestVersion: "2.2.6",
       ledger: async () => {
         throw new Error("EACCES: scandir the ledger directory")

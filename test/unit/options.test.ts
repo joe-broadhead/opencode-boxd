@@ -5,8 +5,8 @@ import { SUPPORTED_HOST, TESTED_HOSTS } from "../../src/constants.js"
 
 describe("plugin options", () => {
   test("defaults to the golden snapshot and a tested host", () => {
-    expect(parseOptions(undefined)).toEqual({ snapshot: "opencode-claude-final", allowUntestedHost: false })
-    expect(parseOptions({})).toEqual({ snapshot: "opencode-claude-final", allowUntestedHost: false })
+    expect(parseOptions(undefined)).toEqual({ snapshot: "opencode-golden", allowUntestedHost: false })
+    expect(parseOptions({})).toEqual({ snapshot: "opencode-golden", allowUntestedHost: false })
   })
 
   test("takes a snapshot name and the opt-in", () => {

@@ -27,6 +27,7 @@ export const CODES = {
   EXPORT_INVALID: "Call boxd_harvest again from an idle session. Do not invent a transcript.",
   PARENT_MISSING: "Harvest the whole session tree again, parents first, then move it.",
   SNAPSHOT_EXISTS: "Pick a new snapshot name: snapshots are immutable.",
+  SNAPSHOT_MISSING: "Create the golden image described in docs/golden-image.md, then set the snapshot option to its name.",
   LEDGER_FAILED: "Check that the ledger folder is writable, then restart OpenCode.",
   UNTRACKED: "Commit or delete the paths the message names on the machine, harvest again, then drop. Or hibernate, which keeps the disk.",
   GIT_UNKNOWN: "Commit the work in a git repository on the machine, harvest again, then drop. Or hibernate, which keeps the disk.",

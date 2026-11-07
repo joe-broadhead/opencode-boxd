@@ -7,7 +7,7 @@ import { join } from "node:path"
 import { Ledger, type Work } from "../../src/ledger.js"
 import { transfer } from "./fake.js"
 
-const work = (workId: string): Work => ({ workId, machine: `oc-${workId}`, snapshot: "opencode-claude-final", directory: "/work/x" })
+const work = (workId: string): Work => ({ workId, machine: `oc-${workId}`, snapshot: "opencode-golden", directory: "/work/x" })
 
 const fresh = () => mkdtemp(join(tmpdir(), "boxd-ledger-"))
 

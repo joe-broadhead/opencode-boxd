@@ -188,7 +188,7 @@ describe.each(TESTED_HOSTS)("installed alone, in stock OpenCode %s", (version) =
         version: pkg.version,
         state: "connected",
         host: { version, range: SUPPORTED_HOST, tested: true },
-        snapshot: "opencode-claude-final",
+        snapshot: "opencode-golden",
         guestVersion: version,
         openWorks: 0,
         unknownCount: 0,

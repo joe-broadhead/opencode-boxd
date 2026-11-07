@@ -25,6 +25,8 @@ export const HOST_VERSION = (JSON.parse(readFileSync(join(SDK, "package.json"), 
 /** Removes the temp root; call once after every host in the file has closed. */
 export const cleanup = () => rmSync(root, { recursive: true, force: true })
 
+const GOLDEN = [{ name: "opencode-golden", storage: "local", status: "ready" }]
+
 export interface FakeBoxd {
   readonly bin: string
   readonly state: string
@@ -33,6 +35,9 @@ export interface FakeBoxd {
   machines(): Record<string, { name: string; status: string; sharing: string; isolated: boolean }>
   /** Puts a machine in a state before the plugin is asked anything. */
   seed(name: string, machine: { status: string; sharing?: string; isolated?: boolean }): void
+  /** The account's snapshots; `opencode-golden` is there unless a test removes it. */
+  snapshots(): Array<{ name: string; storage: string; status: string }>
+  setSnapshots(names: readonly string[]): void
 }
 
 /** The fake CLI, its state file and a shell shim, all in the temp root. */
@@ -45,9 +50,15 @@ export function startFakeBoxd(guest: FakeGuest, version = HOST_VERSION): FakeBox
   const bin = join(dir, "boxd")
   writeFileSync(bin, `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(script)} "$@"\n`)
   chmodSync(bin, 0o755)
-  const write = (machines: Record<string, unknown>) => writeFileSync(state, JSON.stringify({ machines, snapshots: [], log: [], version, port: guest.port }))
+  const write = (machines: Record<string, unknown>, snapshots = GOLDEN) =>
+    writeFileSync(state, JSON.stringify({ machines, snapshots, log: [], version, port: guest.port }))
   write({})
-  const read = () => JSON.parse(readFileSync(state, "utf8")) as { machines: Record<string, { name: string; status: string; sharing: string; isolated: boolean }>; log: string[] }
+  const read = () =>
+    JSON.parse(readFileSync(state, "utf8")) as {
+      machines: Record<string, { name: string; status: string; sharing: string; isolated: boolean }>
+      snapshots: Array<{ name: string; storage: string; status: string }>
+      log: string[]
+    }
   const previousPath = process.env.PATH
   process.env.PATH = `${dir}:${previousPath ?? ""}`
   process.env.BOXD_FAKE_STATE = state
@@ -60,7 +71,12 @@ export function startFakeBoxd(guest: FakeGuest, version = HOST_VERSION): FakeBox
     seed: (name, machine) => {
       const current = read()
       current.machines[name] = { name, status: machine.status, sharing: machine.sharing ?? "private", isolated: machine.isolated ?? false }
-      write(current.machines)
+      write(current.machines, current.snapshots)
+    },
+    snapshots: () => read().snapshots,
+    setSnapshots: (names) => {
+      const current = read()
+      write(current.machines, names.map((name) => ({ name, storage: "local", status: "ready" })))
     },
   }
 }

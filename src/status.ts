@@ -38,6 +38,8 @@ export interface Status {
   readonly error?: string
   readonly host: HostCheck
   readonly snapshot: string
+  /** Whether the golden snapshot exists in the account; null when the listing could not be read. */
+  readonly snapshotPresent: boolean | null
   /** The OpenCode version the machine must run: this laptop's own. */
   readonly guestVersion: string | null
   /** Every open work, with its proof state and the machine's state when boxd answered. */
@@ -91,6 +93,7 @@ export function buildStatus(facts: StatusFacts): Status {
     ...(facts.ledgerError ? { error: cut(shortReason(facts.ledgerError) ?? "no reason given", STATUS_LIMIT) } : {}),
     host: facts.host,
     snapshot: facts.snapshot,
+    snapshotPresent: facts.ledger?.snapshotPresent ?? null,
     guestVersion: facts.guestVersion,
     works,
     openWorks: works.length,
@@ -108,6 +111,10 @@ export function buildStatus(facts: StatusFacts): Status {
 
 function nextStepOf(status: Omit<Status, "nextStep">): string {
   if (status.state === "failed") return "Restart OpenCode, then run /boxd-status again."
+  // Without its golden image no machine can be created or rebuilt, so this comes before every other setup fix.
+  if (status.snapshotPresent === false) {
+    return `Create the golden image named "${status.snapshot}" as docs/golden-image.md describes, then set the snapshot option to it.`
+  }
   const rules = status.problems.find((problem) => problem.startsWith(RULES_NOT_ADDED))
   if (rules) return rules.split(" Next step: ")[1] ?? AGENTS_NEXT_STEP
   if (status.unguardedAgents.length) return AGENTS_NEXT_STEP
@@ -147,6 +154,13 @@ function toolsText({ tools, unknownCount, unknownTools }: Status) {
   return `${tools} available, ${unknownCount} unknown${names} (unknown tools ask before running)`
 }
 
+/** The Snapshot row: the configured image, and whether this account actually has it. */
+function snapshotText({ snapshot, snapshotPresent }: Status) {
+  if (snapshotPresent === false) return `${snapshot} (not in this boxd account)`
+  if (snapshotPresent === null) return `${snapshot} (not checked: the snapshot list could not be read)`
+  return `${snapshot} (present)`
+}
+
 /** The Works row: what is open, and what is not yet safe to sleep, image or drop. */
 function worksText({ openWorks, unharvested, warned, orphans, works }: Status) {
   const unowned = orphans.length ? `; machines no ledger records: ${list(orphans)}` : ""
@@ -181,7 +195,7 @@ export function formatStatus(status: Status) {
     `- Connection: ${connection}`,
     `- Account: not read: the plugin never reads your boxd account or credentials, and boxd_status runs one read-only machine get per open work`,
     `- Access: ${accessText(status)}`,
-    `- Snapshot: ${status.snapshot}`,
+    `- Snapshot: ${snapshotText(status)}`,
     `- Guest: must be OpenCode ${status.guestVersion ?? "unknown"}, this laptop's version; a job or a harvest checks it`,
     `- Works: ${worksText(status)}`,
     `- Tools: ${toolsText(status)}`,
@@ -238,7 +252,7 @@ export const StatusRpc = {
       input: { type: "object" },
       output: {
         type: "object",
-        required: ["version", "state", "host", "snapshot", "guestVersion", "works", "openWorks", "unharvested", "orphans", "warned", "tools", "unknownCount", "unknownTools", "unguardedAgents", "problems", "nextStep"],
+        required: ["version", "state", "host", "snapshot", "snapshotPresent", "guestVersion", "works", "openWorks", "unharvested", "orphans", "warned", "tools", "unknownCount", "unknownTools", "unguardedAgents", "problems", "nextStep"],
         properties: {
           version: { type: "string" },
           state: { enum: ["connected", "failed"] },
@@ -249,6 +263,7 @@ export const StatusRpc = {
             properties: { version: nullableString, range: { type: "string" }, tested: { type: "boolean" } },
           },
           snapshot: { type: "string" },
+          snapshotPresent: { type: ["boolean", "null"] },
           guestVersion: nullableString,
           works: {
             type: "array",

@@ -8,14 +8,14 @@ All options go in the plugin entry in `opencode.json`:
 {
   "plugins": [{
     "package": "@joe-broadhead/opencode-boxd",
-    "options": { "snapshot": "opencode-claude-final" }
+    "options": { "snapshot": "opencode-golden" }
   }]
 }
 ```
 
 | Option | Default | What it does |
 |---|---|---|
-| `snapshot` | `opencode-claude-final` | The golden snapshot every new machine boots from. A lowercase boxd snapshot name. |
+| `snapshot` | `opencode-golden` | The golden snapshot every new machine boots from. A lowercase boxd snapshot name. Build it as [golden-image.md](golden-image.md) describes. |
 | `allowUntestedHost` | `false` | Run on an OpenCode outside `>=2.2.3 <2.3.0`. Status then says the host is untested. |
 
 An unknown option, a snapshot name boxd would refuse, or a non-boolean `allowUntestedHost` stops the plugin with
@@ -58,6 +58,10 @@ would leave a machine billing with no way to clear it from the session.
   service is running, and never waits on one.
 - **The guest must run the same OpenCode as the laptop.** The plugin reads `opencode --version` on the machine and
   compares it with the host's own version.
+- **The snapshot is checked before a create.** `boxd_status` reads `boxd snapshots list --json` (cached for 30
+  seconds) and says whether the image is there. `boxd_ensure` and `boxd_resume` read it again before creating a machine
+  and refuse with `SNAPSHOT_MISSING`, so no machine boots from nothing. An unreadable listing is not a refusal: the
+  create reports its own error.
 - **Status reads, never wakes.** `boxd_status` runs one read-only `machine get` per open work and one `machine list`;
   `/boxd-status`, the `/boxd` dialog and the status RPC read the same. No read wakes a machine, because waking starts
   billing. The plugin never reads your boxd account or credentials.
@@ -101,6 +105,7 @@ errors pass through unchanged. No error, log or status line contains a token, a 
 | `EXPORT_INVALID` | An export is not in OpenCode's session shape. |
 | `PARENT_MISSING` | A child session was imported before its parent. |
 | `SNAPSHOT_EXISTS` | Snapshot names are immutable. |
+| `SNAPSHOT_MISSING` | The golden snapshot is not in this boxd account, so no machine is created. |
 | `LEDGER_FAILED` | A ledger read or write failed: a file system error, not a boxd one. |
 | `UNTRACKED` | The guest tree has untracked or ignored paths, which a stored patch cannot hold. |
 | `GIT_UNKNOWN` | The guest directory is not a git repository, so nothing about its files can be proven. |

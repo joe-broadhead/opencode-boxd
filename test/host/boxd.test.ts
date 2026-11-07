@@ -47,7 +47,7 @@ describe("the plugin on a stock host", () => {
 
       const text = await statusText(host, await session(host))
       expect(text).toContain("- Connection: connected")
-      expect(text).toContain("- Snapshot: opencode-claude-final")
+      expect(text).toContain("- Snapshot: opencode-golden")
       expect(text).toContain("- Next step: Nothing to do.")
       expect(text.split("\n").filter((line) => line.startsWith("- Next step:"))).toHaveLength(1)
     } finally {
@@ -147,6 +147,33 @@ describe("the plugin on a stock host", () => {
   })
 })
 
+describe("a create needs its golden image", () => {
+  test("with no golden snapshot, status says so, and ensure and resume refuse before any create", async () => {
+    const host = await startHost()
+    try {
+      host.boxd.setSnapshots([])
+      const build = await session(host)
+      const status = await statusThroughRpc(host)
+      expect(status).toMatchObject({ snapshot: "opencode-golden", snapshotPresent: false })
+      expect(String(status.nextStep)).toContain("docs/golden-image.md")
+
+      const before = host.boxd.calls().length
+      const refused = await attempt(host, build, "build", "boxd_ensure", "always", { workId: "review-api", directory: host.location.directory })
+      expect(refused.output).toMatchObject({ error: "SNAPSHOT_MISSING" })
+      expect(host.boxd.calls().slice(before).filter((call) => call.startsWith("machine new"))).toEqual([])
+      expect(host.boxd.machines()).toEqual({})
+
+      // Add the image, and the same call creates the machine. The ensure re-reads the listing, so status is fresh again.
+      host.boxd.setSnapshots(["opencode-golden"])
+      expect(await attempt(host, build, "build", "boxd_ensure", "always", { workId: "review-api", directory: host.location.directory })).toMatchObject({ ok: true })
+      expect(host.boxd.machines()["oc-review-api"]?.status).toBe("running")
+      expect((await statusThroughRpc(host)).snapshotPresent).toBe(true)
+    } finally {
+      await host.close()
+    }
+  })
+})
+
 describe("a read never bills, and a drop never loses a file", () => {
   test("boxd_job on a hibernated work reports asleep and the CLI never wakes it", async () => {
     const host = await startHost()
@@ -195,7 +222,7 @@ describe("the status RPC", () => {
       await attempt(host, build, "build", "boxd_ensure", "always", { workId: "review-api", directory: host.location.directory })
       host.boxd.seed("oc-review-api", { status: "hibernated" })
       const status = await statusThroughRpc(host)
-      expect(status).toMatchObject({ state: "connected", openWorks: 1, guestVersion: HOST_VERSION, snapshot: "opencode-claude-final", unknownCount: 0 })
+      expect(status).toMatchObject({ state: "connected", openWorks: 1, guestVersion: HOST_VERSION, snapshot: "opencode-golden", unknownCount: 0 })
       expect(status.works).toEqual([{ workId: "review-api", machine: "oc-review-api", sessionId: null, proof: "missing", dirty: false, machineStatus: "hibernated", warnings: [] }])
       expect(status.unharvested).toEqual(["review-api"])
       expect(String(status.nextStep)).toContain("boxd_harvest for review-api")

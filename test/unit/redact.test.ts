@@ -34,9 +34,9 @@ const host = { version: "2.2.6", range: ">=2.2.3 <2.3.0", tested: true }
 const status = (ledgerError?: string): Status =>
   buildStatus({
     host,
-    snapshot: "opencode-claude-final",
+    snapshot: "opencode-golden",
     guestVersion: "2.2.6",
-    ...(ledgerError ? { ledgerError } : { ledger: { snapshot: "opencode-claude-final", works: [], orphans: [] } }),
+    ...(ledgerError ? { ledgerError } : { ledger: { snapshot: "opencode-golden", works: [], orphans: [], snapshotPresent: true } }),
     tools: TOOLS.map((tool) => tool.id),
     agents: [{ id: "build", permissions: [{ action: "*", resource: "*", effect: "allow" }, ...defaultRules()] }],
     problems: [],

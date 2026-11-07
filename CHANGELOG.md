@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Every tool as a method of the `boxd.machines.tools` RPC, with its class, so a script can call it with no model.
 - A skill, `boxd`, and the `jelly` declaration with its icon.
 - The plugin runs on OpenCode 2.2.3, 2.2.4, 2.2.5 and 2.2.6. The guest must run the same version as the laptop.
+- [docs/golden-image.md](docs/golden-image.md): how to build the image every machine boots from, sign its OpenCode in to a
+  provider on the machine, and what a credential-holding snapshot discloses.
+- The `snapshot` option defaults to `opencode-golden`. Status says whether this account has it, and `boxd_ensure` and
+  `boxd_resume` refuse with `SNAPSHOT_MISSING` before creating a machine.
 
 ### Fixed
 

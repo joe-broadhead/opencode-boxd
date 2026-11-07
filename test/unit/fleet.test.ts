@@ -29,7 +29,7 @@ describe("the control plane", () => {
     const opened = await fleet.ensure({ workId: "review-api", repo: "https://github.com/joe-broadhead/example" })
     expect(opened).toMatchObject({ state: "ready", machine: "oc-review-api", guestVersion: "2.2.6" })
     expect(boxd.calls.some((call) => call.includes("--shared") || call.includes("isolated"))).toBe(false)
-    expect(boxd.calls).toContain("create oc-review-api opencode-claude-final")
+    expect(boxd.calls).toContain("create oc-review-api opencode-golden")
 
     const admitted = await fleet.submit({ workId: "review-api", text: "Add a health check." })
     expect(admitted).toMatchObject({ state: "admitted", sessionId: "ses_root_review-api" })
@@ -86,9 +86,9 @@ describe("the control plane", () => {
     await unharvested.fleet.submit({ workId: "review-api", text: "Still running." })
     await refusal(unharvested.fleet.image({ machine: "oc-review-api", name: "opencode-next" }), "NOT_PROVEN")
 
-    expect(createArgs("review-api", "opencode-claude-final").join(" ")).not.toContain("--shared")
-    expect(createArgs("review-api", "opencode-claude-final").join(" ")).not.toContain("--isolated")
-    expect(createArgs("review-api", "opencode-claude-final").join(" ")).not.toContain("--idle-ignore-outbound")
+    expect(createArgs("review-api", "opencode-golden").join(" ")).not.toContain("--shared")
+    expect(createArgs("review-api", "opencode-golden").join(" ")).not.toContain("--isolated")
+    expect(createArgs("review-api", "opencode-golden").join(" ")).not.toContain("--idle-ignore-outbound")
     expect(holdAwakeArgs("oc-review-api")).toContain(AWAKE_SECONDS)
     expect(holdAwakeArgs("oc-review-api")).not.toContain("0")
   })
@@ -129,7 +129,7 @@ describe("the control plane", () => {
     guest.serverUp = true
     const restarted = await fleet.resume({ workId: "review-api" })
     expect(restarted).toMatchObject({ resumed: "import", state: "ready" })
-    expect(boxd.calls.filter((call) => call.startsWith("create")).at(-1)).toBe("create oc-review-api opencode-claude-final")
+    expect(boxd.calls.filter((call) => call.startsWith("create")).at(-1)).toBe("create oc-review-api opencode-golden")
     expect(boxd.calls.some((call) => call.startsWith("snapshot"))).toBe(false)
     expect(guest.imports.map((item) => item.info.id)).toEqual(["ses_root_review-api", "ses_child_1"])
     await refusal(fleet.drop({ workId: "review-api" }), "NOT_PROVEN")
@@ -158,7 +158,7 @@ describe("the control plane", () => {
     await fleet.ensure({ workId: "review-api" })
     boxd.calls.length = 0
     const status = await fleet.status()
-    expect(status.snapshot).toBe("opencode-claude-final")
+    expect(status.snapshot).toBe("opencode-golden")
     expect(status.orphans).toEqual([])
     expect(status.works).toEqual([{ workId: "review-api", machine: "oc-review-api", sessionId: null, proof: "missing", dirty: false, machineStatus: "running", warnings: [] }])
     // One read-only machine read per work, plus one account listing for orphans: nothing that wakes or holds.

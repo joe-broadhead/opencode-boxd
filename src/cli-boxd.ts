@@ -32,7 +32,14 @@ export function cliBoxd(bin = "boxd"): BoxdPort {
       // `machine new --json` answers with boot, id, name, source and url only: no status, sharing or isolation. Read the
       // machine back, so a create that landed shared or isolated is refused before anything runs on it.
       const created = asRecord(parseJson(result.stdout))
-      return get(bin, String(created.name ?? input.name))
+      const name = String(created.name ?? input.name)
+      try {
+        return await get(bin, name)
+      } catch {
+        // The machine exists even though the read failed. Report it as starting, so the ledger records it instead of
+        // leaving a billing machine unowned; the next status or ensure reads it again.
+        return { name, status: "starting", sharing: "unknown", isolated: false, ...(typeof created.source === "string" ? { source: created.source } : {}) }
+      }
     },
     hibernate: (name) => ok(bin, hibernateArgs(name)),
     wake: (name) => ok(bin, wakeArgs(name)),

@@ -10,7 +10,7 @@ export interface Options {
 
 const EXAMPLE = `"plugins": [{ "package": "@joe-broadhead/opencode-boxd", "options": { "snapshot": "opencode-golden" } }]`
 const ACCEPTED = {
-  snapshot: "a lowercase boxd snapshot name (opencode-claude-final by default)",
+  snapshot: "a lowercase boxd snapshot name (opencode-golden by default)",
   allowUntestedHost: "true or false (the default)",
 } as const
 
@@ -18,13 +18,13 @@ const invalid = (problem: string) => boxdError("OPTIONS_INVALID", `${problem}. F
 
 /** Validates the plugin options from opencode.json. Every option is optional. */
 export function parseOptions(raw: unknown): Options {
-  if (raw === undefined || raw === null) return { snapshot: assertSnapshot("opencode-claude-final"), allowUntestedHost: false }
+  if (raw === undefined || raw === null) return { snapshot: assertSnapshot("opencode-golden"), allowUntestedHost: false }
   if (typeof raw !== "object" || Array.isArray(raw)) throw invalid(`The plugin options must be an object, found ${describe(raw)}`)
   const input = raw as Record<string, unknown>
   for (const key of Object.keys(input)) {
     if (!Object.hasOwn(ACCEPTED, key)) throw invalid(`Unknown option "${key}". Accepted options: ${Object.keys(ACCEPTED).map((name) => `"${name}"`).join(", ")}`)
   }
-  const { snapshot = "opencode-claude-final", allowUntestedHost = false } = input
+  const { snapshot = "opencode-golden", allowUntestedHost = false } = input
   if (typeof allowUntestedHost !== "boolean") throw invalid(`The option "allowUntestedHost" must be ${ACCEPTED.allowUntestedHost}, found ${describe(allowUntestedHost)}`)
   if (typeof snapshot !== "string") throw invalid(`The option "snapshot" must be ${ACCEPTED.snapshot}, found ${describe(snapshot)}`)
   try {

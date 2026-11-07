@@ -268,6 +268,53 @@ describe("drop destroys only what the laptop can account for (DR-4)", () => {
   })
 })
 
+describe("a create needs its golden image (SNAPSHOT_MISSING)", () => {
+  test("ensure refuses before any create when the snapshot is not in the account", async () => {
+    const w = await world()
+    w.boxd.snapshots.length = 0
+    const error = await refusal(w.fleet.ensure({ workId: "review-api", directory: "/work/example" }), "SNAPSHOT_MISSING")
+    expect(error.message).toContain("opencode-golden")
+    expect(String(error.next)).toContain("docs/golden-image.md")
+    expect(w.boxd.calls.filter((call) => call.startsWith("create"))).toEqual([])
+  })
+
+  test("resume refuses before rebuilding from a missing snapshot", async () => {
+    const w = await proven()
+    w.boxd.snapshots.length = 0
+    w.boxd.machines.get("oc-review-api")!.status = "destroyed"
+    w.boxd.calls.length = 0
+    await refusal(w.fleet.resume({ workId: "review-api" }), "SNAPSHOT_MISSING")
+    expect(w.boxd.calls.filter((call) => call.startsWith("create"))).toEqual([])
+  })
+
+  test("a create proceeds when the snapshot is there", async () => {
+    const w = await world()
+    expect(w.boxd.snapshots.map((item) => item.name)).toContain("opencode-golden")
+    await expect(w.fleet.ensure({ workId: "review-api", directory: "/work/example" })).resolves.toMatchObject({ state: "ready" })
+  })
+
+  test("an unreadable snapshot list is not a refusal: the create reports its own error", async () => {
+    const w = await world()
+    w.boxd.listSnapshots = async () => {
+      throw new BoxdError("BOXD_FAILED", "boxd snapshots list failed.")
+    }
+    await expect(w.fleet.ensure({ workId: "review-api", directory: "/work/example" })).resolves.toMatchObject({ state: "ready" })
+  })
+
+  test("status says whether the image is present, and names the doc when it is not", async () => {
+    const present = await world()
+    expect((await present.fleet.status()).snapshotPresent).toBe(true)
+    const missing = await world()
+    missing.boxd.snapshots.length = 0
+    expect((await missing.fleet.status()).snapshotPresent).toBe(false)
+    const unreadable = await world()
+    unreadable.boxd.listSnapshots = async () => {
+      throw new BoxdError("BOXD_FAILED", "boxd snapshots list failed.")
+    }
+    expect((await unreadable.fleet.status()).snapshotPresent).toBeNull()
+  })
+})
+
 describe("the rest of the review", () => {
   test("a cyclic parent chain fails instead of recursing (DR-15)", async () => {
     const w = await world()

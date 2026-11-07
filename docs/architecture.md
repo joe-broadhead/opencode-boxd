@@ -106,8 +106,8 @@ Measured on 2026-11-07 against `boxd` 0.2.29 (`brew`-style `~/.local/bin/boxd`) 
 
 ### The golden image
 
-The account this was checked against had no `opencode-claude-final` snapshot, so the golden image was rebuilt for the
-run from a stock machine, deleted afterwards:
+The account this was checked against had no golden image of its own, so the image was rebuilt for the run from a stock
+machine, deleted afterwards, and the plugin's default name came from that run:
 
 - The stock boxd image (2 vCPU / 8 GiB, `source: "standalone"`) carries `python3` 3.12.3, `git` 2.43.0, Node 24, the
   in-VM `boxd` CLI at `/usr/local/bin/boxd`, and **OpenCode 1.19.5** at `/usr/local/bin/opencode` →

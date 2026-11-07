@@ -8,9 +8,11 @@ Unofficial; not affiliated with boxd.
 
 - OpenCode `>=2.2.3 <2.3.0`, tested on 2.2.3, 2.2.4, 2.2.5 and 2.2.6.
 - The [boxd CLI](https://boxd.sh), signed in, on your `PATH`.
-- A boxd snapshot with OpenCode installed. The guest OpenCode must be the same version as the OpenCode on your laptop.
-  The default is `opencode-claude-final`, one particular image: set `"snapshot"` to your own in `opencode.json` before
-  the first `boxd_ensure`.
+- **First step: a golden image.** The stock boxd image ships OpenCode 1.19.5, which this plugin refuses, so build one
+  image with the OpenCode version this laptop runs and a model provider signed in on it:
+  [the golden image](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/golden-image.md). The default name is
+  `opencode-golden`; set `"snapshot"` to your own in `opencode.json`. `boxd_status` says when it is missing, and
+  `boxd_ensure` and `boxd_resume` refuse to create a machine without it.
 - macOS or Linux on the laptop.
 
 ## Install
@@ -136,6 +138,7 @@ Each member still needs the boxd CLI signed in on their own laptop.
 | `EXPORT_INVALID` | Call `boxd_harvest` again from an idle session. Do not invent a transcript. |
 | `PARENT_MISSING` | Harvest the whole session tree again, parents first, then move it. |
 | `SNAPSHOT_EXISTS` | Pick a new snapshot name: snapshots are immutable. |
+| `SNAPSHOT_MISSING` | Create the golden image [docs/golden-image.md](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/golden-image.md) describes, then set the `snapshot` option to its name. |
 | `LEDGER_FAILED` | Check that the ledger folder is writable, then restart OpenCode. |
 | `UNTRACKED` | Commit or delete the paths the message names on the machine, harvest again, then drop. Or hibernate, which keeps the disk. |
 | `GIT_UNKNOWN` | Commit the work in a git repository on the machine, harvest again, then drop. Or hibernate, which keeps the disk. |
@@ -157,6 +160,7 @@ The ledger is yours to keep or delete. Machines are boxd's: `boxd machine remove
 - [Configuration, permission rules and errors](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/configuration.md)
 - [Architecture](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/architecture.md)
 - [Scripting](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/scripting.md)
+- [The golden image](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/golden-image.md)
 - [Jelly](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/jelly.md)
 - [Live check on a real boxd machine](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/live-check.md)
 - [Changelog](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/CHANGELOG.md)
