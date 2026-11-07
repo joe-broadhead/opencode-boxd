@@ -1,0 +1,34 @@
+{
+  "name": "@joe-broadhead/opencode-boxd",
+  "version": "0.1.0",
+  "description": "Run OpenCode sessions on boxd without keeping the session in the VM.",
+  "keywords": ["opencode", "opencode-plugin", "boxd"],
+  "homepage": "https://github.com/joe-broadhead/opencode-boxd#readme",
+  "bugs": { "url": "https://github.com/joe-broadhead/opencode-boxd/issues" },
+  "repository": { "type": "git", "url": "git+https://github.com/joe-broadhead/opencode-boxd.git" },
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": { "default": "./dist/index.js" }
+  },
+  "files": ["dist", "skills", "guest", "README.md", "LICENSE", "NOTICE", "CHANGELOG.md"],
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "node scripts/build.mjs",
+    "test": "vitest run",
+    "lint": "node scripts/check-forbidden.mjs --self-test && node scripts/check-forbidden.mjs",
+    "test:pack": "npm run build && node scripts/pack-smoke.mjs",
+    "release:check": "node scripts/release-check.mjs",
+    "check": "npm run typecheck && npm test && npm run build && npm run lint && npm run test:pack && npm run release:check"
+  },
+  "devDependencies": {
+    "@opencode/plugin": "2.2.6",
+    "@types/node": "24.19.2",
+    "esbuild": "0.28.2",
+    "typescript": "5.9.3",
+    "vitest": "5.0.5"
+  },
+  "opencode": {
+    "host": ">=2.2.6 <2.3.0"
+  }
+}
