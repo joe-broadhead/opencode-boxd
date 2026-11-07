@@ -1,4 +1,5 @@
 import type { Transfer } from "./transfer.js"
+import type { GuestRun } from "./outcome.js"
 
 export type MachineStatus = "running" | "starting" | "standby" | "hibernated" | "stopped" | "destroyed" | "missing" | "other"
 
@@ -48,7 +49,8 @@ export type GuestPort = {
   listSessions(machine: string): Promise<Array<{ id: string; parentID?: string }>>
   createSession(machine: string, directory: string, title: string): Promise<{ id: string }>
   prompt(machine: string, sessionID: string, text: string): Promise<void>
-  phase(machine: string, sessionID: string): Promise<"busy" | "idle" | "missing">
+  /** The session's phase, and its last run's outcome when it is not busy. */
+  phase(machine: string, sessionID: string): Promise<{ phase: "busy" | "idle" | "missing"; run: GuestRun }>
   exportSession(machine: string, sessionID: string): Promise<unknown>
   importSession(machine: string, transfer: Transfer, directory: string): Promise<{ id: string }>
   git(machine: string, directory: string): Promise<GitState>

@@ -197,7 +197,26 @@ def action_phase(request):
     if sid in active or (isinstance(busy, (int, float)) and (not isinstance(idle, (int, float)) or busy > idle)):
         emit({"phase": "busy"})
         return
-    emit({"phase": "idle"})
+    # The last idle turn carries the outcome and, when a run failed, the error an agent must hear about.
+    outcome = info.get("outcome")
+    if outcome not in ("succeeded", "failed", "interrupted"):
+        outcome = None
+    error = None
+    try:
+        messages = unwrap(http("GET", base + f"/api/session/{sid}/message")) or []
+        for message in reversed(messages if isinstance(messages, list) else []):
+            if not isinstance(message, dict) or message.get("type") != "idle":
+                continue
+            if outcome is None and message.get("outcome") in ("succeeded", "failed", "interrupted"):
+                outcome = message["outcome"]
+            failure = message.get("error")
+            if outcome == "failed" and isinstance(failure, dict):
+                error = {"type": str(failure.get("type") or "error"), "message": str(failure.get("message") or "")}
+            break
+    except GuestError:
+        # An outcome is a report, not a gate: a server that cannot list messages still answers the phase.
+        pass
+    emit({"phase": "idle", "outcome": outcome, "error": error})
 
 
 UNTRACKED_LIMIT = 100

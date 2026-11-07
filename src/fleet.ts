@@ -5,6 +5,7 @@ import { assertDirectory, assertRepo, assertSessionId, assertSnapshot, assertWor
 import type { BoxdPort, GuestPort, MachineInfo, Prover } from "./ports.js"
 import { digest, order, parseExport, rewrite, type Transfer } from "./transfer.js"
 import { checkGuest } from "./host-version.js"
+import { failureText, nextStepFor, readRun, type GuestRun, type RunOutcome } from "./outcome.js"
 
 export type Deps = {
   readonly boxd: BoxdPort
@@ -31,6 +32,10 @@ export interface WorkSummary {
   readonly machineStatus: MachineInfo["status"] | null
   /** Recorded warnings, such as a sleep taken before the last prompt was harvested. */
   readonly warnings: readonly string[]
+  /** The guest session's last run, as the last harvest recorded it. */
+  readonly outcome: RunOutcome | null
+  /** A failed run's redacted error line. */
+  readonly error?: string
 }
 
 export interface FleetStatus {
@@ -175,6 +180,8 @@ export function createFleet(deps: Deps) {
               dirty: work.git?.dirty ?? false,
               machineStatus: machine?.status ?? null,
               warnings: (work.warnings ?? []).map((warning) => warning.code),
+              outcome: work.lastOutcome?.state ?? null,
+              ...(work.lastOutcome?.error ? { error: work.lastOutcome.error } : {}),
             }
           }),
         ),
@@ -289,13 +296,16 @@ export function createFleet(deps: Deps) {
       }
       if (!work.rootSessionId) return { workId: work.workId, state: "empty", next: "Call boxd_submit." }
       await ready(work, { wake: false, arm: false })
-      const phase = await deps.guest.phase(work.machine, work.rootSessionId)
+      const { phase, run } = await deps.guest.phase(work.machine, work.rootSessionId)
       return {
         workId: work.workId,
         sessionId: work.rootSessionId,
         state: phase,
         proof: proofState(work),
-        next: phase === "busy" ? "Call boxd_job again in a later turn." : "Call boxd_harvest before sleep, image or drop.",
+        // The last run's outcome, so an idle session that failed is never read as a finished job.
+        outcome: run.outcome,
+        ...(run.outcome === "failed" ? { error: run.error, warning: "GUEST_RUN_FAILED" } : {}),
+        next: jobNext(work.workId, phase, run),
       }
     },
 
@@ -305,11 +315,16 @@ export function createFleet(deps: Deps) {
       await ensureDirectory(localDirectory)
       if (!work.rootSessionId) throw boxdError("NOT_OURS", "This work has no session. Call boxd_submit first.")
       await ready(work, { wake: true })
-      const phase = await deps.guest.phase(work.machine, work.rootSessionId)
+      const { phase, run: live } = await deps.guest.phase(work.machine, work.rootSessionId)
       if (phase === "busy") throw boxdError("SESSION_BUSY", "The session is still running.")
       const listed = await deps.guest.listSessions(work.machine)
       const tree = collect(work.rootSessionId, listed)
       const transfers = order(await Promise.all(tree.map(async (id) => parseExport(await deps.guest.exportSession(work.machine, id)))))
+      // The outcome comes from the transcript itself: the root export's session info and last idle message. The live
+      // phase fills a gap when an export does not carry the session's own outcome.
+      const root = transfers.find((transfer) => transfer.info.id === work.rootSessionId)
+      const exported = readRun(root?.info, root?.messages)
+      const run: GuestRun = exported.outcome ? exported : live
       const imported = new Map<string, string>()
       const sessions: Array<{ remoteId: string; importedId: string; parentRemoteId?: string }> = []
       const sha256: Record<string, string> = {}
@@ -325,13 +340,23 @@ export function createFleet(deps: Deps) {
       const git = await harvestGit(deps, work)
       const proof = { harvestedAt: deps.now(), guestVersion: deps.hostVersion ?? "unknown", sessions, sha256 }
       // Under the lock, so a submit that lands during the harvest keeps its own `lastSubmitAt` and the proof goes stale.
-      await deps.ledger.mutate(work.workId, (current) => ({ ...(current ?? work), proof, git, warnings: [] }))
+      await deps.ledger.mutate(work.workId, (current) => ({
+        ...(current ?? work),
+        proof,
+        git,
+        warnings: [],
+        ...(run.outcome ? { lastOutcome: { state: run.outcome, ...(run.error ? { error: run.error } : {}), at: deps.now() } } : {}),
+      }))
       return {
         workId: work.workId,
         state: "proven",
+        outcome: run.outcome,
+        ...(run.outcome === "failed" ? { error: run.error, warning: "GUEST_RUN_FAILED" } : {}),
         sessions: sessions.map((session) => ({ remoteId: session.remoteId, importedId: session.importedId })),
         git: { known: git.known, remote: git.remote, sha: git.sha, dirty: git.dirty, patchStored: git.patchStored, untracked: git.untracked, ignored: git.ignored },
-        next: dropAdvice(git, proofState(await loadOwned(work.workId))),
+        // A failed run is a warning on a successful harvest: the transcript is imported and proven, and the laptop keeps
+        // it. The next step says what to do before the next prompt.
+        next: run.outcome === "failed" ? `${failureText(run, work.workId)} ${nextStepFor(run)}` : dropAdvice(git, proofState(await loadOwned(work.workId))),
       }
     },
 
@@ -405,7 +430,7 @@ export function createFleet(deps: Deps) {
         return { workId: work.workId, machine: work.machine, state: "starting", resumed: "import", next: "Call boxd_resume again once the machine's OpenCode server is up." }
       }
       if (!recreated && work.rootSessionId) {
-        const phase = await deps.guest.phase(work.machine, work.rootSessionId)
+        const { phase } = await deps.guest.phase(work.machine, work.rootSessionId)
         if (phase !== "missing") return { workId: work.workId, machine: work.machine, sessionId: work.rootSessionId, state: phase, resumed: "wake" }
       }
       if (!work.proof) throw boxdError("NOT_PROVEN", "The machine is gone and there is no proven export to restart from.")
@@ -450,6 +475,14 @@ export function createFleet(deps: Deps) {
       return { machine: input.machine, snapshot: name, state: "saved" }
     },
   }
+}
+
+/** A read's next step: a failed run outranks the harvest advice, because the job did not do what was asked. */
+function jobNext(workId: string, phase: "busy" | "idle" | "missing", run: GuestRun): string {
+  if (phase === "busy") return "Call boxd_job again in a later turn."
+  if (run.outcome === "failed") return `${failureText(run, workId)} ${nextStepFor(run)}`
+  if (run.outcome === "aborted") return `The last run of ${workId} was aborted. Call boxd_harvest before sleep, image or drop, then boxd_submit again if you still need it.`
+  return "Call boxd_harvest before sleep, image or drop."
 }
 
 function refuseUnsafe(machine: MachineInfo): void {

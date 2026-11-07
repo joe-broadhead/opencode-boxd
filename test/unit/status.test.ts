@@ -52,8 +52,8 @@ describe("the status model", () => {
           orphans: [],
           snapshotPresent: true,
           works: [
-            { workId: "review-api", machine: "oc-review-api", sessionId: "ses_1", proof: "fresh", dirty: false, machineStatus: "running", warnings: [] },
-            { workId: "docs", machine: "oc-docs", sessionId: null, proof: "missing", dirty: false, machineStatus: "hibernated", warnings: [] },
+            { workId: "review-api", machine: "oc-review-api", sessionId: "ses_1", proof: "fresh", dirty: false, machineStatus: "running", warnings: [], outcome: "completed" },
+            { workId: "docs", machine: "oc-docs", sessionId: null, proof: "missing", dirty: false, machineStatus: "hibernated", warnings: [], outcome: null },
           ],
         },
       }),

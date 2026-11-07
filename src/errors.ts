@@ -18,6 +18,7 @@ export const CODES = {
   MACHINE_ISOLATED: "Recreate the machine without --isolated, which drops git and the in-VM boxd CLI.",
   SESSION_BUSY: "Call boxd_job until it reports idle, then harvest.",
   GUEST_VERSION: "Boot the machine from an image whose OpenCode is the same version as this laptop's.",
+  GUEST_RUN_FAILED: "Read the transcript, then boxd_submit again. A credential failure is fixed in docs/golden-image.md.",
   GUEST_FAILED: "Call boxd_status, and recreate the machine with boxd_resume if the guest keeps failing.",
   BOXD_FAILED: "Read the boxd CLI's own message, and run boxd_status before trying again.",
   BOXD_MISSING: "Install the boxd CLI, sign in to it, and restart OpenCode so it is on the PATH.",

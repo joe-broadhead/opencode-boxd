@@ -3,6 +3,7 @@ import { COMMAND_STEM, DISPLAY_NAME, PLUGIN_ID, TESTED_HOSTS } from "./constants
 import { isSupportedHost, type HostCheck } from "./host-version.js"
 import { defaultRules, unguardedAgents, type Rule } from "./permissions.js"
 import { cut, shortReason } from "./redact.js"
+import { failureText, nextStepFor, type RunOutcome } from "./outcome.js"
 import { TOOLS } from "./tools.js"
 import type { FleetStatus, WorkSummary } from "./fleet.js"
 import { VERSION } from "./version.js"
@@ -51,6 +52,8 @@ export interface Status {
   readonly orphans: readonly string[]
   /** Open works hibernated before their last prompt was harvested. */
   readonly warned: readonly string[]
+  /** Open works whose guest session's last run failed, with the redacted error. */
+  readonly failedRuns: readonly { readonly workId: string; readonly error?: string }[]
   /** How many boxd tools OpenCode lists. */
   readonly tools: number
   /** How many of the listed `boxd_*` tools this version does not know. */
@@ -87,6 +90,7 @@ export function buildStatus(facts: StatusFacts): Status {
   const works = facts.ledger?.works ?? []
   const unharvested = works.filter((work) => work.proof !== "fresh").map((work) => work.workId)
   const warned = works.filter((work) => work.warnings.length > 0).map((work) => work.workId)
+  const failedRuns = works.filter((work) => work.outcome === "failed").map((work) => ({ workId: work.workId, ...(work.error ? { error: work.error } : {}) }))
   const status = {
     version: VERSION,
     state,
@@ -100,6 +104,7 @@ export function buildStatus(facts: StatusFacts): Status {
     unharvested,
     orphans: facts.ledger?.orphans ?? [],
     warned,
+    failedRuns,
     tools: listed.length,
     unknownCount: unknown.length,
     unknownTools: unknown.filter((name) => SAFE_NAME.test(name)).slice(0, LISTED_UNKNOWN),
@@ -118,6 +123,13 @@ function nextStepOf(status: Omit<Status, "nextStep">): string {
   const rules = status.problems.find((problem) => problem.startsWith(RULES_NOT_ADDED))
   if (rules) return rules.split(" Next step: ")[1] ?? AGENTS_NEXT_STEP
   if (status.unguardedAgents.length) return AGENTS_NEXT_STEP
+  // A run that failed is the one thing an agent must not read as success: it outranks the housekeeping steps.
+  if (status.failedRuns.length) {
+    const first = status.failedRuns[0]!
+    const run = { outcome: "failed" as const, ...(first.error ? { error: first.error } : {}) }
+    const more = status.failedRuns.length > 1 ? ` ${status.failedRuns.length - 1} more ${status.failedRuns.length === 2 ? "work has" : "works have"} a failed run too.` : ""
+    return `${failureText(run, first.workId)} ${nextStepFor(run)}${more}`
+  }
   if (status.orphans.length) {
     return `Call boxd_ensure for the work id ${status.orphans.length === 1 ? "named" : "named"} by ${list(status.orphans.map((name) => name.replace(/^oc-/, "")))} to adopt ${status.orphans.length === 1 ? "a machine" : "machines"} no ledger records, or remove them with the boxd CLI.`
   }
@@ -154,6 +166,14 @@ function toolsText({ tools, unknownCount, unknownTools }: Status) {
   return `${tools} available, ${unknownCount} unknown${names} (unknown tools ask before running)`
 }
 
+/** The last run's outcome, beside the work it belongs to. */
+function outcomeText(outcome: RunOutcome | null): string {
+  if (outcome === null) return ""
+  if (outcome === "failed") return ", last run failed"
+  if (outcome === "aborted") return ", last run aborted"
+  return ", last run completed"
+}
+
 /** The Snapshot row: the configured image, and whether this account actually has it. */
 function snapshotText({ snapshot, snapshotPresent }: Status) {
   if (snapshotPresent === false) return `${snapshot} (not in this boxd account)`
@@ -165,7 +185,9 @@ function snapshotText({ snapshot, snapshotPresent }: Status) {
 function worksText({ openWorks, unharvested, warned, orphans, works }: Status) {
   const unowned = orphans.length ? `; machines no ledger records: ${list(orphans)}` : ""
   if (openWorks === 0) return `no open work${unowned}`
-  const machines = works.map((work) => `${work.workId} (${work.machineStatus ?? "state unknown"})`).join(", ")
+  const machines = works
+    .map((work) => `${work.workId} (${work.machineStatus ?? "state unknown"}${outcomeText(work.outcome)}${work.outcome === "failed" && work.error ? `: ${work.error}` : ""})`)
+    .join(", ")
   const stale = unharvested.length ? `; no fresh laptop import: ${list(unharvested)}` : "; every work has a fresh laptop import"
   const asleep = warned.length ? `; hibernated before a harvest: ${list(warned)}` : ""
   return `${openWorks} open: ${machines}${stale}${asleep}${unowned}`
@@ -252,7 +274,7 @@ export const StatusRpc = {
       input: { type: "object" },
       output: {
         type: "object",
-        required: ["version", "state", "host", "snapshot", "snapshotPresent", "guestVersion", "works", "openWorks", "unharvested", "orphans", "warned", "tools", "unknownCount", "unknownTools", "unguardedAgents", "problems", "nextStep"],
+        required: ["version", "state", "host", "snapshot", "snapshotPresent", "guestVersion", "works", "openWorks", "unharvested", "orphans", "warned", "failedRuns", "tools", "unknownCount", "unknownTools", "unguardedAgents", "problems", "nextStep"],
         properties: {
           version: { type: "string" },
           state: { enum: ["connected", "failed"] },
@@ -278,6 +300,8 @@ export const StatusRpc = {
                 dirty: { type: "boolean" },
                 machineStatus: { type: ["string", "null"] },
                 warnings: strings,
+                outcome: { type: ["string", "null"], enum: ["completed", "failed", "aborted", null] },
+                error: { type: "string" },
               },
             },
           },
@@ -285,6 +309,10 @@ export const StatusRpc = {
           unharvested: strings,
           orphans: strings,
           warned: strings,
+          failedRuns: {
+            type: "array",
+            items: { type: "object", required: ["workId"], properties: { workId: { type: "string" }, error: { type: "string" } } },
+          },
           tools: count,
           unknownCount: count,
           unknownTools: strings,

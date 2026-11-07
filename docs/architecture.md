@@ -40,6 +40,10 @@ first, and only then may the machine sleep, be imaged or be destroyed.
 - The ledger writes atomically (a unique temp file, a rename) and serialises per work, so two tools in one script cannot
   lose each other's fields. `submit` stamps `lastSubmitAt` before the prompt, so a crash fails towards "stale".
 - The import runs with `--standalone`, so it never depends on a service being up.
+- A session's last run is `info.outcome` (`succeeded`, `failed`, `interrupted`) on `GET /api/session/<id>`, and the
+  same outcome with the failure's structured error on the last `idle` message from `GET /api/session/<id>/message`. An
+  export carries both, so a harvest reads the outcome from the transcript and `boxd_job` from the live session: no model
+  call either way. `src/outcome.ts` maps them to `completed`, `failed` and `aborted`.
 - `POST /api/session` creates a session, `POST /api/session/<id>/prompt` admits one, and
   `GET /api/experimental/session/<id>/export` and `POST /api/experimental/session/import` move one. The guest helper is
   the only code that speaks these.

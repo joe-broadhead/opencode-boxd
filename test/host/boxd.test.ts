@@ -214,6 +214,55 @@ describe("a read never bills, and a drop never loses a file", () => {
   })
 })
 
+describe("a failed run is reported, never hidden", () => {
+  const AUTH = { type: "provider.auth", message: "Go Teams covers workspace members, not service accounts. Use a personal API key to call Go models." }
+
+  test("boxd_job says the last run failed, and the harvest proves the transcript with the warning", async () => {
+    const host = await startHost()
+    try {
+      const build = await session(host)
+      const work = host.location.directory
+      await attempt(host, build, "build", "boxd_ensure", "always", { workId: "review-api", directory: work })
+      await attempt(host, build, "build", "boxd_submit", "always", { workId: "review-api", text: "Reply with OK." })
+      host.guest.fail("ses_guest_root", AUTH)
+
+      const job = await attempt(host, build, "build", "boxd_job", "reject", { workId: "review-api" })
+      expect(job.output).toMatchObject({ state: "idle", outcome: "failed", error: "provider.auth: Go Teams covers workspace members, not service accounts. Use a personal API key to call Go models" })
+      expect(String((job.output as { next?: string }).next)).toContain("Fix the guest's model credentials")
+
+      const harvested = await attempt(host, build, "build", "boxd_harvest", "always", { workId: "review-api", localDirectory: work })
+      // The transcript is imported and proven; the failed run is a warning, not a refusal.
+      expect(harvested.output).toMatchObject({ state: "proven", outcome: "failed", warning: "GUEST_RUN_FAILED" })
+      expect(String((harvested.output as { next?: string }).next)).toContain("Fix the guest's model credentials")
+
+      // Status carries it, so a later turn cannot read the work as done.
+      const status = await statusThroughRpc(host)
+      expect(status.failedRuns).toEqual([{ workId: "review-api", error: "provider.auth: Go Teams covers workspace members, not service accounts. Use a personal API key to call Go models" }])
+      expect(String(status.nextStep)).toContain("The last run of review-api failed")
+    } finally {
+      await host.close()
+    }
+  })
+
+  test("a completed run reports completed, with no warning", async () => {
+    const host = await startHost()
+    try {
+      const build = await session(host)
+      const work = host.location.directory
+      await attempt(host, build, "build", "boxd_ensure", "always", { workId: "review-api", directory: work })
+      await attempt(host, build, "build", "boxd_submit", "always", { workId: "review-api", text: "Reply with OK." })
+      host.guest.complete("ses_guest_root")
+      expect((await attempt(host, build, "build", "boxd_job", "reject", { workId: "review-api" })).output).toMatchObject({ state: "idle", outcome: "completed" })
+      const harvested = await attempt(host, build, "build", "boxd_harvest", "always", { workId: "review-api", localDirectory: work })
+      expect(harvested.output).toMatchObject({ state: "proven", outcome: "completed" })
+      expect(harvested.output).not.toHaveProperty("warning")
+      expect((await statusThroughRpc(host)).failedRuns).toEqual([])
+    } finally {
+      await host.close()
+    }
+  })
+})
+
 describe("the status RPC", () => {
   test("reports the open work, the unharvested flag and the guest version", async () => {
     const host = await startHost()
@@ -223,7 +272,7 @@ describe("the status RPC", () => {
       host.boxd.seed("oc-review-api", { status: "hibernated" })
       const status = await statusThroughRpc(host)
       expect(status).toMatchObject({ state: "connected", openWorks: 1, guestVersion: HOST_VERSION, snapshot: "opencode-golden", unknownCount: 0 })
-      expect(status.works).toEqual([{ workId: "review-api", machine: "oc-review-api", sessionId: null, proof: "missing", dirty: false, machineStatus: "hibernated", warnings: [] }])
+      expect(status.works).toEqual([{ workId: "review-api", machine: "oc-review-api", sessionId: null, proof: "missing", dirty: false, machineStatus: "hibernated", warnings: [], outcome: null }])
       expect(status.unharvested).toEqual(["review-api"])
       expect(String(status.nextStep)).toContain("boxd_harvest for review-api")
     } finally {

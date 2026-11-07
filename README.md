@@ -38,8 +38,9 @@ session you cannot get back.
 
 1. `boxd_ensure` with a short work id. The machine is named `oc-<work id>`, and the work is recorded in the ledger.
 2. `boxd_submit` with the task. It returns when the guest has admitted the prompt, not when the model finishes.
-3. `boxd_job` in a later turn: busy, idle, asleep, gone or starting. It never wakes a machine, because waking starts
-   billing; a hibernated work reports `asleep` with `boxd_resume` as its next step.
+3. `boxd_job` in a later turn: busy, idle, asleep, gone or starting, with the guest session's last outcome
+   (`completed`, `failed` or `aborted`) when it is idle. It never wakes a machine, because waking starts billing; a
+   hibernated work reports `asleep` with `boxd_resume` as its next step.
 4. `boxd_harvest` with a directory on this laptop. The session tree is exported, imported here parents first, and git is
    recorded.
 5. `boxd_sleep` to hibernate, `boxd_resume` to wake or rebuild, `boxd_image` to save a snapshot, `boxd_drop` to destroy.
@@ -129,6 +130,7 @@ Each member still needs the boxd CLI signed in on their own laptop.
 | `MACHINE_ISOLATED` | Recreate the machine without `--isolated`, which drops git and the in-VM boxd CLI. |
 | `SESSION_BUSY` | Call `boxd_job` until it reports idle, then harvest. |
 | `GUEST_VERSION` | Boot the machine from an image whose OpenCode is the same version as this laptop's. |
+| `GUEST_RUN_FAILED` | The guest session's last run failed; the transcript is still imported. Read it, then `boxd_submit` again. A credential failure is fixed in [the golden image](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/golden-image.md). |
 | `GUEST_FAILED` | Call `boxd_status`, and recreate the machine with `boxd_resume` if the guest keeps failing. |
 | `BOXD_FAILED` | Read the boxd CLI's own message, and run `boxd_status` before trying again. |
 | `BOXD_MISSING` | Install the boxd CLI, sign in to it, and restart OpenCode so it is on the `PATH`. |

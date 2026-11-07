@@ -160,7 +160,7 @@ describe("the control plane", () => {
     const status = await fleet.status()
     expect(status.snapshot).toBe("opencode-golden")
     expect(status.orphans).toEqual([])
-    expect(status.works).toEqual([{ workId: "review-api", machine: "oc-review-api", sessionId: null, proof: "missing", dirty: false, machineStatus: "running", warnings: [] }])
+    expect(status.works).toEqual([{ workId: "review-api", machine: "oc-review-api", sessionId: null, proof: "missing", dirty: false, machineStatus: "running", warnings: [], outcome: null }])
     // One read-only machine read per work, plus one account listing for orphans: nothing that wakes or holds.
     expect(boxd.calls.every((call) => call.startsWith("get ") || call === "machine list")).toBe(true)
   })

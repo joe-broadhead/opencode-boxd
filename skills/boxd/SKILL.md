@@ -33,6 +33,12 @@ make the one call: creating or waking a machine bills while it runs, `boxd_submi
 Ask in chat only when a choice must be made: a work id in use, a snapshot name, a directory, or a machine name that is
 not the one the ledger records. After a decline, say nothing changed and offer the draft task.
 
+## Report the truth
+
+Never report work as done when the outcome is not `completed`. `boxd_job` and `boxd_harvest` give the guest session's
+last outcome: `completed`, `failed` or `aborted`, with a failed run's error. A `failed` run means the model never did the
+task, even when the transcript arrived; say what the error says, and fix a credential failure before another prompt.
+
 ## Do not
 
 - Do not call `boxd_image` or `boxd_drop` until `boxd_harvest` has returned `proven` since the last `boxd_submit`.

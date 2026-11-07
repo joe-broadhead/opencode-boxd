@@ -132,6 +132,10 @@ export class FakeGuest implements GuestPort {
   readonly servers: string[] = []
   gitFails = false
   phaseById = new Map<string, "busy" | "idle" | "missing">()
+  /** What the last run of a session did, as the guest would report it. */
+  runById = new Map<string, { outcome: "completed" | "failed" | "aborted" | null; error?: string }>()
+  /** The export an `exportSession` call returns for a session, when a test wants a specific one. */
+  exportOverride = new Map<string, unknown>()
   gitState: GitState = { known: true, remote: null, branch: null, sha: null, dirty: false, untracked: [], ignored: [], untrackedFiles: {} }
   serverUp = true
   prepared: string[] = []
@@ -165,10 +169,11 @@ export class FakeGuest implements GuestPort {
     this.prompts.push(`${sessionID}:${text}`)
   }
   async phase(_machine: string, sessionID: string) {
-    return this.phaseById.get(sessionID) ?? "missing"
+    const phase = this.phaseById.get(sessionID) ?? "missing"
+    return { phase, run: this.runById.get(sessionID) ?? { outcome: null } }
   }
   async exportSession(_machine: string, sessionID: string) {
-    return this.exports.get(sessionID)
+    return this.exportOverride.get(sessionID) ?? this.exports.get(sessionID)
   }
   async importSession(_machine: string, value: Transfer, _directory: string) {
     this.imports.push(value)

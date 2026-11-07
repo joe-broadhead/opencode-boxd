@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 import { mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { boxdError } from "./errors.js"
+import type { RunOutcome } from "./outcome.js"
 import type { Transfer } from "./transfer.js"
 
 export interface Proof {
@@ -27,6 +28,13 @@ export interface GitRecord {
   untrackedStored: boolean
 }
 
+/** The guest session's last run, recorded at each harvest, so status and the next step know what happened. */
+export interface LastOutcome {
+  state: RunOutcome
+  error?: string
+  at: string
+}
+
 /** A recorded warning about a work; the next step is the code's own. */
 export interface WorkWarning {
   code: "UNHARVESTED_SLEEP"
@@ -42,6 +50,7 @@ export interface Work {
   rootSessionId?: string
   lastSubmitAt?: string
   proof?: Proof
+  lastOutcome?: LastOutcome
   git?: GitRecord
   warnings?: WorkWarning[]
   /** Set before `machine new`, and cleared once the machine is recorded: a timeout must not orphan a billing machine. */

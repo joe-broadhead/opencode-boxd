@@ -69,6 +69,11 @@ would leave a machine billing with no way to clear it from the session.
 - **Hibernating destroys nothing.** `boxd_sleep` needs no proof and works when the guest cannot be harvested; it records
   a warning that the last prompt is not on the laptop yet, which status shows. `boxd_image` and `boxd_drop` still need a
   fresh proof.
+- **A run's outcome is part of the result.** OpenCode records it on the session (`outcome`) and on its last idle message,
+  with the failure's structured error. `boxd_job` reports it when the guest is idle, `boxd_harvest` records it and adds
+  `GUEST_RUN_FAILED` as a warning, and status shows each work's last outcome. The error is `<type>: <first line>`, passed
+  through redaction; a provider's response body is never read. It comes from the guest or the imported transcript, never
+  from a model call.
 - **Drop only destroys what the laptop can account for.** It refuses a non-git directory, untracked or ignored paths, and
   a dirty tree with no stored patch. Tracked changes are stored as `git diff HEAD`; untracked contents are stored beside
   it when the guest can read them, which is not the same as a faithful copy, so a drop still refuses.
@@ -96,6 +101,7 @@ errors pass through unchanged. No error, log or status line contains a token, a 
 | `MACHINE_ISOLATED` | The machine is isolated, so it has no git and no in-VM boxd CLI. |
 | `SESSION_BUSY` | The guest session is still running; harvest only when it is idle. |
 | `GUEST_VERSION` | The machine's OpenCode differs from this laptop's. |
+| `GUEST_RUN_FAILED` | The guest session's last run failed. The transcript is still imported and proven; the error is the run's own. |
 | `GUEST_FAILED` | The guest helper failed an action. |
 | `BOXD_FAILED` | The boxd CLI refused a command or returned something unusable. |
 | `BOXD_MISSING` | The boxd CLI is not on the `PATH`. |

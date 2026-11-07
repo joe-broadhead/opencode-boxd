@@ -3,6 +3,7 @@ import { copyToGuestArgs, execArgs, guestRequest } from "./argv.js"
 import type { GuestPort } from "./ports.js"
 import { readGuestHelper } from "./cli-boxd.js"
 import { run } from "./run.js"
+import { errorLine, mapOutcome } from "./outcome.js"
 
 const HELPER = "/tmp/opencode-boxd/guest.py"
 
@@ -50,8 +51,10 @@ export function cliGuest(bin = "boxd"): GuestPort {
     },
     phase: async (machine, sessionID) => {
       const parsed = await call(machine, "phase", { sessionID })
-      if (parsed.phase === "busy" || parsed.phase === "idle" || parsed.phase === "missing") return parsed.phase
-      return "missing"
+      const phase = parsed.phase === "busy" || parsed.phase === "idle" || parsed.phase === "missing" ? parsed.phase : "missing"
+      const outcome = mapOutcome(parsed.outcome)
+      const error = errorLine(parsed.error)
+      return { phase, run: { outcome, ...(error ? { error } : {}) } }
     },
     exportSession: async (machine, sessionID) => {
       const parsed = await call(machine, "export", { sessionID })

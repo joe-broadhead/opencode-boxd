@@ -6,6 +6,9 @@ export interface FakeSession {
   busy: boolean
   directory: string
   messages: Array<{ type: string; text: string }>
+  /** The session's last run, as OpenCode records it on the session and its last idle message. */
+  outcome?: "succeeded" | "failed" | "interrupted"
+  error?: { type: string; message: string }
 }
 
 export interface FakeGuest {
@@ -17,6 +20,10 @@ export interface FakeGuest {
   /** The next created session's id. */
   next(id: string): void
   idle(sessionID: string): void
+  /** The session's last run failed with this error, as a provider refusal does. */
+  fail(sessionID: string, error: { type: string; message: string }): void
+  /** The session's last run completed. */
+  complete(sessionID: string): void
   close(): Promise<void>
 }
 
@@ -50,7 +57,25 @@ export function startFakeGuest(): FakeGuest {
       if (single) {
         const session = sessions.get(single[1]!)
         if (!session) return json({ error: "not found" }, 404)
-        return json({ data: { id: session.id, time: { created: 1, busy: session.busy ? 2 : undefined, idle: session.busy ? undefined : 2 } } })
+        return json({
+          data: {
+            id: session.id,
+            ...(session.outcome ? { outcome: session.outcome } : {}),
+            time: { created: 1, busy: session.busy ? 2 : undefined, idle: session.busy ? undefined : 2 },
+          },
+        })
+      }
+      const messages = /^\/api\/session\/(ses_[A-Za-z0-9_-]+)\/message$/.exec(path)
+      if (messages) {
+        const session = sessions.get(messages[1]!)
+        if (!session) return json({ error: "not found" }, 404)
+        return json({
+          data: [
+            ...session.messages.map((message, index) => ({ id: `msg_${index}`, ...message })),
+            // The idle turn carries the run's outcome, and its error when it failed.
+            { id: "msg_idle", type: "idle", ...(session.outcome ? { outcome: session.outcome } : {}), ...(session.error ? { error: session.error } : {}) },
+          ],
+        })
       }
       const prompt = /^\/api\/session\/(ses_[A-Za-z0-9_-]+)\/prompt$/.exec(path)
       if (prompt && request.method === "POST") {
@@ -100,6 +125,22 @@ export function startFakeGuest(): FakeGuest {
     idle: (sessionID: string) => {
       const session = sessions.get(sessionID)
       if (session) session.busy = false
+    },
+    fail: (sessionID: string, error: { type: string; message: string }) => {
+      const session = sessions.get(sessionID)
+      if (session) {
+        session.busy = false
+        session.outcome = "failed"
+        session.error = error
+      }
+    },
+    complete: (sessionID: string) => {
+      const session = sessions.get(sessionID)
+      if (session) {
+        session.busy = false
+        session.outcome = "succeeded"
+        delete session.error
+      }
     },
     close: () => server.stop(true),
   }
