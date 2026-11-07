@@ -5,11 +5,20 @@ import { BoxdError } from "./errors.js"
 import type { Prover } from "./ports.js"
 import type { Transfer } from "./transfer.js"
 import { run } from "./run.js"
+import { OPENCODE_VERSION, parseVersion } from "./version.js"
 
 /** Proves an export by importing it into the laptop OpenCode. Does not run on the guest. */
 export function cliProver(bin = "opencode"): Prover {
   return {
     async importTransfer(transfer: Transfer, directory: string) {
+      const version = await run(bin, ["--version"])
+      if (parseVersion(version.stdout) !== OPENCODE_VERSION) {
+        throw new BoxdError(
+          "HOST_UNTESTED",
+          `The laptop opencode is ${version.stdout.trim() || "missing"}, not ${OPENCODE_VERSION}.`,
+          "Import only into OpenCode 2.2.6. The export is already in the ledger.",
+        )
+      }
       const dir = await mkdtemp(join(tmpdir(), "opencode-boxd-"))
       const file = join(dir, "export.json")
       await writeFile(file, JSON.stringify(transfer))

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { createArgs } from "../src/argv.js"
+import { AWAKE_SECONDS, createArgs, holdAwakeArgs } from "../src/argv.js"
 import { BoxdError } from "../src/errors.js"
 import { order, parseExport } from "../src/transfer.js"
 import { transfer, world } from "./world.js"
@@ -57,6 +57,9 @@ describe("synthetic fleet", () => {
     await expect(unharvested.fleet.image({ machine: "oc-review-api", name: "opencode-next" })).rejects.toMatchObject({ code: "NOT_PROVEN" })
     expect(createArgs("review-api", "opencode-claude-final").join(" ")).not.toContain("--shared")
     expect(createArgs("review-api", "opencode-claude-final").join(" ")).not.toContain("--isolated")
+    expect(createArgs("review-api", "opencode-claude-final").join(" ")).not.toContain("--idle-ignore-outbound")
+    expect(holdAwakeArgs("oc-review-api")).toContain(AWAKE_SECONDS)
+    expect(holdAwakeArgs("oc-review-api")).not.toContain("0")
   })
 
   it("restarts a destroyed machine from the golden snapshot and the proven transcript", async () => {
@@ -78,6 +81,16 @@ describe("synthetic fleet", () => {
     expect(guest.imports.map((item) => item.id)).toEqual(["ses_root_review-api", "ses_child_1"])
     expect(guest.imports[1]?.parentID).toMatch(/^ses_guest_/)
     await expect(fleet.drop({ workId: "review-api" })).rejects.toMatchObject({ code: "NOT_PROVEN" })
+  })
+
+  it("keeps the guest session id when the admit fails", async () => {
+    const { fleet, guest, ledger } = await world()
+    await fleet.ensure({ workId: "review-api" })
+    guest.prompt = async () => {
+      throw new Error("admit failed")
+    }
+    await expect(fleet.submit({ workId: "review-api", text: "This admit fails." })).rejects.toThrow("admit failed")
+    expect((await ledger.load("review-api"))?.rootSessionId).toBe("ses_root_review-api")
   })
 
   it("imports a grandchild only after its parent", () => {

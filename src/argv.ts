@@ -15,10 +15,13 @@ export function createArgs(workId: string, snapshot: string): string[] {
     "role=session",
     "--label",
     `work=${workId}`,
-    "--idle-ignore-outbound",
     "--json",
   ]
 }
+
+/** Bound, not zero. Zero never sleeps, so a crashed agent leaves a bill running. */
+export const AWAKE_SECONDS = "1800"
+export const SLEEP_SECONDS = "14400"
 
 export function getArgs(name: string): string[] {
   return ["machine", "get", name, "--json"]
@@ -41,11 +44,15 @@ export function removeArgs(name: string): string[] {
 }
 
 export function holdAwakeArgs(name: string): string[] {
-  return ["machine", "config", "set", name, "auto-hibernate.timeout", "0"]
+  return ["machine", "config", "set", name, "auto-hibernate.timeout", AWAKE_SECONDS]
 }
 
 export function allowSleepArgs(name: string): string[] {
-  return ["machine", "config", "set", name, "auto-hibernate.timeout", "14400"]
+  return ["machine", "config", "set", name, "auto-hibernate.timeout", SLEEP_SECONDS]
+}
+
+export function outboundArgs(name: string, value: "on" | "off"): string[] {
+  return ["machine", "config", "set", name, "idle.ignore-outbound", value]
 }
 
 export function saveSnapshotArgs(machine: string, snapshot: string): string[] {

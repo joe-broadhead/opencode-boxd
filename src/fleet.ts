@@ -116,6 +116,7 @@ export function createFleet(deps: Deps) {
       if (!work.rootSessionId) {
         const created = await deps.guest.createSession(work.machine, work.directory, input.title ?? input.workId)
         work.rootSessionId = assertSessionId(created.id)
+        await deps.ledger.save(work)
       }
       await deps.guest.prompt(work.machine, work.rootSessionId, input.text)
       work.lastSubmitAt = deps.now()

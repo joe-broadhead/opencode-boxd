@@ -31,7 +31,7 @@ On 2.2.6, import keeps the transcript's session id. A second import of that id i
 
 Machines are private. `--shared` deletes `~/.local/share/opencode/auth.json`. `--isolated` drops git and the in-VM `boxd`. Neither flag is ever passed.
 
-The guest OpenCode binds to `127.0.0.1`. Nothing publishes that port.
+The guest OpenCode binds to `127.0.0.1`. Nothing publishes that port. While a work id is open the machine may hibernate after 30 minutes of no inbound traffic, so a crashed agent does not bill forever. `boxd_sleep` hibernates immediately.
 
 ## Ledger
 

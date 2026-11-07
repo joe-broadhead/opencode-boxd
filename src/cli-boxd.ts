@@ -7,6 +7,7 @@ import {
   hibernateArgs,
   holdAwakeArgs,
   listSnapshotArgs,
+  outboundArgs,
   removeArgs,
   saveSnapshotArgs,
   wakeArgs,
@@ -36,8 +37,14 @@ export function cliBoxd(bin = "boxd"): BoxdPort {
         return { name: String(record.name ?? ""), storage: String(record.storage ?? ""), status: String(record.status ?? "") }
       })
     },
-    holdAwake: (name) => ok(bin, holdAwakeArgs(name)),
-    allowSleep: (name) => ok(bin, allowSleepArgs(name)),
+    holdAwake: async (name) => {
+      await ok(bin, holdAwakeArgs(name))
+      await ok(bin, outboundArgs(name, "off"))
+    },
+    allowSleep: async (name) => {
+      await ok(bin, allowSleepArgs(name))
+      await ok(bin, outboundArgs(name, "on"))
+    },
   }
 }
 

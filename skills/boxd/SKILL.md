@@ -19,6 +19,7 @@ OpenCode on the machine must be the same version this plugin targets. If a tool 
 - Do not wait inside a tool call. `submit` admits the prompt and returns. Call `job` later.
 - Do not `sleep` or `drop` unless `harvest` has returned `proven` since the last `submit`.
 - Do not destroy a machine to restart a session. `resume` wakes it, or imports the proven transcript onto a new machine from the golden snapshot.
+- Do not set auto-hibernate to 0. A machine left behind sleeps on its own.
 
 ## Order
 
