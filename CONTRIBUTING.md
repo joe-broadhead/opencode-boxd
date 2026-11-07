@@ -20,7 +20,9 @@ Stages: `typecheck`, `unit`, `build`, `icons`, `copies`, `host`, `pack`, `forbid
 
 Stock binaries: set `OPENCODE_BIN_2_2_3` … `OPENCODE_BIN_2_2_6` to a stock `opencode` binary, or install
 `@opencode/cli-<platform>-<arch>` for the release into a folder of its own. A stage that needs one skips when it is
-absent.
+absent. CI installs all four, so the import-id evidence runs on every push.
+
+Before a release, work through [docs/live-check.md](docs/live-check.md) on one real machine.
 
 ## Install from a checkout
 

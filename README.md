@@ -9,6 +9,8 @@ Unofficial; not affiliated with boxd.
 - OpenCode `>=2.2.3 <2.3.0`, tested on 2.2.3, 2.2.4, 2.2.5 and 2.2.6.
 - The [boxd CLI](https://boxd.sh), signed in, on your `PATH`.
 - A boxd snapshot with OpenCode installed. The guest OpenCode must be the same version as the OpenCode on your laptop.
+  The default is `opencode-claude-final`, one particular image: set `"snapshot"` to your own in `opencode.json` before
+  the first `boxd_ensure`.
 - macOS or Linux on the laptop.
 
 ## Install
@@ -21,7 +23,7 @@ A snapshot is an image, not a session. The machine is a cache with more CPU; you
 
 ## Sign in
 
-The plugin makes no boxd call of its own. It runs your `boxd` CLI, so sign in to boxd the way you always do:
+The plugin never reads your boxd account or credentials; it runs your own `boxd` CLI, so sign in the way you always do:
 
 ```sh
 boxd auth login
@@ -34,17 +36,32 @@ session you cannot get back.
 
 1. `boxd_ensure` with a short work id. The machine is named `oc-<work id>`, and the work is recorded in the ledger.
 2. `boxd_submit` with the task. It returns when the guest has admitted the prompt, not when the model finishes.
-3. `boxd_job` in a later turn: busy, idle, or missing.
+3. `boxd_job` in a later turn: busy, idle, asleep, gone or starting. It never wakes a machine, because waking starts
+   billing; a hibernated work reports `asleep` with `boxd_resume` as its next step.
 4. `boxd_harvest` with a directory on this laptop. The session tree is exported, imported here parents first, and git is
    recorded.
 5. `boxd_sleep` to hibernate, `boxd_resume` to wake or rebuild, `boxd_image` to save a snapshot, `boxd_drop` to destroy.
+   Hibernating destroys nothing and keeps the disk, so `boxd_sleep` works even when the guest cannot be harvested; it
+   records a warning that the last prompt is not yet on the laptop, and status shows it.
 6. `boxd_status` reads the ledger and each open work's machine state. It starts nothing.
 
 Every machine change asks before it runs: `ensure`, `submit`, `harvest`, `sleep`, `resume`, `image` and `drop`. The two
 reads, `boxd_status` and `boxd_job`, run without asking.
 
-`boxd_sleep`, `boxd_image` and `boxd_drop` refuse until a harvest has proven the import on this laptop since the last
-prompt. `boxd_drop` also refuses a machine that is not the one the ledger records for that work id.
+`boxd_image` and `boxd_drop` refuse until a harvest has proven the import on this laptop since the last prompt, and
+`boxd_drop` also refuses a machine that is not the one the ledger records for that work id.
+
+`boxd_drop` destroys nothing that the laptop cannot account for. It refuses when:
+
+- the laptop import is missing or older than the last prompt (`NOT_PROVEN`);
+- the guest directory is not a git repository (`GIT_UNKNOWN`);
+- the tree has untracked or ignored paths, which a patch cannot hold (`UNTRACKED`) — their contents are stored beside
+  the patch when the guest can read them, but a patch is not a faithful copy;
+- the tree is dirty and no patch was stored (`DIRTY`).
+
+Tracked changes are stored as a patch (`git diff HEAD`, staged and unstaged) in the work's ledger folder. To finish a
+work whose tree has untracked files, commit or delete them on the machine, harvest again, then drop; or hibernate, which
+keeps the disk.
 
 ## Permissions
 
@@ -69,9 +86,8 @@ The last matching rule wins, so a rule of yours later in an agent, or a deny in 
 without a base allow are left alone, and `/boxd-status` names any agent that does not carry the block, with the rules
 to paste.
 
-`boxd_drop` asks rather than being off. It is irreversible, but its own guard makes data loss impossible: the laptop
-import must be fresh, and the tree must be clean or already stored as a patch. A deny would leave a machine billing
-with no way to clear it from the session.
+`boxd_drop` asks rather than being off. It is irreversible, but its guard only lets it run when the laptop can account
+for everything on the disk, and `boxd_sleep` is always there when you would rather keep the machine.
 
 ## Configure
 
@@ -120,6 +136,10 @@ Each member still needs the boxd CLI signed in on their own laptop.
 | `EXPORT_INVALID` | Call `boxd_harvest` again from an idle session. Do not invent a transcript. |
 | `PARENT_MISSING` | Harvest the whole session tree again, parents first, then move it. |
 | `SNAPSHOT_EXISTS` | Pick a new snapshot name: snapshots are immutable. |
+| `LEDGER_FAILED` | Check that the ledger folder is writable, then restart OpenCode. |
+| `UNTRACKED` | Commit or delete the paths the message names on the machine, harvest again, then drop. Or hibernate, which keeps the disk. |
+| `GIT_UNKNOWN` | Commit the work in a git repository on the machine, harvest again, then drop. Or hibernate, which keeps the disk. |
+| `CREATE_UNCERTAIN` | Run `boxd_status`: if the machine appears there, call `boxd_ensure` to adopt it; if not, ensure again. |
 
 The `/boxd` dialog and `/boxd-status` show the same status: connection, account, access, snapshot, guest, works, tools,
 agents without the default rules, the OpenCode version and one next step.
@@ -138,5 +158,6 @@ The ledger is yours to keep or delete. Machines are boxd's: `boxd machine remove
 - [Architecture](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/architecture.md)
 - [Scripting](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/scripting.md)
 - [Jelly](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/jelly.md)
+- [Live check on a real boxd machine](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/live-check.md)
 - [Changelog](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/CHANGELOG.md)
 - [Licence](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/LICENSE)

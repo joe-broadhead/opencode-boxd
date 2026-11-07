@@ -10,7 +10,7 @@ const facts = (overrides: Partial<StatusFacts> = {}): StatusFacts => ({
   host,
   snapshot: "opencode-claude-final",
   guestVersion: "2.2.6",
-  ledger: { snapshot: "opencode-claude-final", works: [] },
+  ledger: { snapshot: "opencode-claude-final", works: [], orphans: [] },
   tools: TOOLS.map((tool) => tool.id),
   agents: [{ id: "build", permissions: [{ action: "*", resource: "*", effect: "allow" }, ...defaultRules()] }],
   problems: [],
@@ -35,9 +35,10 @@ describe("the status model", () => {
       facts({
         ledger: {
           snapshot: "opencode-claude-final",
+          orphans: [],
           works: [
-            { workId: "review-api", machine: "oc-review-api", sessionId: "ses_1", proof: "fresh", dirty: false, machineStatus: "running" },
-            { workId: "docs", machine: "oc-docs", sessionId: null, proof: "missing", dirty: false, machineStatus: "hibernated" },
+            { workId: "review-api", machine: "oc-review-api", sessionId: "ses_1", proof: "fresh", dirty: false, machineStatus: "running", warnings: [] },
+            { workId: "docs", machine: "oc-docs", sessionId: null, proof: "missing", dirty: false, machineStatus: "hibernated", warnings: [] },
           ],
         },
       }),
@@ -94,7 +95,7 @@ describe("reading the facts", () => {
       host,
       snapshot: "opencode-claude-final",
       guestVersion: "2.2.6",
-      ledger: async () => ({ snapshot: "opencode-claude-final", works: [] }),
+      ledger: async () => ({ snapshot: "opencode-claude-final", works: [], orphans: [] }),
     })
     expect(status.tools).toBe(1)
     expect(status.unknownCount).toBe(0)

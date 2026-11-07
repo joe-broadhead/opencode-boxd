@@ -66,7 +66,7 @@ describe("the jelly declaration", () => {
 
   test("declares the vendor, and the summary says what a change does", () => {
     expect(pkg.opencode.vendor).toEqual({ id: "boxd", name: "boxd", domain: "boxd.sh" })
-    expect(jelly.summary).toContain("asks first")
+    expect(jelly.summary).toContain("every change asks")
     expect(jelly.summary.length).toBeLessThanOrEqual(160)
   })
 })

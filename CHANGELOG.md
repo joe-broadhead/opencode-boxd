@@ -25,3 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The laptop import no longer matches the word "session" as a session id.
 - `boxd_image` refuses a machine that no ledger work owns.
 - The guest check compares against this laptop's OpenCode, not a hard-coded release.
+- A read never wakes a machine: `boxd_job` reports `asleep`, with `boxd_resume` as the next step.
+- Every wake arms the awake bound (30 minutes, `idle.ignore-outbound off`), and a failure is a status problem.
+- `boxd_resume` rebuilds a machine any number of times in one OpenCode run: the guest helper is uploaded again.
+- `boxd_sleep` works when the guest cannot be harvested, with a recorded warning; hibernating keeps the disk.
+- `boxd_drop` refuses a non-git directory and any untracked or ignored path, and stores tracked changes as
+  `git diff HEAD` plus the untracked files' contents.
+- The ledger serialises per work, writes atomically through a unique temp file, and fails with `LEDGER_FAILED`.
+- A timed-out `machine new` is adopted when the machine appears, and `boxd_status` names `oc-*` machines no work records.
+- The ledger folder is 0700 and its files 0600; the guest's log is 0600; the guest password goes only to its own address.
+- A session tree with a cycle fails with `EXPORT_INVALID` instead of recursing.
+- `boxd_harvest` refuses a local directory that does not exist.

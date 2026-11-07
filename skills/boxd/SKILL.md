@@ -18,7 +18,8 @@ Read a tool's description before its first call; the input names below are the r
 4. `boxd_job` with the `workId` on a later turn: `busy`, `idle` or `missing`. One check, no waiting.
 5. `boxd_harvest` with the `workId` and the `localDirectory` that receives the import. The session tree is imported
    here parents first, and git is recorded beside it.
-6. `boxd_sleep` to hibernate, `boxd_drop` to destroy, `boxd_resume` after a shutdown, `boxd_image` to save a snapshot.
+6. `boxd_sleep` to hibernate (it keeps the disk and works without a harvest), `boxd_drop` to destroy, `boxd_resume`
+   after a shutdown, `boxd_image` to save a snapshot.
 
 `boxd_status` reads the ledger and each open work's machine state. It starts nothing, and it is the one call worth
 making before anything else on a new turn.
@@ -34,15 +35,15 @@ not the one the ledger records. After a decline, say nothing changed and offer t
 
 ## Do not
 
-- Do not call `boxd_sleep`, `boxd_image` or `boxd_drop` until `boxd_harvest` has returned `proven` since the last
-  `boxd_submit`. All three refuse, with `NOT_PROVEN`.
+- Do not call `boxd_image` or `boxd_drop` until `boxd_harvest` has returned `proven` since the last `boxd_submit`.
+  Both refuse, with `NOT_PROVEN`. `boxd_sleep` is always safe: it keeps the disk.
 - Do not destroy a machine to restart a session. `boxd_resume` wakes it, or rebuilds it from the golden snapshot and
   the proven transcript.
 - Do not copy `opencode.db`, and do not treat a snapshot as a transcript.
 - Do not publish the guest port, pass `--shared` or `--isolated`, or run `opencode run` on the machine. The tools talk
   to `127.0.0.1` through `boxd machine exec`, and sharing deletes the guest's sign-in.
 - Do not wait inside a tool call. `boxd_submit` admits and returns.
-- Do not promise a machine sleeps forever: it hibernates after 30 minutes of no traffic.
+- Do not promise a machine sleeps forever: while a work is open it hibernates after 30 idle minutes, and after `boxd_sleep` it may stay off for up to four hours.
 
 ## When something fails
 

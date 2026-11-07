@@ -22,7 +22,7 @@ OpenCode (laptop)                     boxd machine                   laptop
   argument is an argv array, never a shell string.
 - `guest/guest.py` — the helper copied to the machine. It speaks one JSON object in and one out, and talks only to
   `127.0.0.1`.
-- `src/ledger.ts` — the laptop's store, written atomically.
+- `src/ledger.ts` — the laptop's store: atomic writes, one lock per work, 0700/0600 modes.
 - `src/status.ts` — one model for the tool, the command, the dialog and the RPC.
 - `src/tools.ts` — one table of nine tools: name, class, schema, description and run. The tools RPC, the transform, the
   default rules and status all derive from it.
@@ -36,12 +36,13 @@ first, and only then may the machine sleep, be imaged or be destroyed.
 ## Platform facts
 
 - `opencode session import` keeps the transcript's id on 2.2.3–2.2.6, and answers `Session already exists` (exit 0, no
-  id) for an id already present.
+  id) for an id already present. `test/unit/prover.test.ts` runs this against each stock binary.
+- The ledger writes atomically (a unique temp file, a rename) and serialises per work, so two tools in one script cannot
+  lose each other's fields. `submit` stamps `lastSubmitAt` before the prompt, so a crash fails towards "stale".
 - The import runs with `--standalone`, so it never depends on a service being up.
 - `POST /api/session` creates a session, `POST /api/session/<id>/prompt` admits one, and
   `GET /api/experimental/session/<id>/export` and `POST /api/experimental/session/import` move one. The guest helper is
   the only code that speaks these.
-- The stock TUI resolves a plugin's `ui.dialog.alert` on every close path, which the pack test checks per release.
 
 ## The tools RPC
 

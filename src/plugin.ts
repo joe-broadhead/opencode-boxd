@@ -36,6 +36,10 @@ export function createBoxdPlugin(seam: BoxdSeam = {}) {
       const options = parseOptions(ctx.options)
       const host = checkHost(ctx.app.version, options.allowUntestedHost)
       const bin = seam.boxdBin ?? "boxd"
+      const { skills, problems: skillProblems } = await loadSkills(seam.skillsDir)
+      // Transforms replay on every rebuild, so each one overwrites its own entry rather than appending.
+      const problems = new Map<string, string>(skillProblems.map((problem, index) => [`skill:${index}`, problem]))
+      const report = (area: string) => (problem: string | undefined) => void (problem ? problems.set(area, problem) : problems.delete(area))
       const fleet = createFleet({
         boxd: seam.boxd ?? cliBoxd(bin),
         guest: seam.guest ?? cliGuest(bin),
@@ -44,11 +48,9 @@ export function createBoxdPlugin(seam: BoxdSeam = {}) {
         now: () => new Date().toISOString(),
         snapshot: options.snapshot,
         hostVersion: host.version,
+        // An awake bound that could not be armed is a status problem, not a silent skip.
+        report: report("wake"),
       })
-      const { skills, problems: skillProblems } = await loadSkills(seam.skillsDir)
-      // Transforms replay on every rebuild, so each one overwrites its own entry rather than appending.
-      const problems = new Map<string, string>(skillProblems.map((problem, index) => [`skill:${index}`, problem]))
-      const report = (area: string) => (problem: string | undefined) => void (problem ? problems.set(area, problem) : problems.delete(area))
       const read = () =>
         readStatus(ctx, {
           host,

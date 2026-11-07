@@ -7,6 +7,7 @@ Talks only to a localhost OpenCode server. Never starts a blocking agent command
 import base64
 import json
 import os
+import re
 import secrets
 import subprocess
 import sys
@@ -31,10 +32,15 @@ def emit(payload):
     sys.stdout.write(json.dumps({"ok": True, **payload}) + "\n")
 
 
+DEFAULT_BASE = f"http://127.0.0.1:{PORT}"
+
+
 def base_url(request):
-    base = request.get("base") or f"http://127.0.0.1:{PORT}"
-    if not (base.startswith("http://127.0.0.1:") or base.startswith("http://localhost:")):
-        fail("base must be localhost")
+    """The guest server's address. Only a loopback host and an explicit port; the default when none is given."""
+    base = request.get("base") or DEFAULT_BASE
+    parsed = re.fullmatch(r"http://(127\.0\.0\.1|localhost):(\d{1,5})", base)
+    if not parsed or not (1 <= int(parsed.group(2)) <= 65535):
+        fail("base must be http://127.0.0.1:<port> or http://localhost:<port>")
     return base.rstrip("/")
 
 
@@ -67,7 +73,8 @@ def guest_password():
 def http(method, url, body=None):
     data = None if body is None else json.dumps(body).encode()
     headers = {"content-type": "application/json", "accept": "application/json"}
-    password = guest_password()
+    # The guest's password goes to its own server only, never to a caller-supplied address.
+    password = guest_password() if url.startswith(DEFAULT_BASE) else ""
     if password:
         token = base64.b64encode(f"opencode:{password}".encode()).decode()
         headers["authorization"] = f"Basic {token}"
@@ -110,6 +117,7 @@ def action_serve(request):
             handle.write(secrets.token_hex(16))
         os.chmod(PASSWORD_PATH, 0o600)
     log = open("/tmp/opencode-boxd.log", "ab")
+    os.chmod(log.fileno(), 0o600)
     env = os.environ.copy()
     env["OPENCODE_PASSWORD"] = guest_password()
     subprocess.Popen(
@@ -192,26 +200,63 @@ def action_phase(request):
     emit({"phase": "idle"})
 
 
+UNTRACKED_LIMIT = 100
+UNTRACKED_BYTES = 5 * 1024 * 1024
+
+
 def action_git(request):
+    """What the laptop needs to decide whether the disk is safe to destroy, without pretending more than it knows."""
     path = directory(request.get("directory"))
-    status = subprocess.run(["git", "-C", path, "status", "--porcelain"], capture_output=True, text=True)
+    inside = subprocess.run(["git", "-C", path, "rev-parse", "--is-inside-work-tree"], capture_output=True, text=True)
+    if inside.returncode != 0 or inside.stdout.strip() != "true":
+        # Not a repository: nothing about this tree can be proven, and the plugin refuses to drop it.
+        emit({"known": False, "remote": None, "branch": None, "sha": None, "dirty": False, "patch": "", "untracked": [], "ignored": [], "untrackedFiles": {}})
+        return
+    status = subprocess.run(["git", "-C", path, "status", "--porcelain=v1", "--untracked-files=all", "--ignored"], capture_output=True, text=True)
     if status.returncode != 0:
         fail("git status failed", status.stderr[-200:])
     sha = subprocess.run(["git", "-C", path, "rev-parse", "HEAD"], capture_output=True, text=True)
     remote = subprocess.run(["git", "-C", path, "remote", "get-url", "origin"], capture_output=True, text=True)
     branch = subprocess.run(["git", "-C", path, "branch", "--show-current"], capture_output=True, text=True)
-    dirty = bool(status.stdout.strip())
+    untracked, ignored, dirty = [], [], False
+    for line in status.stdout.splitlines():
+        if len(line) < 4:
+            continue
+        code, name = line[:2], line[3:]
+        if code == "??":
+            untracked.append(name)
+        elif code == "!!":
+            ignored.append(name)
+        else:
+            dirty = True
+    # Tracked changes, staged and unstaged together: `git diff` alone misses a staged file.
     patch = ""
     if dirty:
-        diff = subprocess.run(["git", "-C", path, "diff"], capture_output=True, text=True)
-        patch = diff.stdout
+        patch = subprocess.run(["git", "-C", path, "diff", "HEAD"], capture_output=True, text=True).stdout
+    files, budget = {}, UNTRACKED_BYTES
+    for name in untracked[:UNTRACKED_LIMIT]:
+        if os.path.islink(os.path.join(path, name)):
+            continue
+        try:
+            with open(os.path.join(path, name), "rb") as handle:
+                body = handle.read(budget + 1)
+        except OSError:
+            continue
+        if len(body) > budget:
+            break
+        budget -= len(body)
+        files[name] = base64.b64encode(body).decode()
     emit(
         {
+            "known": True,
             "remote": remote.stdout.strip() or None,
             "branch": branch.stdout.strip() or None,
             "sha": sha.stdout.strip() or None,
             "dirty": dirty,
             "patch": patch,
+            "untracked": untracked,
+            "ignored": ignored,
+            "untrackedFiles": files,
         }
     )
 

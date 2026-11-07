@@ -45,6 +45,10 @@ export interface Status {
   readonly openWorks: number
   /** Open works whose laptop import is missing or older than the last prompt. */
   readonly unharvested: readonly string[]
+  /** `oc-*` machines the account has that no open work records. */
+  readonly orphans: readonly string[]
+  /** Open works hibernated before their last prompt was harvested. */
+  readonly warned: readonly string[]
   /** How many boxd tools OpenCode lists. */
   readonly tools: number
   /** How many of the listed `boxd_*` tools this version does not know. */
@@ -80,6 +84,7 @@ export function buildStatus(facts: StatusFacts): Status {
   const unknown = listed.filter((name) => !CLASS_OF.has(name))
   const works = facts.ledger?.works ?? []
   const unharvested = works.filter((work) => work.proof !== "fresh").map((work) => work.workId)
+  const warned = works.filter((work) => work.warnings.length > 0).map((work) => work.workId)
   const status = {
     version: VERSION,
     state,
@@ -90,6 +95,8 @@ export function buildStatus(facts: StatusFacts): Status {
     works,
     openWorks: works.length,
     unharvested,
+    orphans: facts.ledger?.orphans ?? [],
+    warned,
     tools: listed.length,
     unknownCount: unknown.length,
     unknownTools: unknown.filter((name) => SAFE_NAME.test(name)).slice(0, LISTED_UNKNOWN),
@@ -104,6 +111,12 @@ function nextStepOf(status: Omit<Status, "nextStep">): string {
   const rules = status.problems.find((problem) => problem.startsWith(RULES_NOT_ADDED))
   if (rules) return rules.split(" Next step: ")[1] ?? AGENTS_NEXT_STEP
   if (status.unguardedAgents.length) return AGENTS_NEXT_STEP
+  if (status.orphans.length) {
+    return `Call boxd_ensure for the work id ${status.orphans.length === 1 ? "named" : "named"} by ${list(status.orphans.map((name) => name.replace(/^oc-/, "")))} to adopt ${status.orphans.length === 1 ? "a machine" : "machines"} no ledger records, or remove them with the boxd CLI.`
+  }
+  if (status.warned.length) {
+    return `Call boxd_resume and then boxd_harvest for ${list(status.warned)}: it was hibernated before its last prompt was harvested.`
+  }
   if (status.unharvested.length) {
     const names = list(status.unharvested)
     return `Call boxd_harvest for ${names}: sleep, image and drop refuse without a fresh import on this laptop.`
@@ -135,11 +148,13 @@ function toolsText({ tools, unknownCount, unknownTools }: Status) {
 }
 
 /** The Works row: what is open, and what is not yet safe to sleep, image or drop. */
-function worksText({ openWorks, unharvested, works }: Status) {
-  if (openWorks === 0) return "no open work"
+function worksText({ openWorks, unharvested, warned, orphans, works }: Status) {
+  const unowned = orphans.length ? `; machines no ledger records: ${list(orphans)}` : ""
+  if (openWorks === 0) return `no open work${unowned}`
   const machines = works.map((work) => `${work.workId} (${work.machineStatus ?? "state unknown"})`).join(", ")
   const stale = unharvested.length ? `; no fresh laptop import: ${list(unharvested)}` : "; every work has a fresh laptop import"
-  return `${openWorks} open: ${machines}${stale}`
+  const asleep = warned.length ? `; hibernated before a harvest: ${list(warned)}` : ""
+  return `${openWorks} open: ${machines}${stale}${asleep}${unowned}`
 }
 
 /** The OpenCode row: the version, whether it is tested, the supported range, then any setup problems. */
@@ -164,10 +179,10 @@ export function formatStatus(status: Status) {
   return [
     `${DISPLAY_NAME} status`,
     `- Connection: ${connection}`,
-    `- Account: not read by status, which makes no boxd call: the boxd CLI's own account is yours`,
+    `- Account: not read: the plugin never reads your boxd account or credentials, and boxd_status runs one read-only machine get per open work`,
     `- Access: ${accessText(status)}`,
     `- Snapshot: ${status.snapshot}`,
-    `- Guest: OpenCode ${status.guestVersion ?? "unknown"}, the same version as this laptop`,
+    `- Guest: must be OpenCode ${status.guestVersion ?? "unknown"}, this laptop's version; a job or a harvest checks it`,
     `- Works: ${worksText(status)}`,
     `- Tools: ${toolsText(status)}`,
     `- Agents without default rules: ${agents.length ? `${agents.join(", ")}\n${AGENT_RULES}` : "none"}`,
@@ -223,7 +238,7 @@ export const StatusRpc = {
       input: { type: "object" },
       output: {
         type: "object",
-        required: ["version", "state", "host", "snapshot", "guestVersion", "works", "openWorks", "unharvested", "tools", "unknownCount", "unknownTools", "unguardedAgents", "problems", "nextStep"],
+        required: ["version", "state", "host", "snapshot", "guestVersion", "works", "openWorks", "unharvested", "orphans", "warned", "tools", "unknownCount", "unknownTools", "unguardedAgents", "problems", "nextStep"],
         properties: {
           version: { type: "string" },
           state: { enum: ["connected", "failed"] },
@@ -239,7 +254,7 @@ export const StatusRpc = {
             type: "array",
             items: {
               type: "object",
-              required: ["workId", "machine", "sessionId", "proof", "dirty", "machineStatus"],
+              required: ["workId", "machine", "sessionId", "proof", "dirty", "machineStatus", "warnings"],
               properties: {
                 workId: { type: "string" },
                 machine: { type: "string" },
@@ -247,11 +262,14 @@ export const StatusRpc = {
                 proof: { enum: ["fresh", "stale", "missing"] },
                 dirty: { type: "boolean" },
                 machineStatus: { type: ["string", "null"] },
+                warnings: strings,
               },
             },
           },
           openWorks: count,
           unharvested: strings,
+          orphans: strings,
+          warned: strings,
           tools: count,
           unknownCount: count,
           unknownTools: strings,

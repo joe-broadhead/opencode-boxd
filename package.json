@@ -69,7 +69,7 @@
   },
   "jelly": {
     "title": "boxd",
-    "summary": "Run an OpenCode session on a private boxd machine and keep the transcript on your laptop; every machine change asks first.",
+    "summary": "Run a session on a private boxd machine and keep the transcript on your laptop; every change asks.",
     "icon": "assets/icon.svg",
     "tools": [
       {

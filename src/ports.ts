@@ -10,16 +10,27 @@ export type MachineInfo = {
   source?: string
 }
 
+/** What the guest's git read found. `known: false` means the directory is not a repository: nothing can be proven. */
 export type GitState = {
+  known: boolean
   remote: string | null
   branch: string | null
   sha: string | null
   dirty: boolean
+  /** Tracked changes, as `git diff HEAD`: staged and unstaged together. */
   patch?: string
+  /** Paths git does not track, which the patch cannot hold. */
+  untracked: string[]
+  /** Paths git ignores: build output or a local secret. The patch cannot hold them either. */
+  ignored: string[]
+  /** The untracked files' contents, path to base64, when the guest could read them. */
+  untrackedFiles: Record<string, string>
 }
 
 export type BoxdPort = {
   get(name: string): Promise<MachineInfo>
+  /** Every machine the account has, so status can name one no ledger records. */
+  list(): Promise<MachineInfo[]>
   create(input: { name: string; snapshot: string; workId: string }): Promise<MachineInfo>
   hibernate(name: string): Promise<void>
   wake(name: string): Promise<void>
@@ -41,6 +52,11 @@ export type GuestPort = {
   exportSession(machine: string, sessionID: string): Promise<unknown>
   importSession(machine: string, transfer: Transfer, directory: string): Promise<{ id: string }>
   git(machine: string, directory: string): Promise<GitState>
+  /**
+   * The machine was created again under the same name, so its disk is new: the uploaded helper is gone and must be
+   * copied again before the next guest call.
+   */
+  forget(machine: string): void
 }
 
 export type Prover = {

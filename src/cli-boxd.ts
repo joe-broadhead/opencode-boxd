@@ -6,6 +6,7 @@ import {
   getArgs,
   hibernateArgs,
   holdAwakeArgs,
+  listArgs,
   listSnapshotArgs,
   outboundArgs,
   removeArgs,
@@ -18,6 +19,13 @@ import { parseJson, run } from "./run.js"
 export function cliBoxd(bin = "boxd"): BoxdPort {
   return {
     get: (name) => get(bin, name),
+    list: async () => {
+      const result = await run(bin, listArgs())
+      if (result.code !== 0) fail("list", result.stderr)
+      const parsed = parseJson(result.stdout)
+      if (!Array.isArray(parsed)) return []
+      return parsed.map((item) => parseMachine(item, String(asRecord(item).name ?? "")))
+    },
     create: async (input) => {
       const result = await run(bin, createArgs(input.workId, input.snapshot), { timeoutMs: 30_000 })
       if (result.code !== 0) fail("create", result.stderr)

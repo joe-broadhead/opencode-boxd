@@ -33,4 +33,14 @@ jobs:
         with:
           bun-version: 1.4.4
       - run: npm ci --ignore-scripts
+      # The stock binaries the prover and pack stages run against, so the import-id evidence runs here too.
+      - name: Stock OpenCode binaries
+        run: |
+          platform="$(node -p 'process.platform')-$(node -p 'process.arch')"
+          for version in 2.2.3 2.2.4 2.2.5 2.2.6; do
+            dir="$RUNNER_TEMP/stock-$version"
+            mkdir -p "$dir"
+            (cd "$dir" && npm init -y >/dev/null && npm install "@opencode/cli@$version" "@opencode/cli-$platform@$version" --omit=optional --ignore-scripts --no-audit --no-fund)
+            echo "OPENCODE_BIN_${version//./_}=$dir/node_modules/@opencode/cli-$platform/bin/opencode" >> "$GITHUB_ENV"
+          done
       - run: npm run check

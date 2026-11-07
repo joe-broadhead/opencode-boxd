@@ -1,9 +1,15 @@
 import { describe, expect, test } from "bun:test"
+import { mkdtemp } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { BoxdError, type Code } from "../../src/errors.js"
 import { proofState } from "../../src/fleet.js"
 import { createArgs, holdAwakeArgs, AWAKE_SECONDS } from "../../src/argv.js"
 import { order, parseExport } from "../../src/transfer.js"
 import { transfer, world } from "./fake.js"
+
+/** A real directory: a harvest checks that its destination exists. */
+const local = () => mkdtemp(join(tmpdir(), "boxd-local-"))
 
 const refusal = async (promise: Promise<unknown>, code: Code) => {
   const error = await promise.then(
@@ -18,7 +24,7 @@ const refusal = async (promise: Promise<unknown>, code: Code) => {
 }
 
 describe("the control plane", () => {
-  test("runs a session off the laptop and refuses to sleep or drop it until the import is proven", async () => {
+  test("runs a session off the laptop, hibernates without a proof, and refuses only the drop until the import is proven", async () => {
     const { fleet, boxd, guest, prover } = await world()
     const opened = await fleet.ensure({ workId: "review-api", repo: "https://github.com/joe-broadhead/example" })
     expect(opened).toMatchObject({ state: "ready", machine: "oc-review-api", guestVersion: "2.2.6" })
@@ -30,21 +36,24 @@ describe("the control plane", () => {
     expect(guest.prompts).toEqual(["ses_root_review-api:Add a health check."])
 
     expect((await fleet.job({ workId: "review-api" })).state).toBe("busy")
-    await refusal(fleet.harvest({ workId: "review-api", localDirectory: "/work/example" }), "SESSION_BUSY")
-    await refusal(fleet.sleep({ workId: "review-api" }), "NOT_PROVEN")
+    await refusal(fleet.harvest({ workId: "review-api", localDirectory: await local() }), "SESSION_BUSY")
+    // Hibernating destroys nothing, so it is always an exit from billing; only the drop needs a proof.
+    await expect(fleet.sleep({ workId: "review-api" })).resolves.toMatchObject({ state: "hibernated" })
     await refusal(fleet.drop({ workId: "review-api" }), "NOT_PROVEN")
+    await fleet.resume({ workId: "review-api" })
 
     guest.phaseById.set("ses_root_review-api", "idle")
     guest.sessions.push({ id: "ses_child_1", parentID: "ses_root_review-api" })
     guest.exports.set("ses_child_1", transfer("ses_child_1", "ses_root_review-api", "child"))
 
-    const proven = await fleet.harvest({ workId: "review-api", localDirectory: "/work/example" })
+    const destination = await local()
+    const proven = await fleet.harvest({ workId: "review-api", localDirectory: destination })
     expect(proven.state).toBe("proven")
     expect(prover.calls.map((call) => call.remoteId)).toEqual(["ses_root_review-api", "ses_child_1"])
     expect(prover.calls[1]?.parentID).toBe("ses_root_review-api")
 
     // A second harvest is proven again: the prover treats an id that already exists as already imported.
-    expect((await fleet.harvest({ workId: "review-api", localDirectory: "/work/example" })).state).toBe("proven")
+    expect((await fleet.harvest({ workId: "review-api", localDirectory: destination })).state).toBe("proven")
     await expect(fleet.sleep({ workId: "review-api" })).resolves.toMatchObject({ state: "hibernated" })
     await expect(fleet.drop({ workId: "review-api" })).resolves.toMatchObject({ state: "dropped" })
     expect(boxd.calls).toContain("remove oc-review-api")
@@ -67,10 +76,10 @@ describe("the control plane", () => {
     await dirty.fleet.ensure({ workId: "review-api" })
     await dirty.fleet.submit({ workId: "review-api", text: "Leave the tree dirty." })
     dirty.guest.phaseById.set("ses_root_review-api", "idle")
-    dirty.guest.gitState = { remote: "https://github.com/joe-broadhead/example", branch: "master", sha: "abc", dirty: true }
-    await dirty.fleet.harvest({ workId: "review-api", localDirectory: "/work/example" })
-    // Dirty, with no diff in the fake: the patch is not stored, so the disk is not destroyed.
-    await refusal(dirty.fleet.drop({ workId: "review-api" }), "DIRTY")
+    dirty.guest.gitState = { known: true, remote: "https://github.com/joe-broadhead/example", branch: "master", sha: "abc", dirty: true, patch: "diff --git a/x b/x\n", untracked: [], ignored: [], untrackedFiles: {} }
+    await dirty.fleet.harvest({ workId: "review-api", localDirectory: await local() })
+    // Dirty with its diff: the patch is stored, so the disk is accounted for and may be destroyed.
+    await expect(dirty.fleet.drop({ workId: "review-api" })).resolves.toMatchObject({ state: "dropped" })
 
     const unharvested = await world()
     await unharvested.fleet.ensure({ workId: "review-api" })
@@ -89,9 +98,9 @@ describe("the control plane", () => {
     await fleet.ensure({ workId: "review-api" })
     await fleet.submit({ workId: "review-api", text: "Unstored change." })
     guest.phaseById.set("ses_root_review-api", "idle")
-    await fleet.harvest({ workId: "review-api", localDirectory: "/work/example" })
+    await fleet.harvest({ workId: "review-api", localDirectory: await local() })
     const work = await ledger.load("review-api")
-    work!.git = { remote: null, branch: null, sha: null, dirty: true, patchStored: false }
+    work!.git = { known: true, remote: null, branch: null, sha: null, dirty: true, patchStored: false, untracked: [], ignored: [], untrackedStored: false }
     await ledger.save(work!)
     await refusal(fleet.drop({ workId: "review-api" }), "DIRTY")
   })
@@ -103,7 +112,7 @@ describe("the control plane", () => {
     guest.phaseById.set("ses_root_review-api", "idle")
     guest.sessions.push({ id: "ses_child_1", parentID: "ses_root_review-api" })
     guest.exports.set("ses_child_1", transfer("ses_child_1", "ses_root_review-api"))
-    await fleet.harvest({ workId: "review-api", localDirectory: "/work/example" })
+    await fleet.harvest({ workId: "review-api", localDirectory: await local() })
     await fleet.sleep({ workId: "review-api" })
     expect(boxd.machines.get("oc-review-api")?.status).toBe("hibernated")
 
@@ -140,8 +149,10 @@ describe("the control plane", () => {
     boxd.calls.length = 0
     const status = await fleet.status()
     expect(status.snapshot).toBe("opencode-claude-final")
-    expect(status.works).toEqual([{ workId: "review-api", machine: "oc-review-api", sessionId: null, proof: "missing", dirty: false, machineStatus: "running" }])
-    expect(boxd.calls.every((call) => call.startsWith("get "))).toBe(true)
+    expect(status.orphans).toEqual([])
+    expect(status.works).toEqual([{ workId: "review-api", machine: "oc-review-api", sessionId: null, proof: "missing", dirty: false, machineStatus: "running", warnings: [] }])
+    // One read-only machine read per work, plus one account listing for orphans: nothing that wakes or holds.
+    expect(boxd.calls.every((call) => call.startsWith("get ") || call === "machine list")).toBe(true)
   })
 
   test("a work that was never opened is NOT_OURS, and a second work id cannot adopt another machine", async () => {

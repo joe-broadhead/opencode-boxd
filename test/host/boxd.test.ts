@@ -3,6 +3,8 @@
 // and runs nothing when the prompt is declined.
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { SUPPORTED_HOST } from "../../src/constants.js"
+import { writeFileSync } from "node:fs"
+import { join } from "node:path"
 import { defaultRules, type Rule } from "../../src/permissions.js"
 import { TOOLS, CHANGING_TOOLS, READ_TOOLS } from "../../src/tools.js"
 import { TOOLS_RPC_ID } from "../../src/host/tools-rpc.js"
@@ -145,6 +147,46 @@ describe("the plugin on a stock host", () => {
   })
 })
 
+describe("a read never bills, and a drop never loses a file", () => {
+  test("boxd_job on a hibernated work reports asleep and the CLI never wakes it", async () => {
+    const host = await startHost()
+    try {
+      const build = await session(host)
+      await attempt(host, build, "build", "boxd_ensure", "always", { workId: "review-api", directory: host.location.directory })
+      host.boxd.seed("oc-review-api", { status: "hibernated" })
+      const before = host.boxd.calls().length
+      const job = await attempt(host, build, "build", "boxd_job", "reject", { workId: "review-api" })
+      expect(job.asked).toBeUndefined()
+      expect(job.output).toMatchObject({ state: "asleep", machineStatus: "hibernated" })
+      expect(host.boxd.calls().slice(before).filter((call) => call.startsWith("wake") || call.startsWith("hold"))).toEqual([])
+    } finally {
+      await host.close()
+    }
+  })
+
+  test("an untracked file is captured, named, and refuses the drop", async () => {
+    const host = await startHost()
+    try {
+      const build = await session(host)
+      const work = host.location.directory
+      await attempt(host, build, "build", "boxd_ensure", "always", { workId: "review-api", directory: work })
+      await attempt(host, build, "build", "boxd_submit", "always", { workId: "review-api", text: "Write notes." })
+      host.guest.idle("ses_guest_root")
+      writeFileSync(join(work, "notes.txt"), "a note the session wrote\n")
+
+      const harvested = await attempt(host, build, "build", "boxd_harvest", "always", { workId: "review-api", localDirectory: work })
+      expect(harvested.output).toMatchObject({ state: "proven", git: { known: true, untracked: ["notes.txt"] } })
+      expect(String((harvested.output as { next?: string }).next)).toContain("Commit or delete notes.txt")
+
+      const dropped = await attempt(host, build, "build", "boxd_drop", "always", { workId: "review-api" })
+      expect(dropped.output).toMatchObject({ error: "UNTRACKED" })
+      expect(host.boxd.machines()["oc-review-api"]?.status).not.toBe("destroyed")
+    } finally {
+      await host.close()
+    }
+  })
+})
+
 describe("the status RPC", () => {
   test("reports the open work, the unharvested flag and the guest version", async () => {
     const host = await startHost()
@@ -154,7 +196,7 @@ describe("the status RPC", () => {
       host.boxd.seed("oc-review-api", { status: "hibernated" })
       const status = await statusThroughRpc(host)
       expect(status).toMatchObject({ state: "connected", openWorks: 1, guestVersion: HOST_VERSION, snapshot: "opencode-claude-final", unknownCount: 0 })
-      expect(status.works).toEqual([{ workId: "review-api", machine: "oc-review-api", sessionId: null, proof: "missing", dirty: false, machineStatus: "hibernated" }])
+      expect(status.works).toEqual([{ workId: "review-api", machine: "oc-review-api", sessionId: null, proof: "missing", dirty: false, machineStatus: "hibernated", warnings: [] }])
       expect(status.unharvested).toEqual(["review-api"])
       expect(String(status.nextStep)).toContain("boxd_harvest for review-api")
     } finally {

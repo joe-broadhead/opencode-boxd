@@ -20,6 +20,7 @@ export function cliGuest(bin = "boxd"): GuestPort {
   }
 
   return {
+    forget: (machine) => void uploaded.delete(machine),
     version: async (machine) => {
       const result = await run(bin, ["machine", "exec", machine, "--", "opencode", "--version"])
       if (result.code !== 0) throw boxdError("GUEST_VERSION", "The machine's OpenCode version could not be read.")
@@ -63,11 +64,15 @@ export function cliGuest(bin = "boxd"): GuestPort {
     git: async (machine, directory) => {
       const parsed = await call(machine, "git", { directory })
       return {
+        known: parsed.known === true,
         remote: stringOrNull(parsed.remote),
         branch: stringOrNull(parsed.branch),
         sha: stringOrNull(parsed.sha),
         dirty: parsed.dirty === true,
-        patch: typeof parsed.patch === "string" ? parsed.patch : undefined,
+        ...(typeof parsed.patch === "string" ? { patch: parsed.patch } : {}),
+        untracked: strings(parsed.untracked),
+        ignored: strings(parsed.ignored),
+        untrackedFiles: files(parsed.untrackedFiles),
       }
     },
   }
@@ -92,4 +97,15 @@ function parseLine(stdout: string): Record<string, unknown> {
 
 function stringOrNull(value: unknown): string | null {
   return typeof value === "string" && value ? value : null
+}
+
+function strings(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []
+}
+
+/** The untracked files' contents, path to base64: only plain paths leave the guest. */
+function files(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {}
+  const entries = Object.entries(value as Record<string, unknown>).filter(([path, body]) => path.startsWith("/") === false && typeof body === "string")
+  return Object.fromEntries(entries) as Record<string, string>
 }

@@ -58,8 +58,20 @@ would leave a machine billing with no way to clear it from the session.
   service is running, and never waits on one.
 - **The guest must run the same OpenCode as the laptop.** The plugin reads `opencode --version` on the machine and
   compares it with the host's own version.
-- **Status makes no boxd call.** `boxd_status` reads the ledger and one `boxd machine get` per open work; `/boxd-status`,
-  the `/boxd` dialog and the status RPC read the ledger and the open works' state.
+- **Status reads, never wakes.** `boxd_status` runs one read-only `machine get` per open work and one `machine list`;
+  `/boxd-status`, the `/boxd` dialog and the status RPC read the same. No read wakes a machine, because waking starts
+  billing. The plugin never reads your boxd account or credentials.
+- **A read never wakes.** `boxd_job` reports `asleep` for a hibernated machine and names `boxd_resume` as the next step.
+- **Hibernating destroys nothing.** `boxd_sleep` needs no proof and works when the guest cannot be harvested; it records
+  a warning that the last prompt is not on the laptop yet, which status shows. `boxd_image` and `boxd_drop` still need a
+  fresh proof.
+- **Drop only destroys what the laptop can account for.** It refuses a non-git directory, untracked or ignored paths, and
+  a dirty tree with no stored patch. Tracked changes are stored as `git diff HEAD`; untracked contents are stored beside
+  it when the guest can read them, which is not the same as a faithful copy, so a drop still refuses.
+- **A create is recorded before it runs.** The ledger holds the intent, so a timed-out `machine new` is either adopted
+  when the machine appears, or reported as `CREATE_UNCERTAIN`, and `boxd_status` names an `oc-*` machine no work records.
+- **Every wake arms the awake bound.** `machine config set auto-hibernate.timeout 1800` and `idle.ignore-outbound off`
+  run right after a wake or create; a sleep sets the timeout to 14400.
 
 ## Errors
 
@@ -89,3 +101,7 @@ errors pass through unchanged. No error, log or status line contains a token, a 
 | `EXPORT_INVALID` | An export is not in OpenCode's session shape. |
 | `PARENT_MISSING` | A child session was imported before its parent. |
 | `SNAPSHOT_EXISTS` | Snapshot names are immutable. |
+| `LEDGER_FAILED` | A ledger read or write failed: a file system error, not a boxd one. |
+| `UNTRACKED` | The guest tree has untracked or ignored paths, which a stored patch cannot hold. |
+| `GIT_UNKNOWN` | The guest directory is not a git repository, so nothing about its files can be proven. |
+| `CREATE_UNCERTAIN` | `machine new` timed out and no machine with that name exists yet. |

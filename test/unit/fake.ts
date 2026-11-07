@@ -5,6 +5,7 @@ import { createFleet, type Deps } from "../../src/fleet.js"
 import { Ledger } from "../../src/ledger.js"
 import type { BoxdPort, GitState, GuestPort, MachineInfo, MachineStatus, Prover } from "../../src/ports.js"
 import type { Transfer } from "../../src/transfer.js"
+import { boxdError } from "../../src/errors.js"
 
 const HOST = "2.2.6"
 
@@ -17,7 +18,13 @@ export type World = {
   root: string
 }
 
-export async function world(options?: { hostVersion?: string | null; snapshot?: string; version?: string; root?: string }): Promise<World> {
+export async function world(options?: {
+  hostVersion?: string | null
+  snapshot?: string
+  version?: string
+  root?: string
+  report?: (problem: string) => void
+}): Promise<World> {
   const root = options?.root ?? (await mkdtemp(join(tmpdir(), "boxd-unit-")))
   const boxd = new FakeBoxd()
   const guest = new FakeGuest(options?.version ?? HOST)
@@ -31,6 +38,7 @@ export async function world(options?: { hostVersion?: string | null; snapshot?: 
     now: () => `2026-11-07T12:00:${String(tick++).padStart(2, "0")}.000Z`,
     snapshot: options && "snapshot" in options ? options.snapshot! : "opencode-claude-final",
     hostVersion: options && "hostVersion" in options ? options.hostVersion! : HOST,
+    ...(options?.report ? { report: options.report } : {}),
   }
   return { fleet: createFleet(deps), boxd, guest, prover, ledger: deps.ledger, root }
 }
@@ -43,6 +51,15 @@ export class FakeBoxd implements BoxdPort {
   readonly calls: string[] = []
   readonly machines = new Map<string, MachineInfo>()
   readonly snapshots: Array<{ name: string; storage: string; status: string }> = []
+  /** How the next `create` answers: normally, by timing out while the machine lands, by timing out with nothing, or shared. */
+  createBehaviour: "ok" | "timeout-then-exists" | "timeout-missing" | "shared" = "ok"
+  /** Machines the account has that no ledger records. */
+  readonly orphans: string[] = []
+
+  async list(): Promise<MachineInfo[]> {
+    this.calls.push("machine list")
+    return [...this.machines.values(), ...this.orphans.map((name) => ({ name, status: "running" as const, sharing: "private" as const, isolated: false }))]
+  }
 
   async get(name: string): Promise<MachineInfo> {
     this.calls.push(`get ${name}`)
@@ -51,8 +68,16 @@ export class FakeBoxd implements BoxdPort {
 
   async create(input: { name: string; snapshot: string; workId: string }): Promise<MachineInfo> {
     this.calls.push(`create ${input.name} ${input.snapshot}`)
-    const machine: MachineInfo = { name: input.name, status: "running", sharing: "private", isolated: false, source: `snapshot/${input.snapshot}` }
+    const machine: MachineInfo = {
+      name: input.name,
+      status: "running",
+      sharing: this.createBehaviour === "shared" ? "shared" : "private",
+      isolated: false,
+      source: `snapshot/${input.snapshot}`,
+    }
+    if (this.createBehaviour === "timeout-missing") throw boxdError("TIMEOUT", "boxd machine new did not answer within 30000 ms.")
     this.machines.set(input.name, machine)
+    if (this.createBehaviour === "timeout-then-exists") throw boxdError("TIMEOUT", "boxd machine new did not answer within 30000 ms.")
     return machine
   }
 
@@ -103,8 +128,10 @@ export class FakeGuest implements GuestPort {
   readonly exports = new Map<string, unknown>()
   readonly imports: Transfer[] = []
   readonly prompts: string[] = []
+  readonly forgotten: string[] = []
+  gitFails = false
   phaseById = new Map<string, "busy" | "idle" | "missing">()
-  gitState: GitState = { remote: null, branch: null, sha: null, dirty: false }
+  gitState: GitState = { known: true, remote: null, branch: null, sha: null, dirty: false, untracked: [], ignored: [], untrackedFiles: {} }
   serverUp = true
   prepared: string[] = []
 
@@ -146,7 +173,11 @@ export class FakeGuest implements GuestPort {
     return { id: value.info.id }
   }
   async git(_machine: string, _directory: string) {
+    if (this.gitFails) throw new Error("git status failed")
     return this.gitState
+  }
+  forget(machine: string) {
+    this.forgotten.push(machine)
   }
 }
 

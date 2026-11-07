@@ -61,7 +61,7 @@ jobs:
             exit 1
           fi
       - name: Test the tarball that will be published
-        run: PACK_TARBALL="$RUNNER_TEMP/$(node -p 'const m=require("./package.json"); m.name.split("/").at(-1)+"-"+m.version+".tgz' | sed 's|@joe-broadhead/|joe-broadhead-opencode-|')" bun test ./test/pack
+        run: PACK_TARBALL="$(ls "$RUNNER_TEMP"/*.tgz)" bun test ./test/pack
       - name: Publish to npm
         run: |
           name=$(node -p 'require("./package.json").name')
