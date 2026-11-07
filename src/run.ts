@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process"
-import { BoxdError } from "./errors.js"
+import { boxdError } from "./errors.js"
 
 export type RunResult = { code: number; stdout: string; stderr: string }
 
@@ -11,13 +11,13 @@ export function run(bin: string, args: string[], options?: { stdin?: string; tim
     const stderr: Buffer[] = []
     const timer = setTimeout(() => {
       child.kill("SIGTERM")
-      reject(new BoxdError("TIMEOUT", `${bin} ${args[0] ?? ""} timed out after ${timeoutMs}ms.`, "Call boxd_status. Do not retry inside this call."))
+      reject(boxdError("TIMEOUT", `${bin} ${args[0] ?? ""} did not answer within ${timeoutMs} ms.`))
     }, timeoutMs)
     child.stdout.on("data", (chunk) => stdout.push(chunk))
     child.stderr.on("data", (chunk) => stderr.push(chunk))
     child.on("error", (error) => {
       clearTimeout(timer)
-      reject(new BoxdError("BOXD_MISSING", error.message, "Install the boxd CLI and sign in."))
+      reject(boxdError("BOXD_MISSING", `The boxd CLI could not be run (${error.message}).`))
     })
     child.on("close", (code) => {
       clearTimeout(timer)
@@ -32,6 +32,6 @@ export function parseJson(text: string): unknown {
   const start = text.indexOf("{")
   const list = text.indexOf("[")
   const cut = start === -1 ? list : list === -1 ? start : Math.min(start, list)
-  if (cut === -1) throw new BoxdError("BOXD_OUTPUT", "boxd did not return JSON.", "Run the same boxd command with --json and read stderr.")
+  if (cut === -1) throw boxdError("BOXD_FAILED", "The boxd CLI did not return JSON.")
   return JSON.parse(text.slice(cut))
 }

@@ -1,4 +1,0 @@
-Copyright (c) 2026 Joe Broadhead
-
-The guest helper speaks OpenCode's experimental session export and import
-HTTP API as documented for 2.2.6. It is not a copy of OpenCode.

@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
+import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import type { Transfer } from "./transfer.js"
 
@@ -31,7 +31,11 @@ export type Work = {
 }
 
 export class Ledger {
-  constructor(readonly root: string) {}
+  readonly root: string
+
+  constructor(root: string) {
+    this.root = root
+  }
 
   async load(workId: string): Promise<Work | undefined> {
     try {
@@ -69,7 +73,6 @@ export class Ledger {
   }
 
   async list(): Promise<Work[]> {
-    const { readdir } = await import("node:fs/promises")
     let names: string[]
     try {
       names = await readdir(join(this.root, "works"))

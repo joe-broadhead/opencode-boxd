@@ -1,7 +1,7 @@
-import { BoxdError } from "./errors.js"
+import { boxdError } from "./errors.js"
 import { copyToGuestArgs, execArgs, guestRequest } from "./argv.js"
-import type { GitState, GuestPort } from "./ports.js"
-import { readHelper } from "./cli-boxd.js"
+import type { GuestPort } from "./ports.js"
+import { readGuestHelper } from "./cli-boxd.js"
 import { run } from "./run.js"
 
 const HELPER = "/tmp/opencode-boxd/guest.py"
@@ -14,7 +14,7 @@ export function cliGuest(bin = "boxd"): GuestPort {
     const result = await run(bin, execArgs(machine), { stdin: guestRequest(action, fields), timeoutMs: 30_000 })
     const parsed = parseLine(result.stdout)
     if (result.code !== 0 || parsed.ok === false) {
-      throw new BoxdError("GUEST_FAILED", `Guest ${action} failed.`, String(parsed.error ?? result.stderr).slice(0, 400))
+      throw boxdError("GUEST_FAILED", `The guest ${action} failed (${String(parsed.error ?? result.stderr).slice(0, 300)}).`)
     }
     return parsed
   }
@@ -22,7 +22,7 @@ export function cliGuest(bin = "boxd"): GuestPort {
   return {
     version: async (machine) => {
       const result = await run(bin, ["machine", "exec", machine, "--", "opencode", "--version"])
-      if (result.code !== 0) throw new BoxdError("GUEST_VERSION", "Could not read OpenCode's version on the machine.", result.stderr.slice(0, 200))
+      if (result.code !== 0) throw boxdError("GUEST_VERSION", "The machine's OpenCode version could not be read.")
       return result.stdout.trim()
     },
     server: async (machine) => {
@@ -68,25 +68,25 @@ export function cliGuest(bin = "boxd"): GuestPort {
         sha: stringOrNull(parsed.sha),
         dirty: parsed.dirty === true,
         patch: typeof parsed.patch === "string" ? parsed.patch : undefined,
-      } satisfies GitState
+      }
     },
   }
 }
 
 async function ensureHelper(bin: string, machine: string, uploaded: Set<string>): Promise<void> {
   if (uploaded.has(machine)) return
-  const helper = await readHelper()
+  const helper = await readGuestHelper()
   const mkdir = await run(bin, ["machine", "exec", machine, "--", "mkdir", "-p", "/tmp/opencode-boxd"])
-  if (mkdir.code !== 0) throw new BoxdError("GUEST_FAILED", "Could not prepare /tmp/opencode-boxd on the machine.", mkdir.stderr.slice(0, 200))
+  if (mkdir.code !== 0) throw boxdError("GUEST_FAILED", "The guest work directory could not be created.")
   const copied = await run(bin, copyToGuestArgs(machine, HELPER), { stdin: helper, timeoutMs: 30_000 })
-  if (copied.code !== 0) throw new BoxdError("GUEST_FAILED", "Could not copy the guest helper.", copied.stderr.slice(0, 200))
+  if (copied.code !== 0) throw boxdError("GUEST_FAILED", "The guest helper could not be copied to the machine.")
   uploaded.add(machine)
 }
 
 function parseLine(stdout: string): Record<string, unknown> {
   const lines = stdout.trim().split("\n")
   const line = [...lines].reverse().find((item) => item.startsWith("{"))
-  if (!line) throw new BoxdError("GUEST_FAILED", "The guest helper did not return JSON.", stdout.slice(0, 200))
+  if (!line) throw boxdError("GUEST_FAILED", "The guest helper did not return JSON.")
   return JSON.parse(line) as Record<string, unknown>
 }
 

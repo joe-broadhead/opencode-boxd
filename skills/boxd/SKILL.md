@@ -1,33 +1,56 @@
 ---
 name: boxd
-description: Run an OpenCode session on a private boxd machine and keep the transcript on this laptop. Use when the user says boxd, a cloud machine, a snapshot, or scaling sessions off this computer.
+description: Run an OpenCode session on a private boxd machine and keep the transcript on this laptop. Use when the user says boxd, a cloud machine, a remote machine, a snapshot, or moving sessions off this computer.
 ---
 
 # boxd
 
-The laptop is the source of truth. The machine is a cache with more CPU.
+The laptop is the source of truth. A machine is a cache with more CPU, and a boxd snapshot is an image, not a session.
+Read a tool's description before its first call; the input names below are the real ones.
 
-OpenCode on the machine must be the same version this plugin targets. If a tool returns `GUEST_VERSION`, stop. Do not start a session on that disk.
+## The order
+
+1. `boxd_ensure` with a short `workId`, such as `review-api`. The machine is named `oc-<workId>`. Pass `directory` when
+   the guest should work somewhere other than `/home/boxd/work/<workId>`, and `repo` for an https GitHub URL to clone.
+2. If it returns `starting`, stop and call `boxd_status` in a later turn. Do not poll in this turn.
+3. `boxd_submit` with the `workId` and the `text` to admit. It returns when the prompt is admitted, not when the model
+   finishes. Keep the `sessionId` it returns.
+4. `boxd_job` with the `workId` on a later turn: `busy`, `idle` or `missing`. One check, no waiting.
+5. `boxd_harvest` with the `workId` and the `localDirectory` that receives the import. The session tree is imported
+   here parents first, and git is recorded beside it.
+6. `boxd_sleep` to hibernate, `boxd_drop` to destroy, `boxd_resume` after a shutdown, `boxd_image` to save a snapshot.
+
+`boxd_status` reads the ledger and each open work's machine state. It starts nothing, and it is the one call worth
+making before anything else on a new turn.
+
+## What to say before a call
+
+Every machine change asks, and the prompt is the yes. Say in one sentence what the call does and what it costs, then
+make the one call: creating or waking a machine bills while it runs, `boxd_submit` runs the model on that machine, and
+`boxd_drop` destroys it.
+
+Ask in chat only when a choice must be made: a work id in use, a snapshot name, a directory, or a machine name that is
+not the one the ledger records. After a decline, say nothing changed and offer the draft task.
 
 ## Do not
 
-- Do not treat a boxd snapshot as the session. A snapshot is an image.
-- Do not copy `opencode.db`.
-- Do not publish the OpenCode port. The tools talk to `127.0.0.1` through `boxd machine exec`.
-- Do not pass `--shared` or `--isolated`. Sharing deletes OpenCode auth. Isolation drops git.
-- Do not call `opencode run` on the machine. On 2.2.6 it waits for background jobs with no time limit.
-- Do not wait inside a tool call. `submit` admits the prompt and returns. Call `job` later.
-- Do not `sleep` or `drop` unless `harvest` has returned `proven` since the last `submit`.
-- Do not destroy a machine to restart a session. `resume` wakes it, or imports the proven transcript onto a new machine from the golden snapshot.
-- Do not set auto-hibernate to 0. A machine left behind sleeps on its own.
+- Do not call `boxd_sleep`, `boxd_image` or `boxd_drop` until `boxd_harvest` has returned `proven` since the last
+  `boxd_submit`. All three refuse, with `NOT_PROVEN`.
+- Do not destroy a machine to restart a session. `boxd_resume` wakes it, or rebuilds it from the golden snapshot and
+  the proven transcript.
+- Do not copy `opencode.db`, and do not treat a snapshot as a transcript.
+- Do not publish the guest port, pass `--shared` or `--isolated`, or run `opencode run` on the machine. The tools talk
+  to `127.0.0.1` through `boxd machine exec`, and sharing deletes the guest's sign-in.
+- Do not wait inside a tool call. `boxd_submit` admits and returns.
+- Do not promise a machine sleeps forever: it hibernates after 30 minutes of no traffic.
 
-## Order
+## When something fails
 
-1. `boxd_ensure` with a short work id. If it returns `starting`, call `boxd_status` later. Do not poll in a loop in this turn.
-2. `boxd_submit` with the task. Then do other work, or stop.
-3. `boxd_job`. Busy means call it again on a later turn.
-4. `boxd_harvest` with the laptop directory that should receive the import. Parents are imported before children.
-5. `boxd_sleep` to free RAM, or `boxd_drop` only after harvest. Dirty git without a stored patch cannot be dropped.
-6. `boxd_resume` after a shutdown. A wake is not an import. An import means the old machine is gone.
+- `GUEST_VERSION`: the machine's OpenCode is not this laptop's version. Stop; boot an image that matches.
+- `MACHINE_SHARED` or `MACHINE_ISOLATED`: the machine is not usable for a session. Recreate it without that flag.
+- `SESSION_BUSY`: harvest later. `boxd_job` says when.
+- `DIRTY`: the guest tree has uncommitted work with no stored diff. Harvest before dropping.
+- `NOT_OURS`: no open work, or the machine is not the ledger's. Call `boxd_ensure` for that work id.
+- `BOXD_MISSING`: the boxd CLI is not on the PATH. Install it and restart OpenCode.
 
-`boxd_image` saves a new golden image. It is refused while a session on that machine is unharvested.
+Everything else: `/boxd-status` shows the next step, one line.

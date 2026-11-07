@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { BoxdError } from "./errors.js"
+import { boxdError } from "./errors.js"
 import { assertSessionId } from "./names.js"
 
 export type Transfer = {
@@ -13,10 +13,10 @@ export type Transfer = {
 
 export function parseExport(payload: unknown): Transfer {
   const body = unwrap(payload)
-  if (!body || typeof body !== "object") invalid("export is not an object")
+  if (!body || typeof body !== "object") invalid("The export is not an object.")
   const record = body as { info?: unknown; messages?: unknown }
   if (!record.info || typeof record.info !== "object" || !Array.isArray(record.messages)) {
-    invalid("export needs info and messages")
+    invalid("The export has no info and messages.")
   }
   const info = record.info as Transfer["info"]
   assertSessionId(String(info.id ?? ""))
@@ -27,7 +27,7 @@ export function parseExport(payload: unknown): Transfer {
 /** Parents before children. A parent that is not in the set cannot be imported onto a fresh machine. */
 export function order(transfers: readonly Transfer[]): Transfer[] {
   const byId = new Map(transfers.map((transfer) => [transfer.info.id, transfer]))
-  if (byId.size !== transfers.length) invalid("duplicate session id in the export set")
+  if (byId.size !== transfers.length) invalid("The export set names a session twice.")
   const pending = new Map(byId)
   const ordered: Transfer[] = []
   while (pending.size) {
@@ -35,15 +35,11 @@ export function order(transfers: readonly Transfer[]): Transfer[] {
       const parent = transfer.info.parentID
       return !parent || !pending.has(parent)
     })
-    if (!ready.length) invalid("session tree has a cycle")
+    if (!ready.length) invalid("The session tree has a cycle.")
     for (const transfer of ready.sort((a, b) => a.info.id.localeCompare(b.info.id))) {
       const parent = transfer.info.parentID
       if (parent && !byId.has(parent)) {
-        throw new BoxdError(
-          "PARENT_MISSING",
-          `Session ${transfer.info.id} names parent ${parent}, which was not exported.`,
-          "Export the parent before the child, and import in that order.",
-        )
+        throw boxdError("PARENT_MISSING", `Session ${transfer.info.id} names parent ${parent}, which was not in the export.`)
       }
       pending.delete(transfer.info.id)
       ordered.push(transfer)
@@ -52,18 +48,13 @@ export function order(transfers: readonly Transfer[]): Transfer[] {
   return ordered
 }
 
+/** A child's parent id, moved to the id the parent got on the destination. */
 export function rewrite(transfer: Transfer, imported: ReadonlyMap<string, string>): Transfer {
   const copy = structuredClone(transfer) as Transfer
   const parent = copy.info.parentID
   if (!parent) return copy
   const mapped = imported.get(parent)
-  if (!mapped) {
-    throw new BoxdError(
-      "PARENT_MISSING",
-      `Cannot import ${copy.info.id} until parent ${parent} has an id on the destination.`,
-      "Import parents before children.",
-    )
-  }
+  if (!mapped) throw boxdError("PARENT_MISSING", `Cannot import ${copy.info.id} until parent ${parent} has an id on the destination.`)
   copy.info.parentID = mapped
   return copy
 }
@@ -75,10 +66,10 @@ export function digest(transfer: Transfer): string {
 function unwrap(payload: unknown): unknown {
   if (!payload || typeof payload !== "object") return payload
   const record = payload as { data?: unknown; info?: unknown }
-  if (record.info) return payload
-  return record.data ?? payload
+  if (!record.info && record.data !== undefined) return record.data
+  return payload
 }
 
 function invalid(message: string): never {
-  throw new BoxdError("EXPORT_INVALID", message, "Export again from the guest. Do not invent a transcript.")
+  throw boxdError("EXPORT_INVALID", message)
 }

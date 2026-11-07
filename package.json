@@ -1,34 +1,164 @@
 {
   "name": "@joe-broadhead/opencode-boxd",
-  "version": "0.1.0",
-  "description": "Run OpenCode sessions on boxd without keeping the session in the VM.",
-  "keywords": ["opencode", "opencode-plugin", "boxd"],
-  "homepage": "https://github.com/joe-broadhead/opencode-boxd#readme",
-  "bugs": { "url": "https://github.com/joe-broadhead/opencode-boxd/issues" },
-  "repository": { "type": "git", "url": "git+https://github.com/joe-broadhead/opencode-boxd.git" },
+  "version": "0.0.0",
+  "private": true,
+  "description": "Unofficial OpenCode plugin for boxd: run a session on a private boxd machine and keep the transcript on your laptop",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "boxd"
+  ],
   "license": "MIT",
   "type": "module",
-  "exports": {
-    ".": { "default": "./dist/index.js" }
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/joe-broadhead/opencode-boxd.git"
   },
-  "files": ["dist", "skills", "guest", "README.md", "LICENSE", "NOTICE", "CHANGELOG.md"],
+  "homepage": "https://github.com/joe-broadhead/opencode-boxd#readme",
+  "bugs": {
+    "url": "https://github.com/joe-broadhead/opencode-boxd/issues"
+  },
+  "exports": {
+    ".": "./dist/index.js",
+    "./tui": "./dist/tui.js",
+    "./icon.svg": "./assets/icon.svg",
+    "./icon-128.png": "./assets/icon-128.png",
+    "./icon-256.png": "./assets/icon-256.png"
+  },
+  "files": [
+    "dist",
+    "guest",
+    "skills",
+    "assets/icon.svg",
+    "assets/icon-128.png",
+    "assets/icon-256.png",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "opencode": {
+    "host": ">=2.2.3 <2.3.0",
+    "icons": [
+      {
+        "src": "assets/icon.svg",
+        "mimeType": "image/svg+xml",
+        "sizes": [
+          "any"
+        ]
+      },
+      {
+        "src": "assets/icon-128.png",
+        "mimeType": "image/png",
+        "sizes": [
+          "128x128"
+        ]
+      },
+      {
+        "src": "assets/icon-256.png",
+        "mimeType": "image/png",
+        "sizes": [
+          "256x256"
+        ]
+      }
+    ],
+    "vendor": {
+      "id": "boxd",
+      "name": "boxd",
+      "domain": "boxd.sh"
+    }
+  },
+  "jelly": {
+    "title": "boxd",
+    "summary": "Run an OpenCode session on a private boxd machine and keep the transcript on your laptop; every machine change asks first.",
+    "icon": "assets/icon.svg",
+    "tools": [
+      {
+        "name": "boxd.status",
+        "permission": "boxd_status",
+        "effect": "allow",
+        "readOnly": true
+      },
+      {
+        "name": "boxd.job",
+        "permission": "boxd_job",
+        "effect": "allow",
+        "readOnly": true
+      },
+      {
+        "name": "boxd.ensure",
+        "permission": "boxd_ensure",
+        "effect": "ask",
+        "readOnly": false
+      },
+      {
+        "name": "boxd.submit",
+        "permission": "boxd_submit",
+        "effect": "ask",
+        "readOnly": false
+      },
+      {
+        "name": "boxd.harvest",
+        "permission": "boxd_harvest",
+        "effect": "ask",
+        "readOnly": false
+      },
+      {
+        "name": "boxd.sleep",
+        "permission": "boxd_sleep",
+        "effect": "ask",
+        "readOnly": false
+      },
+      {
+        "name": "boxd.resume",
+        "permission": "boxd_resume",
+        "effect": "ask",
+        "readOnly": false
+      },
+      {
+        "name": "boxd.image",
+        "permission": "boxd_image",
+        "effect": "ask",
+        "readOnly": false
+      },
+      {
+        "name": "boxd.drop",
+        "permission": "boxd_drop",
+        "effect": "ask",
+        "readOnly": false
+      }
+    ],
+    "skills": [
+      "boxd"
+    ],
+    "rpc": [],
+    "views": [],
+    "signIns": [],
+    "contributes": {
+      "homeFeeds": [],
+      "homeWidgets": [],
+      "workKinds": [],
+      "settings": []
+    }
+  },
   "scripts": {
-    "typecheck": "tsc --noEmit -p tsconfig.json",
-    "build": "node scripts/build.mjs",
-    "test": "vitest run",
-    "lint": "node scripts/check-forbidden.mjs --self-test && node scripts/check-forbidden.mjs",
-    "test:pack": "npm run build && node scripts/pack-smoke.mjs",
-    "release:check": "node scripts/release-check.mjs",
-    "check": "npm run typecheck && npm test && npm run build && npm run lint && npm run test:pack && npm run release:check"
+    "check": "node scripts/check.mjs",
+    "typecheck": "node scripts/check.mjs typecheck",
+    "build": "node scripts/check.mjs build",
+    "test": "node scripts/check.mjs unit",
+    "test:host": "node scripts/check.mjs host",
+    "test:pack": "node scripts/check.mjs pack",
+    "lint": "node scripts/check.mjs forbidden"
   },
   "devDependencies": {
-    "@opencode/plugin": "2.2.6",
+    "@opencode/client": "2.2.3",
+    "@opencode/plugin": "2.2.3",
+    "@opencode/sdk": "2.2.3",
+    "@opentui/core": "0.8.0",
+    "@opentui/solid": "0.8.0",
+    "@types/bun": "1.4.4",
     "@types/node": "24.19.2",
     "esbuild": "0.28.2",
-    "typescript": "5.9.3",
-    "vitest": "5.0.5"
-  },
-  "opencode": {
-    "host": ">=2.2.6 <2.3.0"
+    "solid-js": "1.9.17",
+    "typescript": "5.9.3"
   }
 }

@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises"
-import { BoxdError } from "./errors.js"
+import { boxdError } from "./errors.js"
 import {
   allowSleepArgs,
   createArgs,
@@ -83,7 +83,15 @@ function missing(name: string): MachineInfo {
 function normalize(value: string): MachineStatus {
   if (value === "suspended") return "standby"
   if (value === "hibernating" || value === "rebooting") return "starting"
-  if (value === "running" || value === "starting" || value === "standby" || value === "hibernated" || value === "stopped" || value === "destroyed" || value === "missing") {
+  if (
+    value === "running" ||
+    value === "starting" ||
+    value === "standby" ||
+    value === "hibernated" ||
+    value === "stopped" ||
+    value === "destroyed" ||
+    value === "missing"
+  ) {
     return value
   }
   return "other"
@@ -94,9 +102,9 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 function fail(action: string, detail: string): never {
-  throw new BoxdError("BOXD_FAILED", `boxd ${action} failed.`, detail.trim().slice(0, 400) || "Read the boxd stderr.")
+  throw boxdError("BOXD_FAILED", `boxd ${action} failed (${detail.trim().slice(0, 300) || "no output"}).`)
 }
 
-export async function readHelper(): Promise<string> {
+export async function readGuestHelper(): Promise<string> {
   return readFile(new URL("../guest/guest.py", import.meta.url), "utf8")
 }

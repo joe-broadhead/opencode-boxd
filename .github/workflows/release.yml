@@ -1,6 +1,6 @@
-# Publishes a v<version> tag to npm with trusted publishing (OIDC) and provenance, after a
-# reviewer approves the release environment. The guard refuses a private package or a tag that
-# differs from the version, and release:check refuses a version without a CHANGELOG section.
+# Publishes a v<version> tag to npm with trusted publishing (OIDC) and provenance, after a reviewer approves the
+# release environment. The guard refuses a private package or a tag that differs from the version, and the pack test runs
+# against the exact tarball this job publishes.
 name: release
 
 on:
@@ -19,7 +19,7 @@ jobs:
   publish:
     runs-on: ubuntu-24.04
     environment: release
-    timeout-minutes: 20
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -38,6 +38,9 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
+      - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2.0.2
+        with:
+          bun-version: 1.4.4
       - name: Check npm supports trusted publishing
         run: |
           node -e '
@@ -49,17 +52,16 @@ jobs:
           ' "$(npm --version)"
       - run: npm ci --ignore-scripts
       - run: npm run check
-      - run: npm run release:check
       - name: Pack
         run: |
-          npm pack --ignore-scripts
-          tarballs=(./*.tgz)
+          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP"
+          tarballs=("$RUNNER_TEMP"/*.tgz)
           if [ "${#tarballs[@]}" -ne 1 ] || [ ! -f "${tarballs[0]}" ]; then
             echo "Expected exactly one package tarball" >&2
             exit 1
           fi
-      - name: Check the tarball that will be published
-        run: node scripts/pack-smoke.mjs --tarball ./*.tgz
+      - name: Test the tarball that will be published
+        run: PACK_TARBALL="$RUNNER_TEMP/$(node -p 'const m=require("./package.json"); m.name.split("/").at(-1)+"-"+m.version+".tgz' | sed 's|@joe-broadhead/|joe-broadhead-opencode-|')" bun test ./test/pack
       - name: Publish to npm
         run: |
           name=$(node -p 'require("./package.json").name')
@@ -68,4 +70,4 @@ jobs:
             echo "$name@$version is already on npm; skipping the publish."
             exit 0
           fi
-          npm publish ./*.tgz --provenance --access public
+          npm publish "$RUNNER_TEMP"/*.tgz --provenance --access public

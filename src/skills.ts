@@ -1,41 +1,53 @@
-import { readFileSync } from "node:fs"
+import { readFile } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
 import { Skill, type Plugin } from "@opencode/plugin"
-import { BoxdError } from "./errors.js"
+import { boxdError } from "./errors.js"
 
 const ID = "boxd"
+export const SKILL_NAMES = [ID] as const
 
-export function skillPath(): string {
-  return fileURLToPath(new URL("../skills/boxd/SKILL.md", import.meta.url))
+const DEFAULT_DIR = fileURLToPath(new URL("../skills", import.meta.url))
+
+export function skillPath(name = ID, directory = DEFAULT_DIR): string {
+  return fileURLToPath(new URL(`${name}/SKILL.md`, `file://${directory.replace(/\/*$/, "/")}`))
 }
 
-export function parseSkill(text: string): { name: string; description: string; content: string } {
+/** A skill file's frontmatter and body; the name must be the skill's id. */
+export function parseSkill(name: string, path: string, text: string): Skill.Info {
   const match = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(text.replace(/\r\n/g, "\n"))
-  if (!match) throw new BoxdError("SKILL_INVALID", "skills/boxd/SKILL.md has no frontmatter.", "Fix the skill file.")
+  if (!match) throw boxdError("SKILLS_INVALID", `${name}'s skill file has no frontmatter.`)
   const fields = new Map<string, string>()
   for (const line of match[1]!.split("\n")) {
     const field = /^([a-z]+):\s*(.*)$/.exec(line)
     if (field) fields.set(field[1]!, field[2]!.trim())
   }
-  const name = fields.get("name")
+  const declared = fields.get("name")
   const description = fields.get("description")
-  if (name !== ID || !description) {
-    throw new BoxdError("SKILL_INVALID", "The boxd skill name must be boxd and it needs a description.", "Fix the skill file.")
-  }
-  return { name, description, content: match[2]!.trimStart() }
+  if (declared !== name || !description) throw boxdError("SKILLS_INVALID", `The ${name} skill needs the name "${name}" and a description.`)
+  return { id: Skill.ID.make(name), name: Skill.Name.make(name), description, path: Skill.Info.fields.path.make(path), content: match[2]!.trimStart() }
 }
 
-export async function registerSkills(ctx: { skill: Pick<Plugin.Context["skill"], "transform"> }): Promise<{ dispose(): Promise<void> }> {
-  const path = skillPath()
-  const skill = parseSkill(readFileSync(path, "utf8"))
-  return ctx.skill.transform((editor) => {
-    editor.add({
-      id: Skill.ID.make(ID),
-      name: Skill.Name.make(skill.name),
-      description: skill.description,
-      path: path as Skill.Info["path"],
-      content: skill.content,
-      autoinvoke: true,
-    })
+export async function loadSkills(directory = DEFAULT_DIR): Promise<{ skills: Skill.Info[]; problems: string[] }> {
+  const skills: Skill.Info[] = []
+  const problems: string[] = []
+  for (const name of SKILL_NAMES) {
+    const path = skillPath(name, directory)
+    try {
+      const text = await readFile(path, "utf8").catch(() => {
+        throw boxdError("SKILLS_INVALID", `The ${name} skill file is not in the package.`)
+      })
+      skills.push(parseSkill(name, path, text))
+    } catch (error) {
+      problems.push(error instanceof Error ? error.message : String(error))
+    }
+  }
+  return { skills, problems }
+}
+
+export function registerSkills(skill: Pick<Plugin.Context["skill"], "transform">, skills: readonly Skill.Info[]) {
+  return skill.transform((editor) => {
+    for (const info of skills) {
+      editor.add({ id: info.id, name: info.name, description: info.description, path: info.path, content: info.content, autoinvoke: true })
+    }
   })
 }
