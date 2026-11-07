@@ -4,13 +4,17 @@
 Talks only to a localhost OpenCode server. Never starts a blocking agent command.
 """
 
+import base64
 import json
+import os
+import secrets
 import subprocess
 import sys
 import urllib.error
 import urllib.request
 
 PORT = 4096
+PASSWORD_PATH = "/tmp/opencode-boxd/password"
 
 
 class GuestError(Exception):
@@ -52,14 +56,22 @@ def directory(value):
     return value
 
 
+def guest_password():
+    try:
+        with open(PASSWORD_PATH, encoding="utf8") as handle:
+            return handle.read().strip()
+    except OSError:
+        return ""
+
+
 def http(method, url, body=None):
     data = None if body is None else json.dumps(body).encode()
-    req = urllib.request.Request(
-        url,
-        data=data,
-        method=method,
-        headers={"content-type": "application/json", "accept": "application/json"},
-    )
+    headers = {"content-type": "application/json", "accept": "application/json"}
+    password = guest_password()
+    if password:
+        token = base64.b64encode(f"opencode:{password}".encode()).decode()
+        headers["authorization"] = f"Basic {token}"
+    req = urllib.request.Request(url, data=data, method=method, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=20) as response:
             raw = response.read().decode()
@@ -82,19 +94,30 @@ def action_info(request):
 
 
 def action_serve(request):
-    url = base_url(request) + "/api/info"
     try:
-        urllib.request.urlopen(url, timeout=2).read()
+        http("GET", base_url(request) + "/api/info")
         emit({"server": "up"})
         return
-    except Exception:
-        pass
+    except GuestError as error:
+        if error.error.startswith("HTTP"):
+            emit({"server": "up"})
+            return
+        if error.error != "unreachable":
+            raise
+    os.makedirs("/tmp/opencode-boxd", exist_ok=True)
+    if not os.path.exists(PASSWORD_PATH):
+        with open(PASSWORD_PATH, "w", encoding="utf8") as handle:
+            handle.write(secrets.token_hex(16))
+        os.chmod(PASSWORD_PATH, 0o600)
     log = open("/tmp/opencode-boxd.log", "ab")
+    env = os.environ.copy()
+    env["OPENCODE_PASSWORD"] = guest_password()
     subprocess.Popen(
         ["opencode", "serve", "--hostname", "127.0.0.1", "--port", str(PORT)],
         stdout=log,
         stderr=subprocess.STDOUT,
         start_new_session=True,
+        env=env,
     )
     emit({"server": "starting"})
 
