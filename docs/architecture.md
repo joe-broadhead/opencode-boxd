@@ -106,12 +106,13 @@ Measured on 2026-11-07 against `boxd` 0.2.29 (`brew`-style `~/.local/bin/boxd`) 
 
 ### The golden image
 
-The account this was checked against had no golden image of its own, so the image was rebuilt for the run from a stock
-machine, deleted afterwards, and the plugin's default name came from that run:
+`opencode-golden` now exists in the account (version 1, 10.5 GiB, `ready`), built on 2026-11-07 from a stock machine.
+It carries OpenCode 2.2.5 and holds no credential file of its own:
 
 - The stock boxd image (2 vCPU / 8 GiB, `source: "standalone"`) carries `python3` 3.12.3, `git` 2.43.0, Node 24, the
   in-VM `boxd` CLI at `/usr/local/bin/boxd`, and **OpenCode 1.19.5** at `/usr/local/bin/opencode` →
-  `/home/boxd/.opencode/bin/opencode`.
+  `/home/boxd/.opencode/bin/opencode`. There is no stock snapshot to name: a stock machine is created with no
+  `--from-snapshot`.
 - `opencode upgrade 2.2.5` from 1.x refuses: "OpenCode 2.2.5 is OpenCode 2. Upgrade with `opencode upgrade --major`".
   `opencode upgrade --major` installs the latest 2.x (2.2.6); a following `opencode upgrade 2.2.5` pins 2.2.5. Both
   steps take about 4 s.
@@ -119,12 +120,28 @@ machine, deleted afterwards, and the plugin's default name came from that run:
   `OPENCODE_SERVER_PASSWORD`): `/api/info` answered 401 without credentials and 200 with `opencode:<password>`, and
   reported `"version":"2.2.5"`. On 1.19.5 the same command ignores `OPENCODE_PASSWORD`, warns that the server is
   unsecured, and `/api/info` answers 200 to everyone.
+- **`opencode auth login` needs a login shell.** `boxd machine exec --tty … -- opencode auth login` exits silently with
+  no picker (`test -t 0` is true and `TERM` is set); `ssh -t <name>.boxd opencode auth login` and
+  `boxd machine connect <name>` then `opencode auth login` both show it. `opencode auth list` names providers that come
+  from environment variables as well as stored credentials (`… environment`), so a bare list is not proof of a sign-in.
+- **`boxd-takeoff` injects the org and personal `boxd env` variables at every boot** into `/etc/profile.d/boxd-env.sh`
+  (root, 0644), with the domain-bound values and boxd's CA bundle. The image can therefore hold no key: delete the file
+  before `snapshots save`, and a machine created from the image regenerates it at boot (its mtime landed after the
+  create). `auth.json` stayed absent, and `OPENCODE_API_KEY` was set in the new machine's environment.
+- **A Go Teams service-account key does not call Go models.** The first real prompt on `opencode-golden` reached
+  provider `opencode-go`, model `hy4`, and answered 403 `provider.auth`: "Go Teams covers workspace members, not service
+  accounts. Use a personal API key to call Go models." The route works; the injected key was the wrong kind. Use a
+  personal key with a spending limit.
+- The 2.2.5 session export is `{info, messages}`, where each message is `{id, time, type, text?, model?, content?,
+  finish?, error?}` and the session info carries `cost`, `tokens` and `outcome` (`ok`/`failed`). An assistant error is
+  recorded on the message and the session outcome is `failed`, with cost 0.
 - Port 4096 listens on `127.0.0.1` only (`ss -ltn`), and a machine created without `--shared`/`--isolated` prints
   `sharing: "private"`, `isolated: "no"`, `domains: "-"`: the port is not published.
 - `checkGuest` compares `opencode --version` on the machine with the host's own. A machine from the stock 1.19.5 image
   fails it with `GUEST_VERSION`, and `boxd_sleep` still hibernates it.
-- The guest's OpenCode is unauthenticated. A prompt is admitted, the session goes idle, and the export/import round trip
-  still works; no model answer is produced without provider credentials, which the plugin never copies to a machine.
+- Two tools in one `Promise.all`: a `boxd_submit` and a `boxd_harvest` on the same work both returned; the admitted
+  prompt made the guest busy, the harvest answered `SESSION_BUSY`, and the submit's `lastSubmitAt` left the previous
+  proof `stale` in `boxd_job`. The ledger kept both calls' fields.
 
 ## The tools RPC
 

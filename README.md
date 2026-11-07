@@ -9,7 +9,7 @@ Unofficial; not affiliated with boxd.
 - OpenCode `>=2.2.3 <2.3.0`, tested on 2.2.3, 2.2.4, 2.2.5 and 2.2.6.
 - The [boxd CLI](https://boxd.sh), signed in, on your `PATH`.
 - **First step: a golden image.** The stock boxd image ships OpenCode 1.19.5, which this plugin refuses, so build one
-  image with the OpenCode version this laptop runs and a model provider signed in on it:
+  image with the OpenCode version this laptop runs and a model credential it can reach:
   [the golden image](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/golden-image.md). The default name is
   `opencode-golden`; set `"snapshot"` to your own in `opencode.json`. `boxd_status` says when it is missing, and
   `boxd_ensure` and `boxd_resume` refuse to create a machine without it.
