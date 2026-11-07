@@ -367,6 +367,11 @@ export function createFleet(deps: Deps) {
       await armAwake(work.machine, "hold")
       checkGuest(await deps.guest.version(work.machine), deps.hostVersion)
       await deps.guest.prepare(work.machine, work.directory, work.repo)
+      // A rebuilt machine has a new disk: nothing is running on it, so start the guest server before importing the
+      // transcript. It boots asynchronously, so this call reports starting and the next one imports.
+      if (recreated && (await deps.guest.server(work.machine)) !== "up") {
+        return { workId: work.workId, machine: work.machine, state: "starting", resumed: "import", next: "Call boxd_resume again once the machine's OpenCode server is up." }
+      }
       if (!recreated && work.rootSessionId) {
         const phase = await deps.guest.phase(work.machine, work.rootSessionId)
         if (phase !== "missing") return { workId: work.workId, machine: work.machine, sessionId: work.rootSessionId, state: phase, resumed: "wake" }

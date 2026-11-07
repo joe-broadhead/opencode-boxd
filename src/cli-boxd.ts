@@ -29,7 +29,10 @@ export function cliBoxd(bin = "boxd"): BoxdPort {
     create: async (input) => {
       const result = await run(bin, createArgs(input.workId, input.snapshot), { timeoutMs: 30_000 })
       if (result.code !== 0) fail("create", result.stderr)
-      return parseMachine(parseJson(result.stdout), input.name)
+      // `machine new --json` answers with boot, id, name, source and url only: no status, sharing or isolation. Read the
+      // machine back, so a create that landed shared or isolated is refused before anything runs on it.
+      const created = asRecord(parseJson(result.stdout))
+      return get(bin, String(created.name ?? input.name))
     },
     hibernate: (name) => ok(bin, hibernateArgs(name)),
     wake: (name) => ok(bin, wakeArgs(name)),
@@ -79,7 +82,8 @@ export function parseMachine(raw: unknown, fallbackName: string): MachineInfo {
     name: String(record.name ?? fallbackName),
     status,
     sharing,
-    isolated: record.isolated === true,
+    // `machine get --json` prints isolation as the string "yes" or "no"; a fake may print a boolean.
+    isolated: record.isolated === true || record.isolated === "yes" || record.isolated === "true",
     source: typeof record.source === "string" ? record.source : undefined,
   }
 }

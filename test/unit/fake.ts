@@ -129,6 +129,7 @@ export class FakeGuest implements GuestPort {
   readonly imports: Transfer[] = []
   readonly prompts: string[] = []
   readonly forgotten: string[] = []
+  readonly servers: string[] = []
   gitFails = false
   phaseById = new Map<string, "busy" | "idle" | "missing">()
   gitState: GitState = { known: true, remote: null, branch: null, sha: null, dirty: false, untracked: [], ignored: [], untrackedFiles: {} }
@@ -148,6 +149,7 @@ export class FakeGuest implements GuestPort {
     return this.guestVersion
   }
   async server(_machine: string) {
+    this.servers.push(_machine)
     return this.serverUp ? ("up" as const) : ("starting" as const)
   }
   async prepare(_machine: string, directory: string) {

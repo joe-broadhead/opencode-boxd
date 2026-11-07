@@ -39,7 +39,18 @@ function fail(message) {
 function printMachine(name) {
   const found = machine(name)
   if (!found) fail(`machine ${name} not found`)
-  out(found)
+  // The real `machine get --json`: isolation is the string "yes" or "no", not a boolean.
+  out({
+    name: found.name,
+    id: `vm-${found.name}`,
+    status: found.status,
+    source: found.source ?? "standalone",
+    auto_suspend: "off",
+    auto_hibernate: "14400s",
+    idle_ignore_outbound: "off",
+    sharing: found.sharing,
+    isolated: found.isolated ? "yes" : "no",
+  })
 }
 
 function exec(name, command) {
@@ -68,9 +79,18 @@ if (group === "machine" && action === "new") {
   if (rest.includes("--shared") || rest.includes("--isolated")) fail("the plugin must never ask for --shared or --isolated")
   state.machines[name] = { name, status: "running", sharing: "private", isolated: false, source: `snapshot/${snapshot}` }
   write(state)
-  printMachine(name)
+  // The real `machine new --json` names the machine and its boot time, and nothing else: no status, sharing or isolation.
+  out({ boot: "12ms", id: `vm-${name}`, name, paused_automations: 0, source: `snapshot/${snapshot}`, url: `${name}.boxd.sh` })
 } else if (group === "machine" && action === "get") {
   printMachine(rest[0])
+} else if (group === "machine" && action === "list") {
+  out(Object.values(state.machines).map(({ name, status, sharing, isolated, source }) => ({
+    name,
+    status,
+    sharing,
+    isolated: isolated ? "yes" : "no",
+    source: source ?? "standalone",
+  })))
 } else if (group === "machine" && action === "hibernate") {
   const found = machine(rest[0])
   if (!found) fail("not found")

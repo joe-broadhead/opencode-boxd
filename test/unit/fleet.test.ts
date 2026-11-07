@@ -117,6 +117,16 @@ describe("the control plane", () => {
     expect(boxd.machines.get("oc-review-api")?.status).toBe("hibernated")
 
     boxd.machines.get("oc-review-api")!.status = "destroyed"
+    // The rebuilt machine's disk is new: its guest server is not running yet, so the first resume starts it and reports
+    // starting, and the second imports the proven transcript.
+    guest.serverUp = false
+    const rebooting = await fleet.resume({ workId: "review-api" })
+    expect(rebooting).toMatchObject({ state: "starting", resumed: "import" })
+    expect(guest.imports).toEqual([])
+    expect(guest.servers.at(-1)).toBe("oc-review-api")
+    // The new disk holds no session, so the next call imports the transcript rather than finding one.
+    guest.phaseById.delete("ses_root_review-api")
+    guest.serverUp = true
     const restarted = await fleet.resume({ workId: "review-api" })
     expect(restarted).toMatchObject({ resumed: "import", state: "ready" })
     expect(boxd.calls.filter((call) => call.startsWith("create")).at(-1)).toBe("create oc-review-api opencode-claude-final")
