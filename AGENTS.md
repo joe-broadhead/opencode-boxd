@@ -9,7 +9,7 @@ checks and the release steps.
 
 - **Public API only.** Use only the public `@opencode/plugin` 2.2.3 API. `opencode.host` in `package.json` and
   `SUPPORTED_HOST` in `src/constants.ts` both say exactly `>=2.2.3 <2.3.0`, never `^2.2.3`. `TESTED_HOSTS` in
-  `src/constants.ts` is the one list of tested releases (2.2.3, 2.2.4, 2.2.5, 2.2.6). Inside the range an untested
+  `src/constants.ts` is the one list of tested releases, tested on 2.2.3, 2.2.4, 2.2.5 and 2.2.6. Inside the range an untested
   release still starts.
 - **Greenfield.** No legacy, migration code, compatibility shim, dual path or deprecated alias, and nothing dead.
 - **No peers, no runtime dependencies, no lifecycle scripts.** `@opencode/plugin`, `@opencode/sdk` and
@@ -36,9 +36,12 @@ checks and the release steps.
   family's shared fields `version`, `host`, `state`, `unguardedAgents` and `nextStep`. Status makes no boxd call beyond a
   machine read, cuts a failure's reason to one line of 160 characters with `src/redact.ts`, and names at most 20 unknown
   tools, plain names only.
-- **The tools RPC.** `src/host/tools-rpc.ts` is a copy of a module shared by several plugins. Change only its block
-  between the `PLUGIN-SPECIFIC` markers; change the rest in the shared copy first, and `npm run check` fails on drift.
-  Its methods are every tool in `src/tools.ts`, by exact name and with its class.
+- **The tools RPC (v2).** `src/host/tools-rpc.ts` is a copy of the v2 module shared by several plugins (shared-part
+  hash `57377eb3…`). Change only its block between the `PLUGIN-SPECIFIC` markers; change the rest in the shared copy
+  first, and `npm run check` fails on drift (`check-copies.mjs`). Its methods are every tool in `src/tools.ts`, by exact
+  name and with its class, and the rule is resolved before dispatch: only an `allow` runs.
+- **Stages.** `npm run check` runs `typecheck`, `unit`, `build`, `icons`, `copies`, `host` (every SDK in
+  `TESTED_HOSTS`), `pack` (every `OPENCODE_BIN_*`), `forbidden`, `whitelist` and `actionlint`.
 - **The `jelly` section** declares every tool, the skill, a one-line `summary` and the icon, with only the keys Jelly
   reads. `test/unit/jelly.test.ts` keeps it in step with the tool table and the default rules.
 - **The icon** is this family's own mark from the family icon kit, not boxd's logo or colour. `opencode.vendor` names

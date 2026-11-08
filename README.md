@@ -130,7 +130,8 @@ Each member still needs the boxd CLI signed in on their own laptop.
 | `MACHINE_ISOLATED` | Recreate the machine without `--isolated`, which drops git and the in-VM boxd CLI. |
 | `SESSION_BUSY` | Call `boxd_job` until it reports idle, then harvest. |
 | `GUEST_VERSION` | Boot the machine from an image whose OpenCode is the same version as this laptop's. |
-| `GUEST_RUN_FAILED` | The guest session's last run failed; the transcript is still imported. Read it, then `boxd_submit` again. A credential failure is fixed in [the golden image](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/golden-image.md). |
+| `GUEST_RUN_FAILED` | The guest session's last run failed; the transcript is still imported. Read it, then `boxd_submit` again. |
+| `GUEST_AUTH_FAILED` | The failed run was a credential failure. Fix the guest's sign-in as [the golden image](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/golden-image.md) describes, then `boxd_submit` again. |
 | `GUEST_FAILED` | Call `boxd_status`, and recreate the machine with `boxd_resume` if the guest keeps failing. |
 | `BOXD_FAILED` | Read the boxd CLI's own message, and run `boxd_status` before trying again. |
 | `BOXD_MISSING` | Install the boxd CLI, sign in to it, and restart OpenCode so it is on the `PATH`. |
@@ -142,6 +143,7 @@ Each member still needs the boxd CLI signed in on their own laptop.
 | `SNAPSHOT_EXISTS` | Pick a new snapshot name: snapshots are immutable. |
 | `SNAPSHOT_MISSING` | Create the golden image [docs/golden-image.md](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/golden-image.md) describes, then set the `snapshot` option to its name. |
 | `LEDGER_FAILED` | Check that the ledger folder is writable, then restart OpenCode. |
+| `RULES_NOT_ADDED` | The default permission rules could not be added, so a machine change may run without asking. Restart OpenCode, then run `/boxd-status`. |
 | `UNTRACKED` | Commit or delete the paths the message names on the machine, harvest again, then drop. Or hibernate, which keeps the disk. |
 | `GIT_UNKNOWN` | Commit the work in a git repository on the machine, harvest again, then drop. Or hibernate, which keeps the disk. |
 | `CREATE_UNCERTAIN` | Run `boxd_status`: if the machine appears there, call `boxd_ensure` to adopt it; if not, ensure again. |
