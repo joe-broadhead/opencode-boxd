@@ -21,15 +21,15 @@ const changingEffect = (access: Access): Rule["effect"] => (access === "all" ? "
 
 /**
  * The block the plugin inserts after each agent's base allow, generated from the tool table and the `access`
- * option. Every tool this plugin registers is allowed by default, and the namespace pattern is allowed too, so a
- * tool a later release adds is usable at once. `ask-changes` asks for every changing tool; `read-only` denies them.
- * The order is a safety net, not a decision point: the last matching rule wins, and the exact-name rule comes after
- * the pattern.
+ * option. Every tool this plugin registers is allowed by default. The namespace pattern's effect follows the value,
+ * so a tool a later release adds runs at once under `all`, asks under `ask-changes` and is denied under `read-only`;
+ * the known reads are allowed after it. The order is a safety net, not a decision point: the last matching rule wins,
+ * and the exact-name rule comes after the pattern.
  */
 export const defaultRules = (access: Access = "all"): Rule[] => {
   const changing = changingEffect(access)
   return [
-    rule("boxd_*", "allow"),
+    rule("boxd_*", changing),
     ...READ_TOOLS.map((tool) => rule(tool, "allow")),
     ...CHANGING_TOOLS.map((tool) => rule(tool, changing)),
   ]

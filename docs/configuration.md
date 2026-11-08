@@ -68,7 +68,7 @@ into an agent that gets no block of its own.
 
 ```json
 [
-  {"action":"boxd_*","resource":"*","effect":"allow"},
+  {"action":"boxd_*","resource":"*","effect":"ask"},
   {"action":"boxd_status","resource":"*","effect":"allow"},
   {"action":"boxd_job","resource":"*","effect":"allow"},
   {"action":"boxd_ensure","resource":"*","effect":"ask"},
@@ -85,7 +85,7 @@ into an agent that gets no block of its own.
 
 ```json
 [
-  {"action":"boxd_*","resource":"*","effect":"allow"},
+  {"action":"boxd_*","resource":"*","effect":"deny"},
   {"action":"boxd_status","resource":"*","effect":"allow"},
   {"action":"boxd_job","resource":"*","effect":"allow"},
   {"action":"boxd_ensure","resource":"*","effect":"deny"},

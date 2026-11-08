@@ -13,14 +13,17 @@ describe("the generated default rules", () => {
     expect(all).toHaveLength(1 + TOOLS.length)
   })
 
-  test("ask-changes asks for every tool that changes something and allows the reads", () => {
+  test("ask-changes asks for every tool that changes something, allows the reads, and asks a tool a later release adds", () => {
     const rules = defaultRules("ask-changes")
-    expect(rules[0]).toEqual({ action: "boxd_*", resource: "*", effect: "allow" })
+    expect(rules[0]).toEqual({ action: "boxd_*", resource: "*", effect: "ask" })
+    expect(evaluate([BASE, ...rules], "boxd_new_tool")).toBe("ask")
     for (const tool of TOOLS) expect(rules).toContainEqual({ action: tool.id, resource: "*", effect: tool.class === "read" ? "allow" : "ask" })
   })
 
-  test("read-only denies every tool that changes something and allows the reads", () => {
+  test("read-only denies every tool that changes something, allows the reads, and denies a tool a later release adds", () => {
     const rules = defaultRules("read-only")
+    expect(rules[0]).toEqual({ action: "boxd_*", resource: "*", effect: "deny" })
+    expect(evaluate([BASE, ...rules], "boxd_new_tool")).toBe("deny")
     for (const tool of TOOLS) expect(rules).toContainEqual({ action: tool.id, resource: "*", effect: tool.class === "read" ? "allow" : "deny" })
   })
 
@@ -105,6 +108,9 @@ describe("unguarded agents", () => {
   test("asks for the block of the access value in force", () => {
     const agents: { id: string; permissions: Rule[] }[] = [{ id: "build", permissions: [BASE, ...defaultRules("read-only")] }]
     expect(unguardedAgents(agents, "read-only" as Access)).toEqual([])
-    expect(unguardedAgents(agents, "all")).toEqual(["build"])
+    // Another value's block is not the one in force, and its namespace rule asks or denies a new tool, so no unasked
+    // tool is possible there: only an agent with the base allow alone is named at `all`.
+    expect(unguardedAgents(agents, "all")).toEqual([])
+    expect(unguardedAgents([{ id: "bare", permissions: [BASE] }], "all")).toEqual(["bare"])
   })
 })
