@@ -127,7 +127,7 @@ Clear any shell history too. Leave nothing else changed.
 Nothing may be running that holds a session you care about, and the machine should be clean of scratch work.
 
 ```sh
-boxd snapshots save golden-builder opencode-golden --json     # about 2 s for a 9 GiB disk; 10.5 GiB here
+boxd snapshots save golden-builder opencode-golden --json     # a few seconds for a ~10 GiB disk, an image either way
 boxd snapshots list --json                                    # the name, status "ready", version 1
 boxd machine remove golden-builder -y
 ```

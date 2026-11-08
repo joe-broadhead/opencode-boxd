@@ -44,6 +44,7 @@ const stages = {
   pack: () => run("bun", ["test", "./test/pack"]),
   forbidden: () => run("node", ["scripts/check-forbidden.mjs"]),
   whitelist: whitelist,
+  actionlint,
 }
 
 const selected = process.argv.slice(2)
@@ -99,6 +100,16 @@ function host() {
     }
   }
   return 0
+}
+
+/** R13: the workflows are linted as workflows, by actionlint when it is installed; a notice when it is not. */
+function actionlint() {
+  const probe = spawnSync("actionlint", ["-version"], { encoding: "utf8" })
+  if (probe.error?.code === "ENOENT") {
+    console.log("[check] actionlint: not installed; skipped (install it to lint the workflows)")
+    return 0
+  }
+  return run("actionlint", [".github/workflows/ci.yml", ".github/workflows/release.yml"])
 }
 
 function whitelist() {

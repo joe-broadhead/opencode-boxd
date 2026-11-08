@@ -30,5 +30,13 @@ The plugin inserts default rules after each agent's base allow: the two reads ru
 never wakes a machine: waking starts billing, so only an asking call does it. Nothing is denied by default.
 
 `boxd_drop` destroys only what the laptop can account for: a proven import, a git repository, and no untracked or
-ignored path. Everything else is refused, and hibernate keeps the disk. A plugin tool asserts its own permission inside `execute`, because the host does not assert one for
-a plugin tool by itself. A script's write runs only when the session's agent, or the session, allows it.
+ignored path. Everything else is refused, and hibernate keeps the disk. A plugin tool asserts its own permission inside
+`execute`, because the host does not assert one for a plugin tool by itself.
+
+## Scripts
+
+A script calls the same tools through the `boxd.machines.tools` RPC, with no model. The tools RPC resolves the rule
+before dispatch, from a prior explicit allow only: an `ask` is refused with no prompt and no call, a `deny` is refused,
+and a saved "Always allow" does not authorize an ad-hoc script. A script's grant is a rule in config. Its reach is one
+method at a time; a script cannot widen a rule, and it cannot reach the host's shell, file or network tools.
+
