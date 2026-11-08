@@ -60,6 +60,7 @@ describe("the model-facing text at access all", () => {
   const all = {
     "the Code Mode namespace": NAMESPACE_DESCRIPTION,
     "the Jelly summary": jellySummary(),
+    "the Jelly page": read("docs/jelly.md"),
     "the /boxd-status text": formatStatus(defaultStatus()),
     "the boxd skill": read("skills/boxd/SKILL.md"),
   }
