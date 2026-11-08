@@ -178,7 +178,7 @@ errors pass through unchanged. No error, log or status line contains a token, a 
 | `UNTRACKED` | The guest tree has untracked or ignored paths, which a stored patch cannot hold. |
 | `GIT_UNKNOWN` | The guest directory is not a git repository, so nothing about its files can be proven. |
 | `CREATE_UNCERTAIN` | `machine new` timed out and no machine with that name exists yet. |
-| `PATH_REFUSED` | A laptop path is outside the project and `allowedRoots`, or is a symlink. |
+| `PATH_REFUSED` | A laptop path is outside the project and `allowedRoots`, or is a symlink. Name its root in the option, and allow it with the `external_directory` rule as well as the path rule. |
 | `FILE_TOO_LARGE` | A file is over 8 MiB, or one call moves over 32 MiB. |
 | `FILE_CONFLICT` | A harvested file was edited on the laptop since the last harvest. |
 | `GUEST_WORKSPACE` | The guest could not create or prepare `/home/boxd/work/<work id>`. |

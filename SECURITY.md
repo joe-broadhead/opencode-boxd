@@ -21,6 +21,10 @@ public issue for a security problem.
   and the git record. It is the laptop's copy of the session. Its folders are mode 0700 and its files 0600, because an
   export is a full transcript.
 - The guest OpenCode binds to `127.0.0.1` inside the machine. Nothing publishes that port.
+- A work's laptop files stay inside the project or a folder named in the `allowedRoots` option. A harvest writes a file
+  there only after the export is recorded, never outside both, and never through a symlink; when the host asks for a
+  folder outside the project, it asks for the `external_directory` rule as well as the path rule, and `PATH_REFUSED`
+  names that rule as its next step.
 - Status and errors carry no token, code, signed URL or user content; `src/redact.ts` cuts a failure's reason to one line
   of at most 160 characters.
 

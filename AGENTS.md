@@ -32,6 +32,10 @@ checks and the release steps.
   write would run unasked. `test/unit/tools.test.ts` is the architecture test: a change tool with no assert fails there.
 - **Default rules, not hooks.** Permissions come from rules inserted through `ctx.agent.transform` directly after each
   agent's base allow. A stricter agent is never weakened, and an agent without a base allow gets no rules.
+- **Allow by default; restrict with `access`.** The generated block allows `boxd_*` and each of the nine tools for
+  `access: "all"` (the default), asks for every machine change for `"ask-changes"`, and denies them for `"read-only"`.
+  A user's later rule wins. The guards that do not depend on a prompt stay: idle hibernate, `boxd_sleep` always
+  working, drop's data guard, and the create-intent ledger.
 - **Transforms are cheap, synchronous and never throw.** Record failures for status instead.
 - **Errors** read `CODE: What happened. Next step: What to do.`, built through `boxdError` and the one table in
   `src/errors.ts`. Codes have no service prefix; shared failures use the shared names (`HOST_UNTESTED`,
