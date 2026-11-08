@@ -118,6 +118,16 @@ describe("the README", () => {
     expect(rules).toEqual(defaultRules().map((rule) => ({ ...rule })))
   })
 
+  // R7: the configuration guide prints every value's generated block in full, and none of them is elided.
+  test.each(["all", "ask-changes", "read-only"] as const)("the configuration guide prints the %s block in full", (access) => {
+    const at = CONFIG.indexOf(`\`access: "${access}"\``)
+    expect({ access, found: at !== -1 }).toEqual({ access, found: true })
+    const start = CONFIG.indexOf("```json", at)
+    const end = CONFIG.indexOf("```", start + 7)
+    expect({ access, block: JSON.parse(CONFIG.slice(start + 7, end)) }).toEqual({ access, block: defaultRules(access) })
+    expect(CONFIG.slice(start, end)).not.toMatch(/…|\.\.\.|the rest/)
+  })
+
   test("links every repo file on the default branch", () => {
     const links = [...README.matchAll(/\]\((https:\/\/github\.com\/joe-broadhead\/opencode-boxd\/blob\/HEAD\/[^)]+)\)/g)].map((match) => match[1]!)
     expect(links.length).toBeGreaterThan(3)

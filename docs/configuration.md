@@ -40,11 +40,59 @@ The ledger is the laptop's copy. A boxd snapshot is an image and holds no sessio
 The plugin inserts its block directly after each agent's base `* * allow`. The last matching rule wins, so a rule of
 yours later in the agent, or in the session, still decides.
 
-| Action | `access: "all"` (default) | `access: "ask-changes"` | `access: "read-only"` |
-|---|---|---|---|
-| `boxd_*` (a tool a later release adds) | allow | allow | allow |
-| `boxd_status`, `boxd_job` | allow | allow | allow |
-| `boxd_ensure`, `boxd_submit`, `boxd_harvest`, `boxd_sleep`, `boxd_resume`, `boxd_image`, `boxd_drop` | allow | ask | deny |
+The block is generated from `defaultRules(access)`, and it is printed here in full for each value, so it can be copied
+into an agent that gets no block of its own.
+
+`access: "all"` (the default):
+
+```json
+[
+  {"action":"boxd_*","resource":"*","effect":"allow"},
+  {"action":"boxd_status","resource":"*","effect":"allow"},
+  {"action":"boxd_job","resource":"*","effect":"allow"},
+  {"action":"boxd_ensure","resource":"*","effect":"allow"},
+  {"action":"boxd_submit","resource":"*","effect":"allow"},
+  {"action":"boxd_harvest","resource":"*","effect":"allow"},
+  {"action":"boxd_sleep","resource":"*","effect":"allow"},
+  {"action":"boxd_resume","resource":"*","effect":"allow"},
+  {"action":"boxd_image","resource":"*","effect":"allow"},
+  {"action":"boxd_drop","resource":"*","effect":"allow"}
+]
+```
+
+`access: "ask-changes"`:
+
+```json
+[
+  {"action":"boxd_*","resource":"*","effect":"allow"},
+  {"action":"boxd_status","resource":"*","effect":"allow"},
+  {"action":"boxd_job","resource":"*","effect":"allow"},
+  {"action":"boxd_ensure","resource":"*","effect":"ask"},
+  {"action":"boxd_submit","resource":"*","effect":"ask"},
+  {"action":"boxd_harvest","resource":"*","effect":"ask"},
+  {"action":"boxd_sleep","resource":"*","effect":"ask"},
+  {"action":"boxd_resume","resource":"*","effect":"ask"},
+  {"action":"boxd_image","resource":"*","effect":"ask"},
+  {"action":"boxd_drop","resource":"*","effect":"ask"}
+]
+```
+
+`access: "read-only"`:
+
+```json
+[
+  {"action":"boxd_*","resource":"*","effect":"allow"},
+  {"action":"boxd_status","resource":"*","effect":"allow"},
+  {"action":"boxd_job","resource":"*","effect":"allow"},
+  {"action":"boxd_ensure","resource":"*","effect":"deny"},
+  {"action":"boxd_submit","resource":"*","effect":"deny"},
+  {"action":"boxd_harvest","resource":"*","effect":"deny"},
+  {"action":"boxd_sleep","resource":"*","effect":"deny"},
+  {"action":"boxd_resume","resource":"*","effect":"deny"},
+  {"action":"boxd_image","resource":"*","effect":"deny"},
+  {"action":"boxd_drop","resource":"*","effect":"deny"}
+]
+```
 
 Every tool this plugin registers is allowed by default, so an agent can create, run and destroy a billing machine
 without a prompt. The guards that do not depend on a prompt still hold: a machine that idles hibernates, `boxd_sleep`
