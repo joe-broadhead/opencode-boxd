@@ -23,6 +23,10 @@ All options go in the plugin entry in `opencode.json`:
 An unknown option, a snapshot name boxd would refuse, or a non-boolean `allowUntestedHost` stops the plugin with
 `OPTIONS_INVALID`; OpenCode's plugin list shows why.
 
+Inside `>=2.2.3 <2.3.0` a release that was not tested, such as 2.2.99, still starts: status marks the version `untested`
+and the next step is the same as on a tested release. Outside the range the plugin does not start unless
+`allowUntestedHost` is `true`.
+
 ## Where the ledger lives
 
 `~/.local/share/opencode-boxd/works/<work id>/`
