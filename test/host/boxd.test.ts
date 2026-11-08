@@ -141,6 +141,22 @@ describe("the plugin on a stock host", () => {
       const granted = await session(host, "build", [rule("boxd_ensure", "allow")])
       const ran = (await call("boxd_ensure", { sessionID: granted, input: { workId: "review-api", directory: host.location.directory } })).output
       expect(ran).toMatchObject({ workId: "review-api", machine: "oc-review-api", state: "ready" })
+
+      // A deny is refused too, with no call: the rule in the session narrows the agent's allow.
+      const denied = await session(host, "build", [rule("boxd_drop", "deny")])
+      const refusedByDeny = await call("boxd_drop", { sessionID: denied, input: { workId: "review-api" } }).then(
+        () => undefined,
+        (error: { data?: { code?: string } }) => error,
+      )
+      expect(refusedByDeny?.data?.code).toBe("PERMISSION_DENIED")
+      expect(host.boxd.calls().some((line) => line.startsWith("machine remove oc-review-api"))).toBe(false)
+
+      // An unknown name is denied by the host: it is not a method of this RPC.
+      const unknown = await call("boxd_no_such_tool", { sessionID: build, input: {} }).then(
+        () => undefined,
+        (error: { code?: string; data?: { code?: string } }) => error,
+      )
+      expect(unknown).toBeDefined()
     } finally {
       await host.close()
     }
@@ -232,7 +248,7 @@ describe("a failed run is reported, never hidden", () => {
 
       const harvested = await attempt(host, build, "build", "boxd_harvest", "always", { workId: "review-api", localDirectory: work })
       // The transcript is imported and proven; the failed run is a warning, not a refusal.
-      expect(harvested.output).toMatchObject({ state: "proven", outcome: "failed", warning: "GUEST_RUN_FAILED" })
+      expect(harvested.output).toMatchObject({ state: "proven", outcome: "failed", warning: "GUEST_AUTH_FAILED" })
       expect(String((harvested.output as { next?: string }).next)).toContain("Fix the guest's model credentials")
 
       // Status carries it, so a later turn cannot read the work as done.

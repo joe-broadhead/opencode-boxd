@@ -2,6 +2,7 @@
 // with the failure's structured error beside it, so the plugin reads it from what the guest or the imported transcript
 // already holds: never from a model call, and never by asking the guest to run anything.
 import { shortReason } from "./redact.js"
+import { CODES } from "./errors.js"
 
 /** The three states the plugin reports. */
 export type RunOutcome = "completed" | "failed" | "aborted"
@@ -67,11 +68,17 @@ export function isCredentialFailure(run: GuestRun): boolean {
   return /provider\.auth|auth|api.?key|credential|unauthori[sz]ed|forbidden|401|403|sign.?in/i.test(run.error)
 }
 
+/**
+ * The code a failed run reports, from the one table: a credential failure has its own next step, because the image
+ * needs a working sign-in before another prompt can succeed.
+ */
+export function failureCode(run: GuestRun): "GUEST_AUTH_FAILED" | "GUEST_RUN_FAILED" {
+  return isCredentialFailure(run) ? "GUEST_AUTH_FAILED" : "GUEST_RUN_FAILED"
+}
+
 /** The one next step for a failed run, as the code's next step and the harvest's. */
 export function nextStepFor(run: GuestRun): string {
-  return isCredentialFailure(run)
-    ? "Fix the guest's model credentials (docs/golden-image.md), then boxd_submit again."
-    : "Read the transcript, then boxd_submit again."
+  return CODES[failureCode(run)]
 }
 
 /** The sentence a failed run puts in front of a status or a tool result. */

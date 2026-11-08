@@ -64,13 +64,19 @@ describe("a failed run is reported, never hidden", () => {
 
   test("a failed run still proves the transcript, and warns with the redacted line", async () => {
     const { w, harvested } = await ran({ outcome: "failed", error: AUTH_ERROR })
-    expect(harvested).toMatchObject({ state: "proven", outcome: "failed", warning: "GUEST_RUN_FAILED" })
+    expect(harvested).toMatchObject({ state: "proven", outcome: "failed", warning: "GUEST_AUTH_FAILED" })
     expect(String(harvested.error)).toBe("provider.auth: Go Teams covers workspace members, not service accounts. Use a personal API key to call Go models")
     expect(String(harvested.next)).toContain("Fix the guest's model credentials")
     // The transcript is imported and on disk.
     const saved = await w.ledger.load("review-api")
     expect(saved?.lastOutcome).toMatchObject({ state: "failed" })
     expect(saved?.proof).toBeDefined()
+  })
+
+  test("a failure that is not a credential failure reports GUEST_RUN_FAILED, from the same table", async () => {
+    const { harvested } = await ran({ outcome: "failed", error: { type: "render", message: "The chart engine ran out of memory" } })
+    expect(harvested).toMatchObject({ state: "proven", outcome: "failed", warning: "GUEST_RUN_FAILED" })
+    expect(String(harvested.next)).toEndWith("Read the transcript, then boxd_submit again.")
   })
 
   test("a completed run carries no warning and no error", async () => {

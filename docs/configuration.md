@@ -51,7 +51,7 @@ would leave a machine billing with no way to clear it from the session.
 
 ## Platform facts
 
-- **`opencode session import` keeps the transcript's id** on 2.2.3, 2.2.4, 2.2.5 and 2.2.6. A second import of the same
+- **`opencode session import` keeps the transcript's id**, tested on 2.2.3, 2.2.4, 2.2.5 and 2.2.6. A second import of the same
   transcript answers `Session already exists` on stderr, exits 0, and prints no id; the plugin treats that as the
   transcript's own id. Tested against each stock release in `test/unit/prover.test.ts`.
 - **The prover runs `opencode session import --standalone`**, so the import writes the same store whether or not a
@@ -71,7 +71,7 @@ would leave a machine billing with no way to clear it from the session.
   fresh proof.
 - **A run's outcome is part of the result.** OpenCode records it on the session (`outcome`) and on its last idle message,
   with the failure's structured error. `boxd_job` reports it when the guest is idle, `boxd_harvest` records it and adds
-  `GUEST_RUN_FAILED` as a warning, and status shows each work's last outcome. The error is `<type>: <first line>`, passed
+  `GUEST_RUN_FAILED` or `GUEST_AUTH_FAILED` as a warning, and status shows each work's last outcome. The error is `<type>: <first line>`, passed
   through redaction; a provider's response body is never read. It comes from the guest or the imported transcript, never
   from a model call.
 - **Drop only destroys what the laptop can account for.** It refuses a non-git directory, untracked or ignored paths, and
@@ -102,6 +102,7 @@ errors pass through unchanged. No error, log or status line contains a token, a 
 | `SESSION_BUSY` | The guest session is still running; harvest only when it is idle. |
 | `GUEST_VERSION` | The machine's OpenCode differs from this laptop's. |
 | `GUEST_RUN_FAILED` | The guest session's last run failed. The transcript is still imported and proven; the error is the run's own. |
+| `GUEST_AUTH_FAILED` | The guest session's last run failed on a model credential. The transcript is still imported; fix the guest's sign-in. |
 | `GUEST_FAILED` | The guest helper failed an action. |
 | `BOXD_FAILED` | The boxd CLI refused a command or returned something unusable. |
 | `BOXD_MISSING` | The boxd CLI is not on the `PATH`. |
@@ -113,6 +114,7 @@ errors pass through unchanged. No error, log or status line contains a token, a 
 | `SNAPSHOT_EXISTS` | Snapshot names are immutable. |
 | `SNAPSHOT_MISSING` | The golden snapshot is not in this boxd account, so no machine is created. |
 | `LEDGER_FAILED` | A ledger read or write failed: a file system error, not a boxd one. |
+| `RULES_NOT_ADDED` | The default permission rules could not be inserted into the agents, so a machine change may run without asking. |
 | `UNTRACKED` | The guest tree has untracked or ignored paths, which a stored patch cannot hold. |
 | `GIT_UNKNOWN` | The guest directory is not a git repository, so nothing about its files can be proven. |
 | `CREATE_UNCERTAIN` | `machine new` timed out and no machine with that name exists yet. |

@@ -1,6 +1,5 @@
 import type { Plugin } from "@opencode/plugin"
-import { errorText } from "./constants.js"
-import { boxdError } from "./errors.js"
+import { CODES, boxdError } from "./errors.js"
 import { CHANGING_TOOLS, READ_TOOLS, TOOLS } from "./tools.js"
 import { reasonOf } from "./redact.js"
 
@@ -62,7 +61,7 @@ export function registerDefaultRules(
       for (const { id } of editor.list()) editor.update(id, (info) => void insertRules(info.permissions, rules))
       report(undefined)
     } catch (error) {
-      report(errorText("RULES_NOT_ADDED", `boxd's default permission rules could not be added (${reasonOf(error)}), so a machine change may run without asking.`, "Restart OpenCode."))
+      report(`RULES_NOT_ADDED: boxd's default permission rules could not be added (${reasonOf(error)}), so a machine change may run without asking. Next step: ${CODES.RULES_NOT_ADDED}`)
     }
   })
 }

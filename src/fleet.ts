@@ -5,7 +5,7 @@ import { assertDirectory, assertRepo, assertSessionId, assertSnapshot, assertWor
 import type { BoxdPort, GuestPort, MachineInfo, Prover } from "./ports.js"
 import { digest, order, parseExport, rewrite, type Transfer } from "./transfer.js"
 import { checkGuest } from "./host-version.js"
-import { failureText, nextStepFor, readRun, type GuestRun, type RunOutcome } from "./outcome.js"
+import { failureCode, failureText, nextStepFor, readRun, type GuestRun, type RunOutcome } from "./outcome.js"
 
 export type Deps = {
   readonly boxd: BoxdPort
@@ -304,7 +304,7 @@ export function createFleet(deps: Deps) {
         proof: proofState(work),
         // The last run's outcome, so an idle session that failed is never read as a finished job.
         outcome: run.outcome,
-        ...(run.outcome === "failed" ? { error: run.error, warning: "GUEST_RUN_FAILED" } : {}),
+        ...(run.outcome === "failed" ? { error: run.error, warning: failureCode(run) } : {}),
         next: jobNext(work.workId, phase, run),
       }
     },
@@ -351,7 +351,7 @@ export function createFleet(deps: Deps) {
         workId: work.workId,
         state: "proven",
         outcome: run.outcome,
-        ...(run.outcome === "failed" ? { error: run.error, warning: "GUEST_RUN_FAILED" } : {}),
+        ...(run.outcome === "failed" ? { error: run.error, warning: failureCode(run) } : {}),
         sessions: sessions.map((session) => ({ remoteId: session.remoteId, importedId: session.importedId })),
         git: { known: git.known, remote: git.remote, sha: git.sha, dirty: git.dirty, patchStored: git.patchStored, untracked: git.untracked, ignored: git.ignored },
         // A failed run is a warning on a successful harvest: the transcript is imported and proven, and the laptop keeps
