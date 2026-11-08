@@ -49,7 +49,7 @@ describe("a failed run is reported, never hidden", () => {
   /** A work admitted once, with the guest's export and phase carrying the given run. */
   async function ran(run: { outcome: "completed" | "failed" | "aborted"; error?: unknown }) {
     const w = await world()
-    await w.fleet.ensure({ workId: "review-api", directory: "/work/example" })
+    await w.fleet.ensure({ workId: "review-api" })
     await w.fleet.submit({ workId: "review-api", text: "Reply with OK." })
     w.guest.phaseById.set("ses_root_review-api", "idle")
     w.guest.runById.set("ses_root_review-api", { outcome: run.outcome, ...(run.error ? { error: errorLine(run.error) } : {}) })
@@ -101,7 +101,7 @@ describe("a failed run is reported, never hidden", () => {
 
   test("boxd_job reports the outcome of an idle session", async () => {
     const w = await world()
-    await w.fleet.ensure({ workId: "review-api", directory: "/work/example" })
+    await w.fleet.ensure({ workId: "review-api" })
     await w.fleet.submit({ workId: "review-api", text: "Reply with OK." })
     w.guest.phaseById.set("ses_root_review-api", "idle")
     w.guest.runById.set("ses_root_review-api", { outcome: "failed", error: "provider.auth: Go Teams covers workspace members" })
@@ -114,7 +114,7 @@ describe("a failed run is reported, never hidden", () => {
 
   test("boxd_job reports completed, and keeps its harvest advice", async () => {
     const w = await world()
-    await w.fleet.ensure({ workId: "review-api", directory: "/work/example" })
+    await w.fleet.ensure({ workId: "review-api" })
     await w.fleet.submit({ workId: "review-api", text: "Reply with OK." })
     w.guest.phaseById.set("ses_root_review-api", "idle")
     w.guest.runById.set("ses_root_review-api", { outcome: "completed" })

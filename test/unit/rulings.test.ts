@@ -22,7 +22,7 @@ const refusal = async (promise: Promise<unknown>, code: Code) => {
 /** A work that is opened, admitted and harvested once, so the next call starts from a proven state. */
 async function proven(overrides: { untracked?: string[]; ignored?: string[]; dirty?: boolean; patch?: string } = {}) {
   const w = await world()
-  await w.fleet.ensure({ workId: "review-api", directory: "/work/example" })
+  await w.fleet.ensure({ workId: "review-api" })
   await w.fleet.submit({ workId: "review-api", text: "Add a health check." })
   w.guest.phaseById.set("ses_root_review-api", "idle")
   w.guest.gitState = {
@@ -43,7 +43,7 @@ async function proven(overrides: { untracked?: string[]; ignored?: string[]; dir
 describe("a read never bills (DR-1)", () => {
   test("boxd_job on a hibernated work reports asleep and never calls wake", async () => {
     const w = await world()
-    await w.fleet.ensure({ workId: "review-api", directory: "/work/example" })
+    await w.fleet.ensure({ workId: "review-api" })
     w.boxd.machines.get("oc-review-api")!.status = "hibernated"
     w.boxd.calls.length = 0
     const job = await w.fleet.job({ workId: "review-api" })
@@ -55,7 +55,7 @@ describe("a read never bills (DR-1)", () => {
 
   test("boxd_status on a hibernated work never wakes or holds", async () => {
     const w = await world()
-    await w.fleet.ensure({ workId: "review-api", directory: "/work/example" })
+    await w.fleet.ensure({ workId: "review-api" })
     w.boxd.machines.get("oc-review-api")!.status = "hibernated"
     w.boxd.calls.length = 0
     const status = await w.fleet.status()
@@ -65,7 +65,7 @@ describe("a read never bills (DR-1)", () => {
 
   test("a destroyed machine is reported gone, not woken", async () => {
     const w = await world()
-    await w.fleet.ensure({ workId: "review-api", directory: "/work/example" })
+    await w.fleet.ensure({ workId: "review-api" })
     w.boxd.machines.get("oc-review-api")!.status = "destroyed"
     w.boxd.calls.length = 0
     expect(await w.fleet.job({ workId: "review-api" })).toMatchObject({ state: "gone" })
@@ -78,7 +78,7 @@ describe("every wake arms the awake bound (DR-6)", () => {
     const w = await world()
     w.boxd.seed("oc-review-api", "hibernated")
     w.boxd.calls.length = 0
-    const opened = await w.fleet.ensure({ workId: "review-api", directory: "/work/example" })
+    const opened = await w.fleet.ensure({ workId: "review-api" })
     expect(opened.state).toBe("starting")
     expect(w.boxd.calls).toContain("wake oc-review-api")
     expect(w.boxd.calls).toContain("hold oc-review-api")
@@ -87,7 +87,7 @@ describe("every wake arms the awake bound (DR-6)", () => {
 
   test("submit waking a machine holds it awake", async () => {
     const w = await world()
-    await w.fleet.ensure({ workId: "review-api", directory: "/work/example" })
+    await w.fleet.ensure({ workId: "review-api" })
     w.boxd.machines.get("oc-review-api")!.status = "hibernated"
     w.boxd.calls.length = 0
     await refusal(w.fleet.submit({ workId: "review-api", text: "Later." }), "MACHINE_STARTING")
@@ -96,7 +96,7 @@ describe("every wake arms the awake bound (DR-6)", () => {
 
   test("resume waking a machine holds it awake", async () => {
     const w = await world()
-    await w.fleet.ensure({ workId: "review-api", directory: "/work/example" })
+    await w.fleet.ensure({ workId: "review-api" })
     w.boxd.machines.get("oc-review-api")!.status = "hibernated"
     w.boxd.calls.length = 0
     expect((await w.fleet.resume({ workId: "review-api" })).resumed).toBe("wake")
@@ -106,7 +106,7 @@ describe("every wake arms the awake bound (DR-6)", () => {
   test("a hold that fails is reported to status, not skipped silently", async () => {
     const problems: string[] = []
     const w = await world({ report: (problem) => problems.push(problem) })
-    await w.fleet.ensure({ workId: "review-api", directory: "/work/example" })
+    await w.fleet.ensure({ workId: "review-api" })
     w.boxd.holdAwake = async () => {
       throw new BoxdError("BOXD_FAILED", "boxd machine config set failed.")
     }
@@ -140,7 +140,7 @@ describe("a rebuild works any number of times (DR-7)", () => {
 describe("hibernating is always an exit from billing (DR-8)", () => {
   test("sleep works with no proof and records the warning", async () => {
     const w = await world()
-    await w.fleet.ensure({ workId: "review-api", directory: "/work/example" })
+    await w.fleet.ensure({ workId: "review-api" })
     await w.fleet.submit({ workId: "review-api", text: "Running." })
     const slept = await w.fleet.sleep({ workId: "review-api" })
     expect(slept).toMatchObject({ state: "hibernated" })
@@ -154,7 +154,7 @@ describe("hibernating is always an exit from billing (DR-8)", () => {
 
   test("sleep works when the guest cannot be read at all", async () => {
     const w = await world()
-    await w.fleet.ensure({ workId: "review-api", directory: "/work/example" })
+    await w.fleet.ensure({ workId: "review-api" })
     w.guest.gitFails = true
     w.guest.phase = async () => {
       throw new BoxdError("GUEST_FAILED", "The guest phase failed.")
@@ -164,7 +164,7 @@ describe("hibernating is always an exit from billing (DR-8)", () => {
 
   test("a fresh harvest clears the warning", async () => {
     const w = await world()
-    await w.fleet.ensure({ workId: "review-api", directory: "/work/example" })
+    await w.fleet.ensure({ workId: "review-api" })
     await w.fleet.submit({ workId: "review-api", text: "Running." })
     await w.fleet.sleep({ workId: "review-api" })
     await w.fleet.resume({ workId: "review-api" })
@@ -179,7 +179,7 @@ describe("no billing machine the ledger does not know (DR-9)", () => {
   test("the intent is recorded before the create", async () => {
     const w = await world()
     w.boxd.createBehaviour = "timeout-missing"
-    await refusal(w.fleet.ensure({ workId: "review-api", directory: "/work/example" }), "CREATE_UNCERTAIN")
+    await refusal(w.fleet.ensure({ workId: "review-api" }), "CREATE_UNCERTAIN")
     const saved = await w.ledger.load("review-api")
     expect(saved?.pendingCreate).toBeDefined()
     expect(saved?.machine).toBe("oc-review-api")
@@ -188,7 +188,7 @@ describe("no billing machine the ledger does not know (DR-9)", () => {
   test("a create that times out but lands is adopted, and the work is recorded", async () => {
     const w = await world()
     w.boxd.createBehaviour = "timeout-then-exists"
-    const opened = await w.fleet.ensure({ workId: "review-api", directory: "/work/example" })
+    const opened = await w.fleet.ensure({ workId: "review-api" })
     expect(opened).toMatchObject({ state: "ready", machine: "oc-review-api" })
     expect((await w.ledger.load("review-api"))?.pendingCreate).toBeUndefined()
   })
@@ -203,7 +203,7 @@ describe("no billing machine the ledger does not know (DR-9)", () => {
   test("a machine created shared is removed again, not left unrecorded", async () => {
     const w = await world()
     w.boxd.createBehaviour = "shared"
-    await refusal(w.fleet.ensure({ workId: "review-api", directory: "/work/example" }), "NOT_OURS")
+    await refusal(w.fleet.ensure({ workId: "review-api" }), "NOT_OURS")
     expect(w.boxd.calls).toContain("remove oc-review-api")
   })
 })
@@ -253,13 +253,13 @@ describe("drop destroys only what the laptop can account for (DR-4)", () => {
 
   test("an unharvested work still refuses with NOT_PROVEN", async () => {
     const w = await world()
-    await w.fleet.ensure({ workId: "review-api", directory: "/work/example" })
+    await w.fleet.ensure({ workId: "review-api" })
     await refusal(w.fleet.drop({ workId: "review-api" }), "NOT_PROVEN")
   })
 
   test("the harvest's next step names what blocks the drop", async () => {
     const w = await world()
-    await w.fleet.ensure({ workId: "review-api", directory: "/work/example" })
+    await w.fleet.ensure({ workId: "review-api" })
     await w.fleet.submit({ workId: "review-api", text: "Write notes." })
     w.guest.phaseById.set("ses_root_review-api", "idle")
     w.guest.gitState = { known: true, remote: null, branch: null, sha: null, dirty: false, untracked: ["notes.txt"], ignored: [], untrackedFiles: { "notes.txt": "aGk=" } }
@@ -272,7 +272,7 @@ describe("a create needs its golden image (SNAPSHOT_MISSING)", () => {
   test("ensure refuses before any create when the snapshot is not in the account", async () => {
     const w = await world()
     w.boxd.snapshots.length = 0
-    const error = await refusal(w.fleet.ensure({ workId: "review-api", directory: "/work/example" }), "SNAPSHOT_MISSING")
+    const error = await refusal(w.fleet.ensure({ workId: "review-api" }), "SNAPSHOT_MISSING")
     expect(error.message).toContain("opencode-golden")
     expect(String(error.next)).toContain("docs/golden-image.md")
     expect(w.boxd.calls.filter((call) => call.startsWith("create"))).toEqual([])
@@ -290,7 +290,7 @@ describe("a create needs its golden image (SNAPSHOT_MISSING)", () => {
   test("a create proceeds when the snapshot is there", async () => {
     const w = await world()
     expect(w.boxd.snapshots.map((item) => item.name)).toContain("opencode-golden")
-    await expect(w.fleet.ensure({ workId: "review-api", directory: "/work/example" })).resolves.toMatchObject({ state: "ready" })
+    await expect(w.fleet.ensure({ workId: "review-api" })).resolves.toMatchObject({ state: "ready" })
   })
 
   test("an unreadable snapshot list is not a refusal: the create reports its own error", async () => {
@@ -298,7 +298,7 @@ describe("a create needs its golden image (SNAPSHOT_MISSING)", () => {
     w.boxd.listSnapshots = async () => {
       throw new BoxdError("BOXD_FAILED", "boxd snapshots list failed.")
     }
-    await expect(w.fleet.ensure({ workId: "review-api", directory: "/work/example" })).resolves.toMatchObject({ state: "ready" })
+    await expect(w.fleet.ensure({ workId: "review-api" })).resolves.toMatchObject({ state: "ready" })
   })
 
   test("status says whether the image is present, and names the doc when it is not", async () => {
@@ -318,7 +318,7 @@ describe("a create needs its golden image (SNAPSHOT_MISSING)", () => {
 describe("the rest of the review", () => {
   test("a cyclic parent chain fails instead of recursing (DR-15)", async () => {
     const w = await world()
-    await w.fleet.ensure({ workId: "review-api", directory: "/work/example" })
+    await w.fleet.ensure({ workId: "review-api" })
     await w.fleet.submit({ workId: "review-api", text: "Cycle." })
     w.guest.phaseById.set("ses_root_review-api", "idle")
     // root -> child and child -> root: a cycle the guest could send, which must fail rather than recurse.
@@ -329,15 +329,15 @@ describe("the rest of the review", () => {
 
   test("harvest refuses a local directory that does not exist (DR-22)", async () => {
     const w = await world()
-    await w.fleet.ensure({ workId: "review-api", directory: "/work/example" })
+    await w.fleet.ensure({ workId: "review-api" })
     await w.fleet.submit({ workId: "review-api", text: "Harvest nowhere." })
     w.guest.phaseById.set("ses_root_review-api", "idle")
-    await refusal(w.fleet.harvest({ workId: "review-api", localDirectory: "/definitely/not/here" }), "NAME_INVALID")
+    await refusal(w.fleet.harvest({ workId: "review-api", localDirectory: join(w.root, "missing") }), "NAME_INVALID")
   })
 
   test("a submit stamps the prompt before it admits it, so a crash fails towards stale", async () => {
     const w = await world()
-    await w.fleet.ensure({ workId: "review-api", directory: "/work/example" })
+    await w.fleet.ensure({ workId: "review-api" })
     await w.fleet.submit({ workId: "review-api", text: "First." })
     w.guest.phaseById.set("ses_root_review-api", "idle")
     await w.fleet.harvest({ workId: "review-api", localDirectory: await mkdtemp(join(tmpdir(), "boxd-local-")) })

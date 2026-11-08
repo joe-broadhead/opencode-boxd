@@ -53,6 +53,12 @@ export type GuestPort = {
   phase(machine: string, sessionID: string): Promise<{ phase: "busy" | "idle" | "missing"; run: GuestRun }>
   exportSession(machine: string, sessionID: string): Promise<unknown>
   importSession(machine: string, transfer: Transfer, directory: string): Promise<{ id: string }>
+  /** Writes one file into the work tree, creating its folders: the data-in half of a work. */
+  upload(machine: string, directory: string, path: string, body: Buffer): Promise<void>
+  /** Reads one file out of the work tree, unchanged and byte for byte: the data-out half. */
+  download(machine: string, directory: string, path: string): Promise<Buffer>
+  /** The guest's own sha256 for each work-relative path, so a drop can tell a recovered output from lost work. */
+  digest(machine: string, directory: string, paths: readonly string[]): Promise<Record<string, string>>
   git(machine: string, directory: string): Promise<GitState>
   /**
    * The machine was created again under the same name, so its disk is new: the uploaded helper is gone and must be

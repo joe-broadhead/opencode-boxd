@@ -18,8 +18,8 @@ call would get:
 opencode api post /api/rpc/boxd.machines.tools/describe -H "x-opencode-directory:$PWD" -d '{"input":{"sessionID":"<id>"}}'
 ```
 
-A `boxd` result comes back as `{ output?, text }`: the tool's structured content when it has any, and its text parts
-joined by newlines.
+A plugin-owned method's result is the method's output object, as `describe` gives its schema: for boxd, the JSON the
+tool itself returns (a work's state, a harvest's sessions, a job's outcome). `text` is what the model path would show.
 
 ## Methods
 
@@ -36,6 +36,52 @@ joined by newlines.
 | `boxd_drop` | destructive | the agent or session allows `boxd_drop` |
 
 A class is the worst thing the method does; it never decides whether a call runs. The rules do.
+
+## Files in and out
+
+`boxd_submit` takes `files` to copy data to the machine, and `boxd_harvest` takes `files` to copy results back. A path is
+relative to the work tree; a laptop path must be inside the project or a folder in `allowedRoots`, and a symlink is never
+followed. The caps are 8 MiB a file and 32 MiB a call, and the ledger records each file's name, size and sha256, never
+its content.
+
+A worked example: summarise the bookmarks a previous step saved, and bring the summary back.
+
+```sh
+# 1. One work, with the laptop folder it belongs to.
+opencode api post /api/rpc/boxd.machines.tools/boxd_ensure -H "x-opencode-directory:$PWD" \
+  -d '{"input":{"sessionID":"<id>","input":{"workId":"bookmarks"}}}'
+
+# 2. The data in, then the prompt. The model reads data/bookmarks.json, not a pasted list.
+opencode api post /api/rpc/boxd.machines.tools/boxd_submit -H "x-opencode-directory:$PWD" \
+  -d '{"input":{"sessionID":"<id>","input":{"workId":"bookmarks","text":"Read data/bookmarks.json and write SUMMARY.md: one line per site, grouped by topic.","files":[{"from":"bookmarks.json","to":"data/bookmarks.json"}]}}}'
+
+# 3. Later: the outcome, then the transcript and the summary.
+opencode api post /api/rpc/boxd.machines.tools/boxd_job -H "x-opencode-directory:$PWD" \
+  -d '{"input":{"sessionID":"<id>","input":{"workId":"bookmarks"}}}'
+opencode api post /api/rpc/boxd.machines.tools/boxd_harvest -H "x-opencode-directory:$PWD" \
+  -d '{"input":{"sessionID":"<id>","input":{"workId":"bookmarks","files":["SUMMARY.md"]}}}'
+```
+
+The harvest answers `outcome: "completed"` when the model finished, and the file lands beside the work's laptop folder.
+An `outcome` of `failed` is a warning on a successful harvest: the transcript and the files are still here, and the next
+step says what to fix. A `boxd_drop` after that harvest succeeds, because `SUMMARY.md` came back at the digest the guest
+still has; a file that was never harvested keeps the refusal.
+
+If the host asks for permission to touch a folder outside the project, allow it with the `external_directory` rule as
+well as the path rule:
+
+```jsonc
+{ "permissions": {
+  "external_directory": [{ "action": "/srv/work", "resource": "*", "effect": "allow" }],
+  "read": [{ "action": "/srv/work/**", "resource": "*", "effect": "allow" }],
+  "edit": [{ "action": "/srv/work/**", "resource": "*", "effect": "allow" }]
+} }
+```
+
+A refusal that names `permission.rejected: external_directory` is fixed by that rule, and by naming the folder in the
+plugin's `allowedRoots` option.
+
+## Restricting one agent
 
 To let one agent run a script that harvests, give that agent its own rule:
 

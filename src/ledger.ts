@@ -35,6 +35,16 @@ export interface LastOutcome {
   at: string
 }
 
+/** One file a work moved in or out: its name in the work tree, its size and digest. Never its content. */
+export interface MovedFile {
+  path: string
+  bytes: number
+  sha256: string
+  at: string
+  /** Where the laptop holds it, for a file that came back. */
+  laptopPath?: string
+}
+
 /** A recorded warning about a work; the next step is the code's own. */
 export interface WorkWarning {
   code: "UNHARVESTED_SLEEP"
@@ -45,7 +55,10 @@ export interface Work {
   workId: string
   machine: string
   snapshot: string
-  directory: string
+  /** The laptop folder a work belongs to: where the transcript is imported, and where its files go by default. */
+  laptopDirectory: string
+  /** The folder the guest works in: /home/boxd/work/<workId>, always made by the plugin. */
+  guestDirectory: string
   repo?: string
   rootSessionId?: string
   lastSubmitAt?: string
@@ -53,6 +66,10 @@ export interface Work {
   lastOutcome?: LastOutcome
   git?: GitRecord
   warnings?: WorkWarning[]
+  /** Files copied to the guest, by name, size and digest. */
+  uploads?: MovedFile[]
+  /** Files copied back, by name, size and digest; a drop counts one as recovered while its digest still matches. */
+  downloads?: MovedFile[]
   /** Set before `machine new`, and cleared once the machine is recorded: a timeout must not orphan a billing machine. */
   pendingCreate?: { at: string; snapshot: string }
   dropped?: boolean

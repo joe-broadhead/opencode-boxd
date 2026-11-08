@@ -22,7 +22,7 @@ export const CODES = {
   GUEST_AUTH_FAILED: "Fix the guest's model credentials (docs/golden-image.md), then boxd_submit again.",
   GUEST_FAILED: "Call boxd_status, and recreate the machine with boxd_resume if the guest keeps failing.",
   BOXD_FAILED: "Read the boxd CLI's own message, and run boxd_status before trying again.",
-  BOXD_MISSING: "Install the boxd CLI, sign in to it, and restart OpenCode so it is on the PATH.",
+  BOXD_MISSING: "Put the boxd CLI on the server's PATH and sign it in, in that server's HOME (its config is at ~/.config/boxd on Linux, or ~/Library/Application Support/boxd on macOS); an isolated or service instance needs its own HOME with both setups.",
   TIMEOUT: "Call boxd_status in a later turn instead. Do not retry inside the same call.",
   NOT_PROVEN: "Call boxd_harvest before sleeping, imaging or dropping this work.",
   DIRTY: "Call boxd_harvest, which stores the uncommitted diff with the export, before dropping.",
@@ -35,6 +35,10 @@ export const CODES = {
   UNTRACKED: "Commit or delete the paths the message names on the machine, harvest again, then drop. Or hibernate, which keeps the disk.",
   GIT_UNKNOWN: "Commit the work in a git repository on the machine, harvest again, then drop. Or hibernate, which keeps the disk.",
   CREATE_UNCERTAIN: "Run boxd_status: if the machine appears there, call boxd_ensure to adopt it; if not, ensure again.",
+  PATH_REFUSED: `Pass a path inside the project, or name its root in the plugin option "allowedRoots", and allow it with the external_directory rule.`,
+  FILE_TOO_LARGE: "Move a smaller file, or split it: the per-file limit is 8 MiB and the total is 32 MiB.",
+  FILE_CONFLICT: "Keep the local edit and drop that path from the harvest, or restore the harvested copy and harvest again.",
+  GUEST_WORKSPACE: "Hibernate the machine, then boot an image whose /home/boxd is writable by the boxd user, and call boxd_ensure again.",
 } as const
 
 export type Code = keyof typeof CODES

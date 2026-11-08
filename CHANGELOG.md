@@ -22,6 +22,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The `snapshot` option defaults to `opencode-golden`. Status says whether this account has it, and `boxd_ensure` and
   `boxd_resume` refuse with `SNAPSHOT_MISSING` before creating a machine.
 
+### Changed
+
+- Every work has a laptop folder and a guest folder: the guest always works in `/home/boxd/work/<work id>`, and a laptop
+  path is never sent to the machine. `boxd_ensure`'s `directory` names the laptop folder.
+- `boxd_submit` copies `files` to the machine before the prompt, and `boxd_harvest` copies `files` back after the
+  transcript: 8 MiB a file, 32 MiB a call, no symlinks, inside the project or `allowedRoots`, recorded by name, size and
+  sha256. `boxd_drop` counts a harvested output as recovered.
+- `docs/scripting.md` has a worked `bookmarks.json` → `SUMMARY.md` example and the `external_directory` rule.
+- `boxd_job` checks the guest server before reporting `empty`; `boxd_status` checks the snapshot with no work open;
+  `BOXD_MISSING` names the CLI on the server's PATH and its config in the server's HOME.
+- `allowedRoots` names laptop folders outside the project that work files may use.
+
 ### Fixed
 
 - A second harvest of the same session now proves the import instead of failing: stock OpenCode answers

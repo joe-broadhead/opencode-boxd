@@ -30,10 +30,34 @@ const object = (properties: Record<string, JsonSchema>, required: readonly strin
 })
 
 const WORK: StringField = { type: "string", description: 'A short lowercase work id, such as "review-api". The machine is named oc-<id>.' }
-const DIRECTORY: StringField = { type: "string", description: 'An absolute guest path with no spaces, such as "/home/boxd/work/review-api".' }
+const DIRECTORY: StringField = {
+  type: "string",
+  description: "A laptop folder for the work, inside the project or an allowed root. The guest always works in /home/boxd/work/<work id>.",
+}
 const REPO: StringField = { type: "string", description: 'An https://github.com/owner/repo URL to clone on the machine, if the directory is not a checkout already.' }
 const TITLE: StringField = { type: "string", description: "The guest session's title; the work id by default." }
-const LOCAL: StringField = { type: "string", description: "The laptop directory that receives the imported sessions; it must exist." }
+const LOCAL: StringField = {
+  type: "string",
+  description: "The laptop folder that receives the transcript and the harvested files; the work's own folder by default. It must be inside the project or an allowed root.",
+}
+const FILES_IN = {
+  type: "array",
+  description: "Files to copy to the machine before the prompt, from a laptop path to a path inside the work tree. 8 MiB each, 32 MiB together.",
+  items: {
+    type: "object",
+    required: ["from", "to"],
+    properties: {
+      from: { type: "string", description: "A laptop file inside the project or an allowed root; no symlinks." },
+      to: { type: "string", description: 'A path inside the work tree, such as "data/bookmarks.json".' },
+    },
+    additionalProperties: false,
+  },
+} satisfies JsonSchema
+const FILES_OUT = {
+  type: "array",
+  description: "Paths inside the work tree to copy back after the transcript import, such as SUMMARY.md. 8 MiB each, 32 MiB together.",
+  items: { type: "string" },
+} satisfies JsonSchema
 const TEXT: StringField = { type: "string", description: "The prompt to admit on the guest OpenCode." }
 const MACHINE: StringField = { type: "string", description: 'The machine name, oc-<work id>, owned by an open work.' }
 const SNAPSHOT: StringField = { type: "string", description: "A new lowercase snapshot name. Snapshots are immutable." }
@@ -85,7 +109,7 @@ export const TOOLS: readonly ToolSpec[] = [
     name: "ensure",
     id: "boxd_ensure",
     class: "write",
-    description: "Get a private machine from the golden snapshot for a work id, and record the work. Returns starting when it is not up yet. It does not wait.",
+    description: "Get a private machine from the golden snapshot for a work id, and record the work. The guest works in /home/boxd/work/<work id>. Returns starting when it is not up yet. It does not wait.",
     input: object({ workId: WORK, directory: DIRECTORY, repo: REPO, title: TITLE }, ["workId"]),
     run: (fleet, input) =>
       fleet.ensure({
@@ -99,22 +123,29 @@ export const TOOLS: readonly ToolSpec[] = [
     name: "submit",
     id: "boxd_submit",
     class: "write",
-    description: "Admit a prompt on the guest OpenCode. Returns when the prompt is admitted, not when the model finishes.",
-    input: object({ workId: WORK, text: TEXT, title: TITLE }, ["workId", "text"]),
+    description: "Admit a prompt on the guest OpenCode, after copying any files it needs to the machine. Returns when the prompt is admitted, not when the model finishes.",
+    input: object({ workId: WORK, text: TEXT, title: TITLE, files: FILES_IN }, ["workId", "text"]),
     run: (fleet, input) =>
       fleet.submit({
         workId: text(input, "workId", "workId"),
         text: text(input, "text", "text"),
         ...(optional(input, "title") ? { title: optional(input, "title")! } : {}),
+        ...(input.files ? { files: input.files as Array<{ from: string; to: string }> } : {}),
       }),
   },
   {
     name: "harvest",
     id: "boxd_harvest",
     class: "export",
-    description: "Export the session tree, import it on this laptop, and record git. Refuses while the session is busy. The local directory must exist.",
-    input: object({ workId: WORK, localDirectory: LOCAL }, ["workId", "localDirectory"]),
-    run: (fleet, input) => fleet.harvest({ workId: text(input, "workId", "workId"), localDirectory: text(input, "localDirectory", "localDirectory") }),
+    description: "Export the session tree, import it on this laptop, and record git; copy back any files the work produced. Refuses while the session is busy.",
+    input: object({ workId: WORK, localDirectory: LOCAL, files: FILES_OUT, to: LOCAL }, ["workId"]),
+    run: (fleet, input) =>
+      fleet.harvest({
+        workId: text(input, "workId", "workId"),
+        ...(optional(input, "localDirectory") ? { localDirectory: optional(input, "localDirectory")! } : {}),
+        ...(Array.isArray(input.files) ? { files: input.files.filter((path): path is string => typeof path === "string") } : {}),
+        ...(optional(input, "to") ? { to: optional(input, "to")! } : {}),
+      }),
   },
   {
     name: "sleep",
@@ -144,7 +175,7 @@ export const TOOLS: readonly ToolSpec[] = [
     name: "drop",
     id: "boxd_drop",
     class: "destructive",
-    description: "Destroy the machine and close the work. Refuses unless the laptop import is fresh, the guest is a git repository, and it has no untracked or ignored path.",
+    description: "Destroy the machine and close the work. Refuses unless the laptop import is fresh, the guest is a git repository, and every untracked or ignored path was harvested at the digest the guest still has.",
     input: object({ workId: WORK }, ["workId"]),
     run: (fleet, input) => fleet.drop({ workId: text(input, "workId", "workId") }),
   },

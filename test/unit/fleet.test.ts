@@ -178,10 +178,10 @@ describe("the control plane", () => {
 
 describe("proof state", () => {
   test("is fresh only after a harvest later than the last prompt", () => {
-    expect(proofState({ workId: "w", machine: "oc-w", snapshot: "s", directory: "/d" })).toBe("missing")
+    expect(proofState({ workId: "w", machine: "oc-w", snapshot: "s", laptopDirectory: "/d", guestDirectory: "/home/boxd/work/w" })).toBe("missing")
     const proof = { harvestedAt: "2026-11-07T12:00:00.000Z", guestVersion: "2.2.6", sessions: [], sha256: {} }
-    expect(proofState({ workId: "w", machine: "oc-w", snapshot: "s", directory: "/d", proof })).toBe("fresh")
-    expect(proofState({ workId: "w", machine: "oc-w", snapshot: "s", directory: "/d", proof, lastSubmitAt: "2026-11-07T12:00:01.000Z" })).toBe("stale")
+    expect(proofState({ workId: "w", machine: "oc-w", snapshot: "s", laptopDirectory: "/d", guestDirectory: "/home/boxd/work/w", proof })).toBe("fresh")
+    expect(proofState({ workId: "w", machine: "oc-w", snapshot: "s", laptopDirectory: "/d", guestDirectory: "/home/boxd/work/w", proof, lastSubmitAt: "2026-11-07T12:00:01.000Z" })).toBe("stale")
   })
 })
 

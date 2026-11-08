@@ -46,7 +46,7 @@ export interface FakeBoxd {
 }
 
 /** The fake CLI, its state file and a shell shim, all in the temp root. */
-export function startFakeBoxd(guest: FakeGuest, version = HOST_VERSION): FakeBoxd {
+export function startFakeBoxd(guest: FakeGuest, guestDirectory: string, version = HOST_VERSION): FakeBoxd {
   const dir = join(root, "fake-boxd")
   mkdirSync(dir, { recursive: true })
   const state = join(dir, "state.json")
@@ -56,7 +56,7 @@ export function startFakeBoxd(guest: FakeGuest, version = HOST_VERSION): FakeBox
   writeFileSync(bin, `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(script)} "$@"\n`)
   chmodSync(bin, 0o755)
   const write = (machines: Record<string, unknown>, snapshots = GOLDEN) =>
-    writeFileSync(state, JSON.stringify({ machines, snapshots, log: [], version, port: guest.port }))
+    writeFileSync(state, JSON.stringify({ machines, snapshots, log: [], version, port: guest.port, guestDirectory }))
   write({})
   const read = () =>
     JSON.parse(readFileSync(state, "utf8")) as {
@@ -132,7 +132,8 @@ export async function startHost(input: HostInput = {}) {
   const base = join(root, `host-${++hosts}`)
   mkdirSync(base, { recursive: true })
   const guest = startFakeGuest()
-  const boxd = startFakeBoxd(guest, input.guestVersion ?? HOST_VERSION)
+  const work = workDirectory(`host-${hosts}`)
+  const boxd = startFakeBoxd(guest, work, input.guestVersion ?? HOST_VERSION)
   const prover = fakeProver()
   const model = input.model ? startMockModel() : undefined
   const plugin = createBoxdPlugin({ boxdBin: boxd.bin, ledger: join(base, "ledger"), prover: prover.prover })
@@ -170,7 +171,7 @@ export async function startHost(input: HostInput = {}) {
     fs: { filewatcher: false },
     log: { level: "error" },
   })
-  const location = { directory: workDirectory(`host-${hosts}`) }
+  const location = { directory: work }
   const host = {
     client,
     location,
@@ -252,6 +253,7 @@ export async function attempt(host: Host, sessionID: string, agent: string, tool
     asked,
     ok: outcome.ok,
     output: outcome.ok ? ((outcome.result.output ?? outcome.result.content) as Record<string, unknown> | undefined) : undefined,
+    content: outcome.ok ? outcome.result.content : undefined,
     error: outcome.ok ? undefined : outcome.error,
   }
 }

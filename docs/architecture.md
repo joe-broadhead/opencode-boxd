@@ -23,9 +23,27 @@ OpenCode (laptop)                     boxd machine                   laptop
 - `guest/guest.py` — the helper copied to the machine. It speaks one JSON object in and one out, and talks only to
   `127.0.0.1`.
 - `src/ledger.ts` — the laptop's store: atomic writes, one lock per work, 0700/0600 modes.
+- `src/paths.ts` — the laptop path policy for files in and out: the project and `allowedRoots`, no symlink, an 8 MiB file
+  and a 32 MiB call, and a temp-then-rename write that never replaces a local edit.
 - `src/status.ts` — one model for the tool, the command, the dialog and the RPC.
 - `src/tools.ts` — one table of nine tools: name, class, schema, description and run. The tools RPC, the transform, the
   default rules and status all derive from it.
+
+## The work tree and the file trip
+
+Every work has two folders, both recorded in the ledger: the laptop folder it belongs to (the project by default), and
+the guest's own `/home/boxd/work/<work id>`, which the plugin creates and prepares. A laptop path is never sent to the
+machine: the guest's `mkdir`/`clone` runs only under `/home/boxd/work`, and a guest that cannot prepare its own folder
+fails `GUEST_WORKSPACE` with the guest's own words.
+
+Data moves in and out of the work tree, never the whole disk:
+
+- `boxd_submit` reads each `files` entry's laptop file, checks it (inside a root, not a symlink, within the caps), uploads
+  it with `machine cp` before the prompt, and records name, size and sha256.
+- `boxd_harvest` copies the requested work-tree paths back after the transcript import, through a temp file and a rename,
+  0600, and refuses a symlink, a cap and a local edit since the last harvest. It records the same three facts.
+- `boxd_drop` counts a harvested path as recovered while the guest still has the digest that was harvested, so a task
+  that wrote `SUMMARY.md` can be dropped; a file that changed, or was never harvested, keeps the refusal.
 
 ## Why the guest is not the session
 

@@ -7,7 +7,7 @@ import { join } from "node:path"
 import { Ledger, type Work } from "../../src/ledger.js"
 import { transfer } from "./fake.js"
 
-const work = (workId: string): Work => ({ workId, machine: `oc-${workId}`, snapshot: "opencode-golden", directory: "/work/x" })
+const work = (workId: string): Work => ({ workId, machine: `oc-${workId}`, snapshot: "opencode-golden", laptopDirectory: "/work/x", guestDirectory: "/home/boxd/work/x" })
 
 const fresh = () => mkdtemp(join(tmpdir(), "boxd-ledger-"))
 
@@ -35,9 +35,9 @@ describe("the ledger under concurrent writes", () => {
     const ledger = new Ledger(await fresh())
     await ledger.save(work("review-api"))
     const results = await Promise.allSettled([
-      ledger.save({ ...work("review-api"), directory: "/work/a" }),
+      ledger.save({ ...work("review-api"), laptopDirectory: "/work/a" }),
       ledger.mutate("review-api", (current) => ({ ...(current ?? work("review-api")), rootSessionId: "ses_race" })),
-      ledger.save({ ...work("review-api"), directory: "/work/b" }),
+      ledger.save({ ...work("review-api"), laptopDirectory: "/work/b" }),
       ledger.mutate("review-api", (current) => ({ ...(current ?? work("review-api")), lastSubmitAt: "2026-11-07T12:00:00.000Z" })),
     ])
     expect(results.filter((result) => result.status === "rejected")).toEqual([])

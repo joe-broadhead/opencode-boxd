@@ -3,7 +3,7 @@
 // and runs nothing when the prompt is declined.
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { SUPPORTED_HOST } from "../../src/constants.js"
-import { writeFileSync } from "node:fs"
+import { readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { defaultRules, type Rule } from "../../src/permissions.js"
 import { TOOLS, CHANGING_TOOLS, READ_TOOLS } from "../../src/tools.js"
@@ -272,7 +272,8 @@ describe("a read never bills, and a drop never loses a file", () => {
       await attempt(host, build, "build", "boxd_ensure", "always", { workId: "review-api", directory: work })
       await attempt(host, build, "build", "boxd_submit", "always", { workId: "review-api", text: "Write notes." })
       host.guest.idle("ses_guest_root")
-      writeFileSync(join(work, "notes.txt"), "a note the session wrote\n")
+      // The guest's tree is its own folder: /home/boxd/work/<id>, mapped here.
+      writeFileSync(join(work, "review-api", "notes.txt"), "a note the session wrote\n")
 
       const harvested = await attempt(host, build, "build", "boxd_harvest", "always", { workId: "review-api", localDirectory: work })
       expect(harvested.output).toMatchObject({ state: "proven", git: { known: true, untracked: ["notes.txt"] } })
@@ -330,6 +331,64 @@ describe("a failed run is reported, never hidden", () => {
       expect(harvested.output).toMatchObject({ state: "proven", outcome: "completed" })
       expect(harvested.output).not.toHaveProperty("warning")
       expect((await statusThroughRpc(host)).failedRuns).toEqual([])
+    } finally {
+      await host.close()
+    }
+  })
+})
+
+describe("files in and out", () => {
+  test("submit copies data to the machine, harvest brings a result back, and the drop is then allowed", async () => {
+    const host = await startHost()
+    try {
+      const build = await session(host)
+      const project = host.location.directory
+      // The guest's work tree is a folder of its own under /home/boxd/work; the fake maps it into the project.
+      const guestWork = join(project, "review-api")
+      await attempt(host, build, "build", "boxd_ensure", "always", { workId: "review-api", directory: project })
+      writeFileSync(join(project, "bookmarks.json"), '{"links":["https://example.com"]}\n')
+
+      const submitted = await attempt(host, build, "build", "boxd_submit", "always", {
+        workId: "review-api",
+        text: "Read data/bookmarks.json and write SUMMARY.md.",
+        files: [{ from: join(project, "bookmarks.json"), to: "data/bookmarks.json" }],
+      })
+      expect(submitted.output).toMatchObject({ state: "admitted", files: [{ path: "data/bookmarks.json" }] })
+      expect(readFileSync(join(guestWork, "data", "bookmarks.json"), "utf8")).toBe('{"links":["https://example.com"]}\n')
+
+      // The model writes its result on the machine.
+      writeFileSync(join(guestWork, "SUMMARY.md"), "# Summary\nexample.com\n")
+      host.guest.idle("ses_guest_root")
+      const harvested = await attempt(host, build, "build", "boxd_harvest", "always", {
+        workId: "review-api",
+        localDirectory: project,
+        files: ["SUMMARY.md", "data/bookmarks.json"],
+      })
+      expect(harvested.output).toMatchObject({ state: "proven", files: [{ path: "SUMMARY.md" }, { path: "data/bookmarks.json" }] })
+      expect(readFileSync(join(project, "SUMMARY.md"), "utf8")).toBe("# Summary\nexample.com\n")
+
+      // Both untracked paths were harvested at the digests the machine still has, so the drop is allowed.
+      const dropped = await attempt(host, build, "build", "boxd_drop", "always", { workId: "review-api" })
+      expect(dropped.output).toMatchObject({ state: "dropped" })
+    } finally {
+      await host.close()
+    }
+  })
+
+  test("an un-harvested output keeps the drop refused, and status names it", async () => {
+    const host = await startHost()
+    try {
+      const build = await session(host)
+      const project = host.location.directory
+      const guestWork = join(project, "review-api")
+      await attempt(host, build, "build", "boxd_ensure", "always", { workId: "review-api", directory: project })
+      await attempt(host, build, "build", "boxd_submit", "always", { workId: "review-api", text: "Write extra.txt." })
+      host.guest.idle("ses_guest_root")
+      writeFileSync(join(guestWork, "extra.txt"), "lost if dropped\n")
+      await attempt(host, build, "build", "boxd_harvest", "always", { workId: "review-api", localDirectory: project })
+      const dropped = await attempt(host, build, "build", "boxd_drop", "always", { workId: "review-api" })
+      expect(dropped.output).toMatchObject({ error: "UNTRACKED" })
+      expect(String((dropped.output as { next?: string }).next)).toContain("Commit or delete")
     } finally {
       await host.close()
     }

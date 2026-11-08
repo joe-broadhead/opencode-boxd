@@ -73,6 +73,12 @@ export function copyToGuestArgs(machine: string, remote: string): string[] {
   return ["machine", "cp", "-", `${machine}:${remote}`]
 }
 
+/** The other direction: the guest's file to this process's stdout, unchanged. */
+export function copyFromGuestArgs(machine: string, remote: string): string[] {
+  assertDirectory(remote)
+  return ["machine", "cp", `${machine}:${remote}`, "-"]
+}
+
 export function guestRequest(action: string, fields: Record<string, unknown>): string {
   if (typeof fields.sessionID === "string") assertSessionId(fields.sessionID)
   if (typeof fields.directory === "string") assertDirectory(fields.directory)

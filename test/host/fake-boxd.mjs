@@ -6,7 +6,7 @@
 // how a test sees that a refused call ran nothing.
 import { spawnSync } from "node:child_process"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
-import { dirname, join } from "node:path"
+import { dirname, join, normalize, sep } from "node:path"
 
 const statePath = process.env.BOXD_FAKE_STATE
 const guestPy = process.env.BOXD_FAKE_GUEST_PY
@@ -28,6 +28,26 @@ state.log.push(argv.join(" "))
 write(state)
 
 const machine = (name) => state.machines[name]
+
+/**
+ * A guest path under /home/boxd/work maps to a folder this test gave the machine. The work's own folder is a git
+ * repository, as a prepared work tree is on a real machine, so `git status` reports the paths the plugin records.
+ */
+function fromGuest(path) {
+  const prefix = "/home/boxd/work/"
+  if (!path.startsWith(prefix)) fail(`unsupported guest path ${path}`)
+  const [first, ...rest] = normalize(path.slice(prefix.length)).split(sep)
+  if (!first || first === "..") fail(`bad guest path ${path}`)
+  const base = state.guestDirectory
+  if (!base) fail("the fake CLI has no guest directory")
+  const root = join(base, first)
+  mkdirSync(root, { recursive: true })
+  if (!existsSync(join(root, ".git"))) {
+    spawnSync("git", ["init", "--quiet", root])
+    spawnSync("git", ["-C", root, "-c", "user.name=boxd test", "-c", "user.email=boxd@example.invalid", "commit", "--quiet", "--allow-empty", "-m", "init"])
+  }
+  return join(root, ...rest)
+}
 const out = (value) => process.stdout.write(`${JSON.stringify(value)}\n`)
 
 function fail(message) {
@@ -64,6 +84,8 @@ function exec(name, command) {
     const request = JSON.parse(readFileSync(0, "utf8") || "{}")
     // The guest helper talks to its own localhost OpenCode; here that is the test's loopback fake.
     request.base = `http://127.0.0.1:${state.port}`
+    // The machine's `/home/boxd/work/<id>` is a folder on this laptop, so the real guest helper can work on it.
+    if (typeof request.directory === "string") request.directory = fromGuest(request.directory)
     const result = spawnSync("python3", [guestPy], { input: JSON.stringify(request), encoding: "utf8" })
     if (result.stdout) process.stdout.write(result.stdout)
     if (result.stderr) process.stderr.write(result.stderr)
@@ -116,9 +138,20 @@ if (group === "machine" && action === "new") {
   if (command[0] === "--") command.shift()
   exec(name, command)
 } else if (group === "machine" && action === "cp") {
-  // `machine cp - machine:/path` reads the helper from stdin; nothing on a real disk is needed here.
-  readFileSync(0)
-  out({ ok: true })
+  // `machine cp - machine:/path` writes stdin, and `machine cp machine:/path -` writes the file to stdout, byte for byte.
+  const [source, target] = [rest[0], rest[1]]
+  if (source === "-") {
+    const remote = target.slice(target.indexOf(":") + 1)
+    // The helper lives at /tmp/opencode-boxd/guest.py on the machine; here it is kept beside the state file.
+    const path = remote === "/tmp/opencode-boxd/guest.py" ? join(dirname(statePath), "guest.py") : fromGuest(remote)
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, readFileSync(0))
+    process.stdout.write(`copied - → ${target} (${readFileSync(path).length} bytes)\n`)
+  } else {
+    const path = fromGuest(source.slice(source.indexOf(":") + 1))
+    if (!existsSync(path)) fail(`${source}: no such file`)
+    process.stdout.write(readFileSync(path))
+  }
 } else if (group === "snapshots" && action === "list") {
   out(state.snapshots)
 } else if (group === "snapshots" && action === "save") {

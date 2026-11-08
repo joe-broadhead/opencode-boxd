@@ -36,13 +36,17 @@ session you cannot get back.
 
 ## Use
 
-1. `boxd_ensure` with a short work id. The machine is named `oc-<work id>`, and the work is recorded in the ledger.
-2. `boxd_submit` with the task. It returns when the guest has admitted the prompt, not when the model finishes.
+1. `boxd_ensure` with a short work id. The machine is named `oc-<work id>`, and the work is recorded in the ledger. The
+   guest works in `/home/boxd/work/<work id>`; `directory` names the laptop folder the work belongs to, and defaults to
+   the current project.
+2. `boxd_submit` with the task, and optionally `files: [{ from, to }]` to copy data in. Each `from` is a laptop file
+   inside the project or an allowed root, and each `to` is a path inside the work tree. It returns when the guest has
+   admitted the prompt, not when the model finishes.
 3. `boxd_job` in a later turn: busy, idle, asleep, gone or starting, with the guest session's last outcome
    (`completed`, `failed` or `aborted`) when it is idle. It never wakes a machine, because waking starts billing; a
    hibernated work reports `asleep` with `boxd_resume` as its next step.
-4. `boxd_harvest` with a directory on this laptop. The session tree is exported, imported here parents first, and git is
-   recorded.
+4. `boxd_harvest`, optionally with `files: ["SUMMARY.md"]` and `to`, copies the files a work produced back to this
+   laptop. The session tree is exported, imported here parents first, git is recorded, and then the files move.
 5. `boxd_sleep` to hibernate, `boxd_resume` to wake or rebuild, `boxd_image` to save a snapshot, `boxd_drop` to destroy.
    Hibernating destroys nothing and keeps the disk, so `boxd_sleep` works even when the guest cannot be harvested; it
    records a warning that the last prompt is not yet on the laptop, and status shows it.
@@ -58,13 +62,34 @@ reads, `boxd_status` and `boxd_job`, run without asking.
 
 - the laptop import is missing or older than the last prompt (`NOT_PROVEN`);
 - the guest directory is not a git repository (`GIT_UNKNOWN`);
-- the tree has untracked or ignored paths, which a patch cannot hold (`UNTRACKED`) — their contents are stored beside
-  the patch when the guest can read them, but a patch is not a faithful copy;
+- the tree has untracked or ignored paths that the last harvest did not copy back at the digest the guest still has
+  (`UNTRACKED`) — a harvested output counts as recovered, so a task that wrote `SUMMARY.md` can be dropped once it is
+  back;
 - the tree is dirty and no patch was stored (`DIRTY`).
 
 Tracked changes are stored as a patch (`git diff HEAD`, staged and unstaged) in the work's ledger folder. To finish a
-work whose tree has untracked files, commit or delete them on the machine, harvest again, then drop; or hibernate, which
-keeps the disk.
+work whose tree has other files, harvest them (`files`), commit or delete them on the machine, then drop; or hibernate,
+which keeps the disk.
+
+## Files in and out
+
+A work moves data both ways, and each call records the file's name, size and sha256 in the ledger — never its content.
+
+- **In:** `boxd_submit` copies `files` to the machine before the prompt. Paths are relative to the work tree, and 8 MiB
+  a file and 32 MiB a call are the caps.
+- **Out:** `boxd_harvest` copies `files` back after the transcript import, into the work's laptop folder or `to`. A copy
+  is atomic (a temp file and a rename), a symlink is refused, and a file edited on the laptop since the last harvest is
+  never overwritten (`FILE_CONFLICT`).
+
+Laptop paths must be inside the project or a folder named in the `allowedRoots` option, and a symlink is never followed.
+When the host asks, allow the path with the `external_directory` rule as well as the path rule:
+
+```jsonc
+{ "permissions": { "external_directory": [{ "action": "/srv/work", "resource": "*", "effect": "allow" }] } }
+```
+
+See [docs/scripting.md](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/scripting.md) for a worked
+`bookmarks.json` → `SUMMARY.md` example.
 
 ## Permissions
 
@@ -142,6 +167,10 @@ Each member still needs the boxd CLI signed in on their own laptop.
 | `MACHINE_ISOLATED` | Recreate the machine without `--isolated`, which drops git and the in-VM boxd CLI. |
 | `SESSION_BUSY` | Call `boxd_job` until it reports idle, then harvest. |
 | `GUEST_VERSION` | Boot the machine from an image whose OpenCode is the same version as this laptop's. |
+| `PATH_REFUSED` | A laptop path is outside the project and the allowed roots, or is a symlink. Name its root in `allowedRoots`, and allow it with the `external_directory` rule. |
+| `FILE_TOO_LARGE` | A file is over 8 MiB, or the call is over 32 MiB. |
+| `FILE_CONFLICT` | A harvested file changed on the laptop since the last harvest, so it was not overwritten. |
+| `GUEST_WORKSPACE` | The machine could not prepare `/home/boxd/work/<work id>`. Boot an image whose `/home/boxd` the `boxd` user can write. |
 | `GUEST_RUN_FAILED` | The guest session's last run failed; the transcript is still imported. Read it, then `boxd_submit` again. |
 | `GUEST_AUTH_FAILED` | The failed run was a credential failure. Fix the guest's sign-in as [the golden image](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/golden-image.md) describes, then `boxd_submit` again. |
 | `GUEST_FAILED` | Call `boxd_status`, and recreate the machine with `boxd_resume` if the guest keeps failing. |

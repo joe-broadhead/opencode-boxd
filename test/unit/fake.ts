@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto"
+import { realpathSync } from "node:fs"
 import { mkdtemp } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -19,6 +21,9 @@ export type World = {
 }
 
 export async function world(options?: {
+  projectDirectory?: string
+  allowedRoots?: string[]
+  allowDirectory?: string
   hostVersion?: string | null
   snapshot?: string
   version?: string
@@ -38,6 +43,9 @@ export async function world(options?: {
     now: () => `2026-11-07T12:00:${String(tick++).padStart(2, "0")}.000Z`,
     snapshot: options && "snapshot" in options ? options.snapshot! : "opencode-golden",
     hostVersion: options && "hostVersion" in options ? options.hostVersion! : HOST,
+    projectDirectory: options?.projectDirectory ?? root,
+    // Tests put their local folders under the system temp root, as a user would name a root of their own.
+    allowedRoots: options?.allowedRoots ?? [realpathSync(tmpdir())],
     ...(options?.report ? { report: options.report } : {}),
   }
   return { fleet: createFleet(deps), boxd, guest, prover, ledger: deps.ledger, root }
@@ -129,6 +137,10 @@ export class FakeGuest implements GuestPort {
   readonly imports: Transfer[] = []
   readonly prompts: string[] = []
   readonly forgotten: string[] = []
+  /** Files the plugin uploaded, by work-relative path. */
+  readonly uploaded = new Map<string, Buffer>()
+  /** Files the guest can hand back, by work-relative path. */
+  readonly remote = new Map<string, Buffer>()
   readonly servers: string[] = []
   gitFails = false
   phaseById = new Map<string, "busy" | "idle" | "missing">()
@@ -178,6 +190,20 @@ export class FakeGuest implements GuestPort {
   async importSession(_machine: string, value: Transfer, _directory: string) {
     this.imports.push(value)
     return { id: value.info.id }
+  }
+  async upload(_machine: string, _directory: string, path: string, body: Buffer) {
+    this.uploaded.set(path, body)
+  }
+  async download(_machine: string, _directory: string, path: string) {
+    const body = this.remote.get(path)
+    if (!body) throw new Error(`no such guest file: ${path}`)
+    return body
+  }
+  async digest(_machine: string, _directory: string, paths: readonly string[]) {
+    return Object.fromEntries(paths.flatMap((path) => {
+      const body = this.remote.get(path)
+      return body ? [[path, createHash("sha256").update(body).digest("hex")]] : []
+    }))
   }
   async git(_machine: string, _directory: string) {
     if (this.gitFails) throw new Error("git status failed")

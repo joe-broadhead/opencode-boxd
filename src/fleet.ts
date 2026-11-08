@@ -1,10 +1,13 @@
-import { stat } from "node:fs/promises"
+import { mkdir, stat } from "node:fs/promises"
+import { join } from "node:path"
+import { assertTotal, assertWorkPath, loadFile, resolveLaptopPath, rootsOf, sha256, storeFile, FILE_LIMIT, TOTAL_LIMIT } from "./paths.js"
 import { boxdError, BoxdError } from "./errors.js"
-import type { Ledger, Work, WorkWarning } from "./ledger.js"
-import { assertDirectory, assertRepo, assertSessionId, assertSnapshot, assertWorkId, machineName, workDirectory } from "./names.js"
+import type { Ledger, MovedFile, Work, WorkWarning } from "./ledger.js"
+import { assertRepo, assertSessionId, assertSnapshot, assertWorkId, machineName, workDirectory } from "./names.js"
 import type { BoxdPort, GuestPort, MachineInfo, Prover } from "./ports.js"
 import { digest, order, parseExport, rewrite, type Transfer } from "./transfer.js"
 import { checkGuest } from "./host-version.js"
+import { reasonOf } from "./redact.js"
 import { failureCode, failureText, nextStepFor, readRun, type GuestRun, type RunOutcome } from "./outcome.js"
 
 export type Deps = {
@@ -18,6 +21,10 @@ export type Deps = {
   readonly hostVersion: string | null
   /** A problem worth showing in status, such as an awake bound that could not be armed. */
   readonly report?: (problem: string) => void
+  /** The OpenCode project folder: the first laptop root a work may use. */
+  readonly projectDirectory: string
+  /** Further laptop roots the user named; a path outside both is refused. */
+  readonly allowedRoots: readonly string[]
 }
 
 export type FleetResult = Record<string, unknown>
@@ -191,7 +198,11 @@ export function createFleet(deps: Deps) {
 
     async ensure(input: { workId: string; directory?: string; repo?: string; title?: string }): Promise<FleetResult> {
       assertWorkId(input.workId)
-      const directory = input.directory ? assertDirectory(input.directory) : workDirectory(input.workId)
+      // The laptop keeps the work in a folder of its own; the guest always works in /home/boxd/work/<work id>, because a
+      // laptop path is not writable there and must never be sent to it.
+      const laptopDirectory = await resolveWorkDirectory(deps, input.directory ?? deps.projectDirectory)
+      const guestDirectory = workDirectory(input.workId)
+      const directory = guestDirectory
       const repo = input.repo ? assertRepo(input.repo) : undefined
       const name = machineName(input.workId)
       let work = await deps.ledger.load(input.workId)
@@ -205,7 +216,8 @@ export function createFleet(deps: Deps) {
           workId: input.workId,
           machine: name,
           snapshot,
-          directory,
+          laptopDirectory,
+          guestDirectory,
           ...(repo ?? current?.repo ? { repo: repo ?? current?.repo } : {}),
           ...(current?.rootSessionId ? { rootSessionId: current.rootSessionId } : {}),
           ...(current?.lastSubmitAt ? { lastSubmitAt: current.lastSubmitAt } : {}),
@@ -222,7 +234,8 @@ export function createFleet(deps: Deps) {
           workId: input.workId,
           machine: name,
           snapshot,
-          directory,
+          laptopDirectory,
+          guestDirectory,
           ...(repo ?? current?.repo ? { repo: repo ?? current?.repo } : {}),
           ...(current?.rootSessionId ? { rootSessionId: current.rootSessionId } : {}),
           ...(current?.lastSubmitAt ? { lastSubmitAt: current.lastSubmitAt } : {}),
@@ -244,17 +257,20 @@ export function createFleet(deps: Deps) {
       if ((await deps.guest.server(name)) !== "up") {
         return { workId: input.workId, machine: name, state: "starting", next: "Call boxd_status in a later turn." }
       }
-      await deps.guest.prepare(name, directory, work.repo)
-      return { workId: input.workId, machine: name, directory, state: "ready", guestVersion: deps.hostVersion }
+      await prepareWorkspace(deps, name, directory, work.repo)
+      return { workId: input.workId, machine: name, guestDirectory, laptopDirectory, state: "ready", guestVersion: deps.hostVersion }
     },
 
-    async submit(input: { workId: string; text: string; title?: string }): Promise<FleetResult> {
+    async submit(input: { workId: string; text: string; title?: string; files?: ReadonlyArray<{ from: string; to: string }> }): Promise<FleetResult> {
       const work = await loadOwned(input.workId)
       if (!input.text.trim()) throw boxdError("NAME_INVALID", "Prompt text is empty.")
+      // Read and check every file before anything is copied or admitted: a path outside the roots fails the call whole.
+      const incoming = await readIncoming(deps, input.files ?? [])
       await ready(work, { wake: true })
+      const uploaded = await uploadAll(deps, work, incoming)
       let sessionId = work.rootSessionId
       if (!sessionId) {
-        const created = await deps.guest.createSession(work.machine, work.directory, input.title ?? input.workId)
+        const created = await deps.guest.createSession(work.machine, work.guestDirectory, input.title ?? input.workId)
         sessionId = assertSessionId(created.id)
         await deps.ledger.mutate(work.workId, (current) => ({ ...(current ?? work), rootSessionId: sessionId }))
       }
@@ -267,6 +283,7 @@ export function createFleet(deps: Deps) {
         machine: work.machine,
         sessionId,
         state: "admitted",
+        ...(uploaded.length ? { files: uploaded.map((file) => ({ path: file.path, bytes: file.bytes, sha256: file.sha256 })) } : {}),
         next: "Call boxd_job in a later turn. This call did not wait for the model.",
       }
     },
@@ -294,7 +311,13 @@ export function createFleet(deps: Deps) {
       if (status !== "running") {
         return { workId: work.workId, machine: work.machine, state: "starting", machineStatus: status, next: "Call boxd_job in a later turn." }
       }
-      if (!work.rootSessionId) return { workId: work.workId, state: "empty", next: "Call boxd_submit." }
+      if (!work.rootSessionId) {
+        // No session yet is not the same as a guest that is ready: ask the server before answering.
+        if ((await deps.guest.server(work.machine)) !== "up") {
+          return { workId: work.workId, machine: work.machine, state: "starting", next: "OpenCode on the machine is not up yet. Call boxd_job in a later turn." }
+        }
+        return { workId: work.workId, state: "empty", next: "Call boxd_submit." }
+      }
       await ready(work, { wake: false, arm: false })
       const { phase, run } = await deps.guest.phase(work.machine, work.rootSessionId)
       return {
@@ -309,10 +332,14 @@ export function createFleet(deps: Deps) {
       }
     },
 
-    async harvest(input: { workId: string; localDirectory: string }): Promise<FleetResult> {
+    async harvest(input: { workId: string; localDirectory?: string; files?: readonly string[]; to?: string }): Promise<FleetResult> {
       const work = await loadOwned(input.workId)
-      const localDirectory = assertDirectory(input.localDirectory)
-      await ensureDirectory(localDirectory)
+      const roots = rootsOf(deps.projectDirectory, deps.allowedRoots)
+      // The transcript lands in the work's laptop folder unless the call names another, and both must be inside a root.
+      const localDirectory = await resolveWorkDirectory(deps, input.localDirectory ?? work.laptopDirectory, roots)
+      // The files a work produced, read before the transcript moves: a refused path fails the call whole.
+      const wanted = (input.files ?? []).map((path) => assertWorkPath(path))
+      const toDirectory = input.to ? await resolveWorkDirectory(deps, input.to, roots, true) : localDirectory
       if (!work.rootSessionId) throw boxdError("NOT_OURS", "This work has no session. Call boxd_submit first.")
       await ready(work, { wake: true })
       const { phase, run: live } = await deps.guest.phase(work.machine, work.rootSessionId)
@@ -347,11 +374,17 @@ export function createFleet(deps: Deps) {
         warnings: [],
         ...(run.outcome ? { lastOutcome: { state: run.outcome, ...(run.error ? { error: run.error } : {}), at: deps.now() } } : {}),
       }))
+      // Files come back after the proof is recorded: the laptop keeps the transcript even when a file copy is refused.
+      const moved = await downloadAll(deps, work, wanted, toDirectory)
+      if (moved.length) {
+        await deps.ledger.mutate(work.workId, (current) => ({ ...(current ?? work), downloads: mergeFiles(current?.downloads, moved) }))
+      }
       return {
         workId: work.workId,
         state: "proven",
         outcome: run.outcome,
         ...(run.outcome === "failed" ? { error: run.error, warning: failureCode(run) } : {}),
+        ...(moved.length ? { files: moved.map((file) => ({ path: file.path, bytes: file.bytes, sha256: file.sha256 })) } : {}),
         sessions: sessions.map((session) => ({ remoteId: session.remoteId, importedId: session.importedId })),
         git: { known: git.known, remote: git.remote, sha: git.sha, dirty: git.dirty, patchStored: git.patchStored, untracked: git.untracked, ignored: git.ignored },
         // A failed run is a warning on a successful harvest: the transcript is imported and proven, and the laptop keeps
@@ -391,7 +424,7 @@ export function createFleet(deps: Deps) {
      */
     async drop(input: { workId: string }): Promise<FleetResult> {
       const work = await loadOwned(input.workId)
-      requireDroppable(work)
+      await requireDroppable(deps, work)
       const machine = await deps.boxd.get(work.machine)
       if (machine.name !== work.machine) throw boxdError("NOT_OURS", "Refusing to remove a machine this work does not own.")
       refuseUnsafe(machine)
@@ -423,7 +456,7 @@ export function createFleet(deps: Deps) {
       }
       await armAwake(work.machine, "hold")
       checkGuest(await deps.guest.version(work.machine), deps.hostVersion)
-      await deps.guest.prepare(work.machine, work.directory, work.repo)
+      await prepareWorkspace(deps, work.machine, work.guestDirectory, work.repo)
       // A rebuilt machine has a new disk: nothing is running on it, so start the guest server before importing the
       // transcript. It boots asynchronously, so this call reports starting and the next one imports.
       if (recreated && (await deps.guest.server(work.machine)) !== "up") {
@@ -437,7 +470,7 @@ export function createFleet(deps: Deps) {
       const transfers = order(await Promise.all(work.proof.sessions.map((session) => deps.ledger.loadExport(work.workId, session.remoteId))))
       const imported = new Map<string, string>()
       for (const transfer of transfers) {
-        const result = await deps.guest.importSession(work.machine, rewrite(transfer, imported), work.directory)
+        const result = await deps.guest.importSession(work.machine, rewrite(transfer, imported), work.guestDirectory)
         imported.set(transfer.info.id, assertSessionId(result.id))
       }
       const root = work.rootSessionId ? imported.get(work.rootSessionId) : undefined
@@ -475,6 +508,86 @@ export function createFleet(deps: Deps) {
       return { machine: input.machine, snapshot: name, state: "saved" }
     },
   }
+}
+
+/**
+ * Prepares the work tree on the guest. A failure names the folder and the guest's own words, because that is the one
+ * place where an image that cannot be written to looks like an unexplained `GUEST_FAILED`.
+ */
+async function prepareWorkspace(deps: Deps, machine: string, guestDirectory: string, repo: string | undefined): Promise<void> {
+  try {
+    await deps.guest.prepare(machine, guestDirectory, repo)
+  } catch (error) {
+    const reason = error instanceof Error ? error.message.split(" Next step: ")[0] : String(error)
+    throw boxdError("GUEST_WORKSPACE", `The machine could not prepare ${guestDirectory} (${reason}).`)
+  }
+}
+
+/** The laptop folder a work uses: inside the project or an allowed root, and a folder. */
+async function resolveWorkDirectory(deps: Deps, path: string, roots = rootsOf(deps.projectDirectory, deps.allowedRoots), create = false): Promise<string> {
+  const real = await resolveLaptopPath(path, roots, create ? { create: true } : {})
+  const info = await stat(real).catch(() => undefined)
+  if (info?.isDirectory()) return real
+  if (!info && create) {
+    await mkdir(real, { recursive: true, mode: 0o700 })
+    return real
+  }
+  throw boxdError("NAME_INVALID", `The local directory "${path}" does not exist.`)
+}
+
+/** Every file to copy in, read and checked before anything is uploaded or admitted. */
+async function readIncoming(deps: Deps, files: ReadonlyArray<{ from: string; to: string }>): Promise<Array<{ path: string; body: Buffer; bytes: number; sha256: string }>> {
+  const roots = rootsOf(deps.projectDirectory, deps.allowedRoots)
+  const seen = new Set<string>()
+  const out: Array<{ path: string; body: Buffer; bytes: number; sha256: string }> = []
+  for (const file of files) {
+    const path = assertWorkPath(file.to)
+    if (seen.has(path)) throw boxdError("NAME_INVALID", `Two files copy to "${path}".`)
+    seen.add(path)
+    const loaded = await loadFile(file.from, roots)
+    out.push({ path, body: loaded.body, bytes: loaded.bytes, sha256: loaded.sha256 })
+  }
+  assertTotal(out)
+  return out
+}
+
+/** Copies the checked files to the guest, and records them by name, size and digest. */
+async function uploadAll(deps: Deps, work: Work, files: ReturnType<typeof readIncoming> extends Promise<infer T> ? T : never): Promise<MovedFile[]> {
+  const moved: MovedFile[] = []
+  for (const file of files) {
+    await deps.guest.upload(work.machine, work.guestDirectory, file.path, file.body).catch((error: unknown) => {
+      throw boxdError("GUEST_FAILED", `The machine refused the upload of ${file.path} (${reasonOf(error)}).`)
+    })
+    moved.push({ path: file.path, bytes: file.bytes, sha256: file.sha256, at: deps.now() })
+  }
+  if (moved.length) await deps.ledger.mutate(work.workId, (current) => ({ ...(current ?? work), uploads: mergeFiles(current?.uploads, moved) }))
+  return moved
+}
+
+/** Copies the requested files back, atomically and capped, and refuses a symlink, a cap and a local edit. */
+async function downloadAll(deps: Deps, work: Work, paths: readonly string[], toDirectory: string): Promise<MovedFile[]> {
+  const roots = rootsOf(deps.projectDirectory, deps.allowedRoots)
+  const moved: MovedFile[] = []
+  let total = 0
+  for (const path of paths) {
+    const body = await deps.guest.download(work.machine, work.guestDirectory, path).catch((error: unknown) => {
+      throw boxdError("GUEST_FAILED", `The machine refused the download of ${path} (${reasonOf(error)}).`)
+    })
+    if (body.byteLength > FILE_LIMIT) throw boxdError("FILE_TOO_LARGE", `"${path}" is ${body.byteLength} bytes; the limit is ${FILE_LIMIT}.`)
+    total += body.byteLength
+    if (total > TOTAL_LIMIT) throw boxdError("FILE_TOO_LARGE", `The files total ${total} bytes; the limit is ${TOTAL_LIMIT}.`)
+    const target = await resolveLaptopPath(join(toDirectory, path), roots, { create: true })
+    const previous = work.downloads?.filter((file) => file.path === path).at(-1)?.sha256
+    await storeFile(target, body, previous)
+    moved.push({ path, bytes: body.byteLength, sha256: sha256(body), at: deps.now(), laptopPath: target })
+  }
+  return moved
+}
+
+/** The newest record for each path: a second harvest of a file replaces the first. */
+function mergeFiles(existing: readonly MovedFile[] | undefined, moved: readonly MovedFile[]): MovedFile[] {
+  const replaced = new Set(moved.map((file) => file.path))
+  return [...(existing ?? []).filter((file) => !replaced.has(file.path)), ...moved]
 }
 
 /** A read's next step: a failed run outranks the harvest advice, because the job did not do what was asked. */
@@ -516,15 +629,32 @@ function dropAdvice(git: Work["git"], proof: "fresh" | "stale" | "missing"): str
 
 const list = (names: readonly string[]) => (names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`)
 
-/** The drop guard: every way the disk is not fully accounted for on this laptop. */
-function requireDroppable(work: Work): void {
+/**
+ * The drop guard: every way the disk is not fully accounted for on this laptop. A file harvested at the digest the guest
+ * still has is recovered, so a task that wrote `SUMMARY.md` can be dropped; a file that changed, or was never harvested,
+ * keeps the refusal.
+ */
+async function requireDroppable(deps: Deps, work: Work): Promise<void> {
   const proof = proofState(work)
   if (proof !== "fresh") throw boxdError("NOT_PROVEN", proof === "missing" ? "No proven export is on this laptop." : "The laptop export is older than the last prompt.")
   const git = work.git
   if (!git || !git.known) throw boxdError("GIT_UNKNOWN", "The guest directory is not a git repository, so its files cannot be accounted for.")
-  if (git.untracked.length) throw boxdError("UNTRACKED", `The guest tree has untracked paths the patch cannot hold: ${list(git.untracked)}.`)
-  if (git.ignored.length) throw boxdError("UNTRACKED", `The guest tree has ignored paths the patch cannot hold: ${list(git.ignored)}.`)
+  const recovered = await recoveredPaths(deps, work, git)
+  const lostUntracked = git.untracked.filter((path) => !recovered.has(path))
+  const lostIgnored = git.ignored.filter((path) => !recovered.has(path))
+  if (lostUntracked.length) throw boxdError("UNTRACKED", `The guest tree has untracked paths the patch cannot hold: ${list(lostUntracked)}.`)
+  if (lostIgnored.length) throw boxdError("UNTRACKED", `The guest tree has ignored paths the patch cannot hold: ${list(lostIgnored)}.`)
   if (git.dirty && !git.patchStored) throw boxdError("DIRTY", "The guest tree has uncommitted work and no patch in the ledger.")
+}
+
+/** The untracked and ignored paths whose current guest digest is the one last harvested. */
+async function recoveredPaths(deps: Deps, work: Work, git: NonNullable<Work["git"]>): Promise<Set<string>> {
+  const recorded = new Map<string, string>()
+  for (const file of work.downloads ?? []) recorded.set(file.path, file.sha256)
+  const candidates = [...git.untracked, ...git.ignored].filter((path) => recorded.has(path))
+  if (!candidates.length) return new Set()
+  const digests = await deps.guest.digest(work.machine, work.guestDirectory, candidates).catch(() => ({}) as Record<string, string>)
+  return new Set(candidates.filter((path) => digests[path] !== undefined && digests[path] === recorded.get(path)))
 }
 
 function collect(root: string, listed: ReadonlyArray<{ id: string; parentID?: string }>): string[] {
@@ -550,7 +680,7 @@ function collect(root: string, listed: ReadonlyArray<{ id: string; parentID?: st
 
 /** Captures the guest's git state, or raises a coded error: a directory the guest cannot vet can never be dropped. */
 async function harvestGit(deps: Deps, work: Work): Promise<NonNullable<Work["git"]>> {
-  const git = await deps.guest.git(work.machine, work.directory)
+  const git = await deps.guest.git(work.machine, work.guestDirectory)
   const patchStored = Boolean(git.known && (git.dirty || git.untracked.length) && git.patch)
   if (patchStored && git.patch) await deps.ledger.savePatch(work.workId, git.patch)
   const untrackedStored = Boolean(Object.keys(git.untrackedFiles).length)
@@ -566,11 +696,6 @@ async function harvestGit(deps: Deps, work: Work): Promise<NonNullable<Work["git
     ignored: git.ignored,
     untrackedStored,
   }
-}
-
-async function ensureDirectory(path: string): Promise<void> {
-  const info = await stat(path).catch(() => undefined)
-  if (!info?.isDirectory()) throw boxdError("NAME_INVALID", `The local directory "${path}" does not exist.`)
 }
 
 export type { Transfer }

@@ -17,6 +17,7 @@ All options go in the plugin entry in `opencode.json`:
 |---|---|---|
 | `snapshot` | `opencode-golden` | The golden snapshot every new machine boots from. A lowercase boxd snapshot name. Build it as [golden-image.md](golden-image.md) describes. |
 | `allowUntestedHost` | `false` | Run on an OpenCode outside `>=2.2.3 <2.3.0`. Status then says the host is untested. |
+| `allowedRoots` | `[]` | Absolute laptop folders a work may read and write besides the project. A path outside both is refused. |
 | `access` | `"all"` | What the plugin's own tools may do without asking: `"all"` allows everything, `"ask-changes"` allows the reads and asks for every machine change, `"read-only"` allows the reads and denies every change. A later rule of the user's still wins. |
 
 An unknown option, a snapshot name boxd would refuse, or a non-boolean `allowUntestedHost` stops the plugin with
@@ -26,9 +27,11 @@ An unknown option, a snapshot name boxd would refuse, or a non-boolean `allowUnt
 
 `~/.local/share/opencode-boxd/works/<work id>/`
 
-- `work.json` — the machine, the guest directory, the root session id, the proof and the git record.
+- `work.json` — the machine, the laptop folder and the guest work folder, the root session id, the proof, the git record,
+  and the files moved in and out by name, size and sha256.
 - `exports/<session id>.json` — the transcript, stored before it is imported here.
 - `patch.diff` — the uncommitted diff, when the harvest found one.
+- `untracked.json` — the untracked files' contents, base64, when the harvest could read them.
 
 The ledger is the laptop's copy. A boxd snapshot is an image and holds no session you can restore from the laptop.
 
@@ -71,6 +74,13 @@ permissions, followed by your top-level rules for boxd tools.
 - **Hibernating destroys nothing.** `boxd_sleep` needs no proof and works when the guest cannot be harvested; it records
   a warning that the last prompt is not on the laptop yet, which status shows. `boxd_image` and `boxd_drop` still need a
   fresh proof.
+- **The guest path is the plugin's.** Every work's guest folder is `/home/boxd/work/<work id>`; the laptop folder is
+  recorded beside it in the ledger. A laptop path is never sent to the guest, and a guest that cannot prepare its own
+  folder fails with `GUEST_WORKSPACE` and the guest's own words.
+- **Files carry name, size and digest.** An upload is copied before the prompt; a harvest copies the requested files
+  back after the transcript. A file is refused outside the project and `allowedRoots`, over 8 MiB, over 32 MiB a call,
+  through a symlink, or over a local edit since the last harvest. A copied-back file is written through a temp file and
+  a rename, 0600, and the ledger records name, size and sha256, never content.
 - **A run's outcome is part of the result.** OpenCode records it on the session (`outcome`) and on its last idle message,
   with the failure's structured error. `boxd_job` reports it when the guest is idle, `boxd_harvest` records it and adds
   `GUEST_RUN_FAILED` or `GUEST_AUTH_FAILED` as a warning, and status shows each work's last outcome. The error is `<type>: <first line>`, passed
@@ -120,3 +130,7 @@ errors pass through unchanged. No error, log or status line contains a token, a 
 | `UNTRACKED` | The guest tree has untracked or ignored paths, which a stored patch cannot hold. |
 | `GIT_UNKNOWN` | The guest directory is not a git repository, so nothing about its files can be proven. |
 | `CREATE_UNCERTAIN` | `machine new` timed out and no machine with that name exists yet. |
+| `PATH_REFUSED` | A laptop path is outside the project and `allowedRoots`, or is a symlink. |
+| `FILE_TOO_LARGE` | A file is over 8 MiB, or one call moves over 32 MiB. |
+| `FILE_CONFLICT` | A harvested file was edited on the laptop since the last harvest. |
+| `GUEST_WORKSPACE` | The guest could not create or prepare `/home/boxd/work/<work id>`. |

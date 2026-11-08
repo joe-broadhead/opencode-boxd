@@ -5,6 +5,7 @@ Talks only to a localhost OpenCode server. Never starts a blocking agent command
 """
 
 import base64
+import hashlib
 import json
 import os
 import re
@@ -280,6 +281,30 @@ def action_git(request):
     )
 
 
+def action_digest(request):
+    """The sha256 of each work-relative file, so a drop can tell a recovered output from lost work."""
+    root = directory(request.get("directory"))
+    paths = request.get("paths")
+    if not isinstance(paths, list) or len(paths) > 200:
+        fail("paths must be a list of at most 200 paths")
+    digests = {}
+    for name in paths:
+        if not isinstance(name, str) or name.startswith("/") or ".." in name.split("/") or "\\" in name:
+            fail("path must be relative to the work tree")
+        full = os.path.join(root, name)
+        if os.path.islink(full) or not os.path.isfile(full):
+            continue
+        digest = hashlib.sha256()
+        try:
+            with open(full, "rb") as handle:
+                for block in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(block)
+        except OSError:
+            continue
+        digests[name] = digest.hexdigest()
+    emit({"digests": digests})
+
+
 def action_prepare(request):
     path = directory(request.get("directory"))
     repo = request.get("repo")
@@ -307,6 +332,7 @@ ACTIONS = {
     "import": action_import,
     "phase": action_phase,
     "git": action_git,
+    "digest": action_digest,
     "prepare": action_prepare,
 }
 

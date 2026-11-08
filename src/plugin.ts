@@ -48,6 +48,8 @@ export function createBoxdPlugin(seam: BoxdSeam = {}) {
         now: () => new Date().toISOString(),
         snapshot: options.snapshot,
         hostVersion: host.version,
+        projectDirectory: ctx.location.directory,
+        allowedRoots: options.allowedRoots,
         // An awake bound that could not be armed is a status problem, not a silent skip.
         report: report("wake"),
       })

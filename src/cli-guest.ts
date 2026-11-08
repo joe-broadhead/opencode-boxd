@@ -1,8 +1,8 @@
 import { boxdError } from "./errors.js"
-import { copyToGuestArgs, execArgs, guestRequest } from "./argv.js"
+import { copyFromGuestArgs, copyToGuestArgs, execArgs, guestRequest } from "./argv.js"
 import type { GuestPort } from "./ports.js"
 import { readGuestHelper } from "./cli-boxd.js"
-import { run } from "./run.js"
+import { run, runBuffer } from "./run.js"
 import { errorLine, mapOutcome } from "./outcome.js"
 
 const HELPER = "/tmp/opencode-boxd/guest.py"
@@ -64,6 +64,22 @@ export function cliGuest(bin = "boxd"): GuestPort {
       const parsed = await call(machine, "import", { transfer, directory })
       return { id: String(parsed.id) }
     },
+    upload: async (machine, directory, path, body) => {
+      await mkdirOnGuest(bin, machine, `${directory}/${path}`)
+      const remote = `${directory}/${path}`
+      const result = await runBuffer(bin, copyToGuestArgs(machine, remote), { stdin: body, timeoutMs: 60_000 })
+      if (result.code !== 0) throw boxdError("GUEST_FAILED", `The guest refused the upload of ${path} (${result.stderr.trim().slice(0, 200)}).`)
+    },
+    download: async (machine, directory, path) => {
+      const result = await runBuffer(bin, copyFromGuestArgs(machine, `${directory}/${path}`), { timeoutMs: 60_000 })
+      if (result.code !== 0) throw boxdError("GUEST_FAILED", `The guest refused the download of ${path} (${result.stderr.trim().slice(0, 200)}).`)
+      return result.stdout
+    },
+    digest: async (machine, directory, paths) => {
+      const parsed = await call(machine, "digest", { directory, paths })
+      const digests = parsed.digests && typeof parsed.digests === "object" ? (parsed.digests as Record<string, unknown>) : {}
+      return Object.fromEntries(Object.entries(digests).filter((entry): entry is [string, string] => typeof entry[1] === "string"))
+    },
     git: async (machine, directory) => {
       const parsed = await call(machine, "git", { directory })
       return {
@@ -79,6 +95,13 @@ export function cliGuest(bin = "boxd"): GuestPort {
       }
     },
   }
+}
+
+/** The file's folders must exist before `machine cp` writes into them. */
+async function mkdirOnGuest(bin: string, machine: string, remote: string): Promise<void> {
+  const folder = remote.slice(0, remote.lastIndexOf("/")) || "/"
+  const result = await run(bin, ["machine", "exec", machine, "--", "mkdir", "-p", folder])
+  if (result.code !== 0) throw boxdError("GUEST_FAILED", `The guest could not create ${folder} (${result.stderr.trim().slice(0, 200)}).`)
 }
 
 async function ensureHelper(bin: string, machine: string, uploaded: Set<string>): Promise<void> {

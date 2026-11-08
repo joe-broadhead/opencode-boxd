@@ -5,13 +5,15 @@ import { SUPPORTED_HOST, TESTED_HOSTS } from "../../src/constants.js"
 
 describe("plugin options", () => {
   test("defaults to the golden snapshot, a tested host and access all", () => {
-    expect(parseOptions(undefined)).toEqual({ snapshot: "opencode-golden", allowUntestedHost: false, access: "all" })
-    expect(parseOptions({})).toEqual({ snapshot: "opencode-golden", allowUntestedHost: false, access: "all" })
+    expect(parseOptions(undefined)).toEqual({ snapshot: "opencode-golden", allowUntestedHost: false, access: "all", allowedRoots: [] })
+    expect(parseOptions({})).toEqual({ snapshot: "opencode-golden", allowUntestedHost: false, access: "all", allowedRoots: [] })
   })
 
   test("takes a snapshot name, the opt-in and each access value", () => {
-    expect(parseOptions({ snapshot: "opencode-next", allowUntestedHost: true })).toEqual({ snapshot: "opencode-next", allowUntestedHost: true, access: "all" })
+    expect(parseOptions({ snapshot: "opencode-next", allowUntestedHost: true })).toEqual({ snapshot: "opencode-next", allowUntestedHost: true, access: "all", allowedRoots: [] })
     for (const access of ["all", "ask-changes", "read-only"]) expect(parseOptions({ access })).toMatchObject({ access })
+    expect(parseOptions({ allowedRoots: ["/srv/work"] })).toMatchObject({ allowedRoots: ["/srv/work"] })
+    expect(() => parseOptions({ allowedRoots: ["relative/path"] })).toThrow(/^OPTIONS_INVALID: /)
   })
 
   test("refuses an unknown option, a bad snapshot name and a non-boolean, each as OPTIONS_INVALID", () => {

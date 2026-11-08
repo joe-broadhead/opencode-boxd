@@ -18,6 +18,10 @@ checks and the release steps.
 - **Ship prebuilt, one file per entry.** `scripts/build.mjs` bundles `src/index.ts` and `src/tui.ts` into the
   self-contained `dist/index.js` and `dist/tui.js`: no chunks, no relative imports, and only host-provided modules
   external. `tsc` only typechecks.
+- **Two folders per work.** The laptop folder is the project or an allowed root; the guest folder is always
+  `/home/boxd/work/<work id>`. A laptop path is never sent to the guest.
+- **Files carry three facts.** A moved file is recorded by name, size and sha256, never content. A laptop path must be
+  inside the project or `allowedRoots`, must not be a symlink, and must be within 8 MiB a file and 32 MiB a call.
 - **The laptop is the source of truth.** A snapshot is an image. Never copy `opencode.db`. Sleep, image and drop refuse
   until a harvest has proven the laptop import since the last prompt, and drop refuses a machine the ledger does not
   record for that work id.

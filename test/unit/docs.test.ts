@@ -67,7 +67,7 @@ function conforms(value: unknown, schema: Record<string, unknown>, at = "input")
 describe("the README", () => {
   test("has the family's sections, in order", () => {
     const headings = [...README.matchAll(/^## (.+)$/gm)].map((match) => match[1])
-    expect(headings).toEqual(["Requirements", "Install", "Sign in", "Use", "Permissions", "Configure", "Organisation rollout", "Troubleshooting", "Uninstall", "Links"])
+    expect(headings).toEqual(["Requirements", "Install", "Sign in", "Use", "Files in and out", "Permissions", "Configure", "Organisation rollout", "Troubleshooting", "Uninstall", "Links"])
     expect(README.split("\n")[0]).toBe("# boxd for OpenCode")
     expect(README).toContain("Unofficial; not affiliated with boxd.")
   })
@@ -189,7 +189,7 @@ describe("the docs set", () => {
   })
 
   test("scripting states the result shape and the refusal codes", () => {
-    expect(SCRIPTING).toContain("A `boxd` result comes back as `{ output?, text }`")
+    expect(SCRIPTING).toContain("A plugin-owned method's result is the method's output object")
     for (const code of ["PERMISSION_DENIED", "SESSION_UNKNOWN", "SESSION_AGENT_REQUIRED", "TOOL_UNAVAILABLE"]) {
       expect(SCRIPTING).toContain(`\`${code}\``)
     }
