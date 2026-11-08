@@ -107,7 +107,7 @@ there. The HTTP equivalents are the `location[directory]` query parameter and th
 `location` that answered and a `locationHint`.
 
 A location unloads after OpenCode's idle timeout. If a scheduled script gets `rpc.unavailable` from a location that was
-loaded before, send the call again once: the request loads the location.
+loaded before, send the call again once: the request loads the location. Jobs keeps its own location loaded.
 
 ## Refusals
 
@@ -128,5 +128,5 @@ A refusal is the RPC error `failed`, with `data: { code, next }`:
 
 Every other code the plugin raises is in `docs/configuration.md`, with its one next step.
 
-Known limit (`DC-2`, shared across the family): a saved "Always allow" answer from an earlier session is not part of the
-agent and session rules, so it does not authorize an ad hoc script. A script's grant is a rule in config.
+Known limit: a saved "Always allow" answer from an earlier session is not part of the agent and session rules, so it
+does not authorize an ad hoc script. A script's grant is a rule in config.

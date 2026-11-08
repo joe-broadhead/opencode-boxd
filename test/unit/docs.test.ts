@@ -160,9 +160,9 @@ describe("the docs set", () => {
     expect(found).toBeGreaterThan(3)
   })
 
-  test("scripting names every method and the DC-2 limit", () => {
+  test("scripting names every method, the location and the saved-approval limit", () => {
     for (const tool of TOOLS.map((spec) => spec.id)) expect(SCRIPTING).toContain(tool)
-    expect(SCRIPTING).toContain("DC-2")
+    expect(SCRIPTING).toContain("Known limit: a saved \"Always allow\" answer")
     expect(SCRIPTING).toContain("boxd.machines.tools")
     expect(SCRIPTING).toContain("## The location")
   })
