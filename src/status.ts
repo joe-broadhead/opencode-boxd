@@ -170,11 +170,12 @@ function accessText(status: Status) {
   return `${posture}; ${rules}`
 }
 
-function toolsText({ tools, unknownCount, unknownTools }: Status) {
+function toolsText({ tools, unknownCount, unknownTools, access }: Status) {
   if (unknownCount === 0) return `${tools} available, 0 unknown`
   const more = unknownCount - unknownTools.length
   const names = unknownTools.length ? `: ${unknownTools.join(", ")}${more > 0 ? ` and ${more} more` : ""}` : ""
-  return `${tools} available, ${unknownCount} unknown${names} (unknown tools ask before running)`
+  const unknown = access === "read-only" ? "are denied" : access === "ask-changes" ? "ask before running" : "run without asking"
+  return `${tools} available, ${unknownCount} unknown${names} (unknown tools ${unknown})`
 }
 
 /** The last run's outcome, beside the work it belongs to. */

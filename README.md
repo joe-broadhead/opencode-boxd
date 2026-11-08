@@ -52,8 +52,9 @@ session you cannot get back.
    records a warning that the last prompt is not yet on the laptop, and status shows it.
 6. `boxd_status` reads the ledger and each open work's machine state. It starts nothing.
 
-Every machine change asks before it runs: `ensure`, `submit`, `harvest`, `sleep`, `resume`, `image` and `drop`. The two
-reads, `boxd_status` and `boxd_job`, run without asking.
+Every tool is allowed by default, reads and machine changes alike, so `ensure`, `submit`, `harvest`, `sleep`, `resume`,
+`image` and `drop` run without asking, and `boxd_status` and `boxd_job` are the two reads. The `access` option below
+decides whether a change runs, asks or is denied.
 
 `boxd_image` and `boxd_drop` refuse until a harvest has proven the import on this laptop since the last prompt, and
 `boxd_drop` also refuses a machine that is not the one the ledger records for that work id.

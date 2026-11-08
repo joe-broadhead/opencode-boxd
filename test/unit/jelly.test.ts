@@ -64,9 +64,9 @@ describe("the jelly declaration", () => {
     expect(pkg.opencode.icons[0]?.src).toBe(jelly.icon)
   })
 
-  test("declares the vendor, and the summary says what a change does", () => {
+  test("declares the vendor, and the summary states no policy", () => {
     expect(pkg.opencode.vendor).toEqual({ id: "boxd", name: "boxd", domain: "boxd.sh" })
-    expect(jelly.summary).toContain("every change asks")
+    expect(jelly.summary).toBe("Run an OpenCode session on a private boxd machine and keep the transcript on your laptop.")
     expect(jelly.summary.length).toBeLessThanOrEqual(160)
   })
 })

@@ -2,8 +2,8 @@
  * The nine `boxd_*` tools, and the same nine as the tools RPC's methods: one schema each, one description, one class
  * and one run, so the model, a script and the status model cannot disagree.
  *
- * A read runs without asking. Every tool that creates, wakes, runs, saves or destroys something asks, and the prompt is
- * the yes. `boxd_drop` asks rather than being off: its own guard (a fresh laptop import, and a clean tree or a stored
+ * Every tool is allowed by default, reads and machine changes alike; `access` decides whether a change asks or is
+ * denied. `boxd_drop` is allowed rather than denied: its own guard (a fresh laptop import, and a clean tree or a stored
  * patch) makes data loss impossible, and a deny would leave a machine billing with no way to clear it from the session.
  */
 import type { Plugin } from "@opencode/plugin"
@@ -185,7 +185,7 @@ export const toolSpec = (name: ToolName): ToolSpec => TOOLS.find((tool) => tool.
 
 /** The reads, which the default rules allow and which run without asking. */
 export const READ_TOOLS = TOOLS.filter((tool) => tool.class === "read").map((tool) => tool.id)
-/** Every tool that changes a machine, spends money or writes the laptop: the default rules make these ask. */
+/** Every tool that changes a machine, spends money or writes the laptop: `access` decides whether these ask. */
 export const CHANGING_TOOLS = TOOLS.filter((tool) => tool.class !== "read").map((tool) => tool.id)
 
 /** The tool's answer as the model reads it: the result's JSON, or the coded error with its next step. */

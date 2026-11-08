@@ -26,9 +26,10 @@ making before anything else on a new turn.
 
 ## What to say before a call
 
-Every machine change asks, and the prompt is the yes. Say in one sentence what the call does and what it costs, then
-make the one call: creating or waking a machine bills while it runs, `boxd_submit` runs the model on that machine, and
-`boxd_drop` destroys it.
+Every machine change runs under `access`: with `all` (the default) it runs with no prompt, `ask-changes` makes the
+prompt the yes, and `read-only` denies it. Say in one sentence what the call does and what it costs, then make the one
+call: creating or waking a machine bills while it runs, `boxd_submit` runs the model on that machine, and `boxd_drop`
+destroys it.
 
 Ask in chat only when a choice must be made: a work id in use, a snapshot name, a directory, or a machine name that is
 not the one the ledger records. After a decline, say nothing changed and offer the draft task.
