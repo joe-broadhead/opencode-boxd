@@ -69,7 +69,7 @@ export function cliBoxd(bin = "boxd"): BoxdPort {
 async function get(bin: string, name: string): Promise<MachineInfo> {
   const result = await run(bin, getArgs(name))
   if (result.code !== 0) {
-    if (/not found|unknown|no such/i.test(result.stderr)) return missing(name)
+    if (isMissing(result.stderr)) return missing(name)
     fail("get", result.stderr)
   }
   return parseMachine(parseJson(result.stdout), name)
@@ -97,6 +97,11 @@ export function parseMachine(raw: unknown, fallbackName: string): MachineInfo {
 
 function missing(name: string): MachineInfo {
   return { name, status: "missing", sharing: "unknown", isolated: false }
+}
+
+/** The CLI's own words for a machine that is not there: 0.2 said `VM '<name>' not found`, 0.3 says `no machine "<name>" in <region>`. */
+export function isMissing(stderr: string): boolean {
+  return /not found|no such|no machine|unknown|does not exist/i.test(stderr)
 }
 
 function normalize(value: string): MachineStatus {

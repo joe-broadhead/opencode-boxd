@@ -95,6 +95,16 @@ Measured on 2026-11-07 against `boxd` 0.2.29 (`brew`-style `~/.local/bin/boxd`) 
 - `machine cp - <name>:/path` reads stdin (`copied - → <name>:/path (N bytes)`) and `machine cp <name>:/path -` writes
   stdout. `machine exec <name> -- <cmd>` passes stdin through and returns the command's stdout; `--json` wraps it as
   `{"output":"…","exit_code":0}`. A command that reads stdin works without `--tty`.
+  **The round trip is byte-exact**: a text file and a JSON file uploaded from stdin and downloaded to stdout kept their
+  sha256 on both sides, and so did a file the guest wrote with `machine exec`. Upload and download both use the work's
+  guest directory (`/home/boxd/work/<work id>`), never a laptop path.
+- **`boxd_ensure`'s `directory` is a laptop folder**, inside the project or an allowed root; the folder is created when
+  it does not exist, and the ledger records it as `laptopDirectory` beside the fixed guest folder
+  `/home/boxd/work/<work id>`. A laptop path never reaches the guest.
+- **boxd 0.3.3 changed the missing-machine wording.** 0.2.29 answered `error: VM '<name>' not found`; 0.3.3 answers
+  `error: no machine "<name>" in <region>` (here `fra`). The plugin treats both as `missing`; a build that matched only
+  "not found" failed every `boxd_ensure` with `BOXD_FAILED` until it was widened. `machine list --json` and
+  `snapshots list --json` kept the same keys in 0.3.3.
 - `snapshots save <machine> <name> --json` answers `{"name":…,"paused_automations":0,"size_bytes":…,
   "snapshot_id":…,"status":"ready","version":1}`; a 9 GiB disk took 2 s. `snapshots list --json` prints
   `name, version, status, storage, archived, size, used`. `snapshots remove <name> -y --json` exists and answers

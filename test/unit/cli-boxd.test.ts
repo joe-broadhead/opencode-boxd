@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { parseMachine } from "../../src/cli-boxd.js"
+import { parseMachine, isMissing } from "../../src/cli-boxd.js"
 
 // Shapes copied from the real `boxd` 0.2.29 output. `machine new --json` is not a machine: it is boot, id, name,
 // paused_automations, source and url, so the CLI wrapper must read the machine back before anything uses it.
@@ -47,6 +47,12 @@ describe("parseMachine", () => {
     expect(read("hibernating")).toBe("starting")
     expect(read("rebooting")).toBe("starting")
     expect(read("something-new")).toBe("other")
+  })
+
+  test("the CLI's not-found wording is a missing machine on 0.2 and on 0.3", () => {
+    expect(isMissing(`error: VM 'oc-demo' not found`)).toBe(true)
+    expect(isMissing(`error: no machine "oc-demo" in fra`)).toBe(true)
+    expect(isMissing("error: could not connect to the API")).toBe(false)
   })
 
   test("a machine with no sharing field is unknown, never private", () => {

@@ -199,8 +199,8 @@ export function createFleet(deps: Deps) {
     async ensure(input: { workId: string; directory?: string; repo?: string; title?: string }): Promise<FleetResult> {
       assertWorkId(input.workId)
       // The laptop keeps the work in a folder of its own; the guest always works in /home/boxd/work/<work id>, because a
-      // laptop path is not writable there and must never be sent to it.
-      const laptopDirectory = await resolveWorkDirectory(deps, input.directory ?? deps.projectDirectory)
+      // laptop path is not writable there and must never be sent to it. The folder is created when it does not exist.
+      const laptopDirectory = await resolveWorkDirectory(deps, input.directory ?? deps.projectDirectory, rootsOf(deps.projectDirectory, deps.allowedRoots), true)
       const guestDirectory = workDirectory(input.workId)
       const directory = guestDirectory
       const repo = input.repo ? assertRepo(input.repo) : undefined

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { mkdtemp } from "node:fs/promises"
+import { realpathSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { BoxdError, type Code } from "../../src/errors.js"
@@ -24,6 +25,14 @@ const refusal = async (promise: Promise<unknown>, code: Code) => {
 }
 
 describe("the control plane", () => {
+  test("creates the laptop work folder under an allowed root when it does not exist", async () => {
+    const allowed = realpathSync(await mkdtemp(join(tmpdir(), "boxd-allow-")))
+    const wanted = join(allowed, "new-work")
+    const { fleet, ledger } = await world({ allowedRoots: [allowed] })
+    await fleet.ensure({ workId: "review-api", directory: wanted })
+    expect(statSync(wanted).isDirectory()).toBe(true)
+    expect((await ledger.load("review-api"))?.laptopDirectory).toBe(realpathSync(wanted))
+  })
   test("runs a session off the laptop, hibernates without a proof, and refuses only the drop until the import is proven", async () => {
     const { fleet, boxd, guest, prover } = await world()
     const opened = await fleet.ensure({ workId: "review-api", repo: "https://github.com/joe-broadhead/example" })
