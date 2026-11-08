@@ -11,24 +11,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `boxd_image` and `boxd_drop`. A tool returns when its request is admitted; nothing waits for a model.
 - A ledger at `~/.local/share/opencode-boxd/works/`: the export, the patch and the git record are the laptop's copy of
   the session. Sleep, image and drop refuse until a harvest has proven the import here.
-- Default permission rules: the two reads run, and every machine change asks. `boxd_drop` asks rather than being off,
-  because its own guard makes data loss impossible and a deny would leave a machine billing.
+- Default permission rules, generated from the tool table and the `access` option, and inserted directly after each
+  agent's base allow. `boxd_drop` is allowed rather than denied, because its own guard makes data loss impossible and a
+  deny would leave a machine billing.
 - `/boxd-status` and the `/boxd` dialog, both rendering one status model, and the `boxd.machines` status RPC.
 - Every tool as a method of the `boxd.machines.tools` RPC, with its class, so a script can call it with no model.
 - A skill, `boxd`, and the `jelly` declaration with its icon.
 - The plugin runs on OpenCode 2.2.3, 2.2.4, 2.2.5 and 2.2.6. The guest must run the same version as the laptop.
-- [docs/golden-image.md](docs/golden-image.md): how to build the image every machine boots from, sign its OpenCode in to a
-  provider on the machine, and what a credential-holding snapshot discloses.
+- [docs/golden-image.md](docs/golden-image.md): how to build the image every machine boots from, keep the model
+  credential out of it with a `boxd env` variable or sign its OpenCode in on the machine, and what a
+  credential-holding snapshot discloses.
 - The `snapshot` option defaults to `opencode-golden`. Status says whether this account has it, and `boxd_ensure` and
   `boxd_resume` refuse with `SNAPSHOT_MISSING` before creating a machine.
 
 ### Changed
 
+- Every tool is allowed by default, reads and machine changes alike. The generated block allows `boxd_*` and each of
+  the nine tools for `access: "all"` (the default), so an agent can create, run, save and destroy a billing machine
+  without a prompt, and a tool a later release adds is allowed at once. `access` is the one option to restrict it:
+  `"ask-changes"` lets the reads run and asks for every machine change, and `"read-only"` lets the reads run and denies
+  the changes. A user's own rules come later and still win. The guards that do not depend on a prompt stay: a machine
+  that idles hibernates, `boxd_sleep` always works, drop's own guard refuses anything the laptop cannot account for,
+  and the ledger records a create before it runs.
 - Every work has a laptop folder and a guest folder: the guest always works in `/home/boxd/work/<work id>`, and a laptop
   path is never sent to the machine. `boxd_ensure`'s `directory` names the laptop folder.
 - `boxd_submit` copies `files` to the machine before the prompt, and `boxd_harvest` copies `files` back after the
-  transcript: 8 MiB a file, 32 MiB a call, no symlinks, inside the project or `allowedRoots`, recorded by name, size and
-  sha256. `boxd_drop` counts a harvested output as recovered.
+  transcript, into the work's laptop folder or the `to` folder: 8 MiB a file, 32 MiB a call, no symlinks, inside the
+  project or `allowedRoots`, recorded by name, size and sha256. `boxd_drop` counts a harvested output as recovered.
 - `docs/scripting.md` has a worked `bookmarks.json` → `SUMMARY.md` example and the `external_directory` rule.
 - `boxd_job` checks the guest server before reporting `empty`; `boxd_status` checks the snapshot with no work open;
   `BOXD_MISSING` names the CLI on the server's PATH and its config in the server's HOME.
@@ -41,6 +50,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The laptop import no longer matches the word "session" as a session id.
 - `boxd_image` refuses a machine that no ledger work owns.
 - The guest check compares against this laptop's OpenCode, not a hard-coded release.
+- A machine that is not there is recognised from boxd 0.2's `VM '<name>' not found` and 0.3's `no machine "<name>" in
+  <region>`, so `boxd_ensure` adopts a missing machine instead of failing with `BOXD_FAILED` on 0.3.
 - A read never wakes a machine: `boxd_job` reports `asleep`, with `boxd_resume` as the next step.
 - Every wake arms the awake bound (30 minutes, `idle.ignore-outbound off`), and a failure is a status problem.
 - `boxd_resume` rebuilds a machine any number of times in one OpenCode run: the guest helper is uploaded again.
