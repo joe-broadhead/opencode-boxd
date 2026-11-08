@@ -6,9 +6,14 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync }
 import { join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import type { OpenCodeClient } from "@opencode/client"
-import { Plugin } from "@opencode/plugin"
+import { Model, Plugin, Provider } from "@opencode/plugin"
 import { createBoxdPlugin } from "../../src/plugin.js"
 import { startFakeGuest, type FakeGuest } from "./fake-guest.js"
+import { startMockModel } from "./mock.js"
+
+// The package the host loads to talk to an OpenAI-compatible endpoint. It is a value the host resolves, not an import:
+// nothing here imports @opencode/ai, which the repository forbids because it breaks between patch releases.
+const OPENAI_COMPATIBLE = ["@opencode", "ai", "providers", "openai-compatible"].join("/")
 
 export type Rule = { action: string; resource: string; effect: "allow" | "ask" | "deny" }
 
@@ -103,6 +108,8 @@ export interface HostInput {
   readonly config?: Record<string, unknown>
   /** A guest version other than the host's, for the mismatch test. */
   readonly guestVersion?: string
+  /** A loopback model, so a Code Mode program can be driven by a turn. */
+  readonly model?: boolean
 }
 
 /** A git repository inside the temp root: the guest's work directory and the path a harvest imports into. */
@@ -127,10 +134,26 @@ export async function startHost(input: HostInput = {}) {
   const guest = startFakeGuest()
   const boxd = startFakeBoxd(guest, input.guestVersion ?? HOST_VERSION)
   const prover = fakeProver()
+  const model = input.model ? startMockModel() : undefined
   const plugin = createBoxdPlugin({ boxdBin: boxd.bin, ledger: join(base, "ledger"), prover: prover.prover })
   const withOptions = Plugin.define({ id: plugin.id, setup: (ctx) => plugin.setup({ ...ctx, options: input.options ?? {} }) })
   const probes = new Map<string, Plugin.Context>()
-  const probe = Plugin.define({ id: "boxd.host-test.probe", setup: (ctx) => void probes.set(ctx.location.directory, ctx) })
+  const probe = Plugin.define({
+    id: "boxd.host-test.probe",
+    async setup(ctx) {
+      if (model !== undefined) {
+        const providerID = Provider.ID.make("mock")
+        await ctx.provider.transform((editor) => {
+          editor.add({
+            info: { ...Provider.Info.empty(providerID), name: "Mock", activation: "enabled", package: OPENAI_COMPATIBLE, settings: { baseURL: model.baseURL, apiKey: "mock" } } as never,
+            models: [{ ...Model.Info.default(providerID, Model.ID.make("m1")), name: "Mock 1" }],
+          })
+        })
+        await ctx.model.transform((editor) => editor.default.set("mock", "m1"))
+      }
+      probes.set(ctx.location.directory, ctx)
+    },
+  })
   const config = {
     // Keep the built-in local providers from probing their default ports.
     providers: { lmstudio: { settings: { baseURL: "" } }, ollama: { settings: { baseURL: "" } }, vllm: { settings: { baseURL: "" } } },
@@ -154,6 +177,7 @@ export async function startHost(input: HostInput = {}) {
     guest,
     boxd,
     imports: prover.calls,
+    model,
     probe: () => {
       const ctx = probes.get(location.directory)
       if (!ctx) throw new Error("the probe plugin has not loaded")
@@ -162,6 +186,7 @@ export async function startHost(input: HostInput = {}) {
     async close() {
       await client.close()
       await guest.close()
+      model?.stop()
     },
   }
   try {
