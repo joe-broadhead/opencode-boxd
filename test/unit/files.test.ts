@@ -4,6 +4,7 @@
 import { describe, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
 import { realpath } from "node:fs/promises"
+import { existsSync } from "node:fs"
 import { mkdir, readFile, stat, symlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { BoxdError, type Code } from "../../src/errors.js"
@@ -178,6 +179,22 @@ describe("data out (GAP-4) and the drop it frees (GAP-5)", () => {
     // The guest still has the file, but its content changed after the harvest: it is not recovered.
     w.guest.remote.set("SUMMARY.md", Buffer.from("second\n"))
     await refusal(w.fleet.drop({ workId: "review-api" }), "UNTRACKED")
+  })
+
+  test("a harvest with a to folder lands the files there, and the proof still names them", async () => {
+    const { w, laptop } = await openWork()
+    const elsewhere = join(w.root, "elsewhere")
+    await mkdir(elsewhere, { recursive: true })
+    await w.fleet.submit({ workId: "review-api", text: "Write SUMMARY.md." })
+    w.guest.phaseById.set("ses_root_review-api", "idle")
+    w.guest.remote.set("SUMMARY.md", Buffer.from("# Summary\n"))
+
+    const harvested = await w.fleet.harvest({ workId: "review-api", files: ["SUMMARY.md"], to: elsewhere })
+    expect(harvested).toMatchObject({ state: "proven", files: [{ path: "SUMMARY.md", sha256: digest("# Summary\n") }] })
+    // The file is in the named folder, not the work's own, and the transcript still landed in the work folder.
+    expect(await readFile(join(elsewhere, "SUMMARY.md"), "utf8")).toBe("# Summary\n")
+    expect(existsSync(join(laptop, "SUMMARY.md"))).toBe(false)
+    expect((await w.ledger.load("review-api"))?.downloads?.[0]).toMatchObject({ laptopPath: await realpath(join(elsewhere, "SUMMARY.md")) })
   })
 
   test("a harvest with no files copies nothing", async () => {
