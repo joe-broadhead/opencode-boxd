@@ -31,7 +31,7 @@ const byPermission = new Map(jelly.tools.map((tool) => [tool.permission, tool]))
 describe("the jelly declaration", () => {
   test("declares every known tool once, with the effect the default rules give it", () => {
     for (const tool of TOOLS) {
-      expect(byPermission.get(tool.id)).toMatchObject({ effect: tool.class === "read" ? "allow" : "ask", readOnly: tool.class === "read" })
+      expect(byPermission.get(tool.id)).toMatchObject({ effect: "allow", readOnly: tool.class === "read" })
     }
     expect(jelly.tools).toHaveLength(TOOLS.length)
     expect([...byPermission.keys()].sort()).toEqual(TOOLS.map((tool) => tool.id).sort())

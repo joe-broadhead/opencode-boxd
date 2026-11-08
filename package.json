@@ -87,43 +87,43 @@
       {
         "name": "boxd.ensure",
         "permission": "boxd_ensure",
-        "effect": "ask",
+        "effect": "allow",
         "readOnly": false
       },
       {
         "name": "boxd.submit",
         "permission": "boxd_submit",
-        "effect": "ask",
+        "effect": "allow",
         "readOnly": false
       },
       {
         "name": "boxd.harvest",
         "permission": "boxd_harvest",
-        "effect": "ask",
+        "effect": "allow",
         "readOnly": false
       },
       {
         "name": "boxd.sleep",
         "permission": "boxd_sleep",
-        "effect": "ask",
+        "effect": "allow",
         "readOnly": false
       },
       {
         "name": "boxd.resume",
         "permission": "boxd_resume",
-        "effect": "ask",
+        "effect": "allow",
         "readOnly": false
       },
       {
         "name": "boxd.image",
         "permission": "boxd_image",
-        "effect": "ask",
+        "effect": "allow",
         "readOnly": false
       },
       {
         "name": "boxd.drop",
         "permission": "boxd_drop",
-        "effect": "ask",
+        "effect": "allow",
         "readOnly": false
       }
     ],

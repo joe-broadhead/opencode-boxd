@@ -7,6 +7,7 @@ import { VERSION } from "../../src/version.js"
 const host = { version: "2.2.6", range: ">=2.2.3 <2.3.0", tested: true }
 
 const facts = (overrides: Partial<StatusFacts> = {}): StatusFacts => ({
+  access: "all",
   host,
   snapshot: "opencode-golden",
   guestVersion: "2.2.6",
@@ -96,7 +97,8 @@ describe("the status model", () => {
 
   test("the Access row is derived from the tool classes", () => {
     const text = formatStatus(buildStatus(facts()))
-    expect(text).toContain("reads run without asking")
+    expect(text).toContain("every tool is allowed without asking")
+    expect(text).toContain("option access is \"all\"")
     expect(text).toContain("no agent runs a new boxd tool unasked")
   })
 })
@@ -107,6 +109,7 @@ describe("reading the facts", () => {
 
   test("counts only the boxd namespace's tools", async () => {
     const status = await readStatus(context([], [{ id: "boxd_status", name: "status", options: { namespace: "boxd" } }, { id: "jobs_status", name: "jobs_status", options: { namespace: "jobs" } }]), {
+      access: "all",
       host,
       snapshot: "opencode-golden",
       guestVersion: "2.2.6",
@@ -118,6 +121,7 @@ describe("reading the facts", () => {
 
   test("a ledger that throws is the failed state, not a crash", async () => {
     const status = await readStatus(context([], []), {
+      access: "all",
       host,
       snapshot: "opencode-golden",
       guestVersion: "2.2.6",

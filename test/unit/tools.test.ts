@@ -37,13 +37,16 @@ describe("the tool table", () => {
     expect([...READ_TOOLS, ...CHANGING_TOOLS].sort()).toEqual(TOOLS.map((tool) => tool.id).sort())
   })
 
-  test("the default rules allow the reads and ask for every change, by exact name", () => {
+  test("every tool is allowed by default, and each access value narrows that", () => {
     const rules = defaultRules()
-    expect(rules[0]).toEqual({ action: "boxd_*", resource: "*", effect: "ask" })
-    for (const id of READ_TOOLS) expect(rules).toContainEqual({ action: id, resource: "*", effect: "allow" })
-    for (const id of CHANGING_TOOLS) expect(rules).toContainEqual({ action: id, resource: "*", effect: "ask" })
-    // Nothing is off by default: a machine change is asked about, and drop's own guard is what makes it safe.
-    expect(rules.filter((rule) => rule.effect === "deny")).toEqual([])
+    expect(rules[0]).toEqual({ action: "boxd_*", resource: "*", effect: "allow" })
+    for (const id of [...READ_TOOLS, ...CHANGING_TOOLS]) expect(rules).toContainEqual({ action: id, resource: "*", effect: "allow" })
+    // The reads always run; the changes follow the option.
+    for (const id of READ_TOOLS) expect(defaultRules("read-only")).toContainEqual({ action: id, resource: "*", effect: "allow" })
+    for (const id of CHANGING_TOOLS) {
+      expect(defaultRules("ask-changes")).toContainEqual({ action: id, resource: "*", effect: "ask" })
+      expect(defaultRules("read-only")).toContainEqual({ action: id, resource: "*", effect: "deny" })
+    }
   })
 
   test("input is checked by the tool, so a missing or empty string is a coded error, not a crash", async () => {

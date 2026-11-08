@@ -26,8 +26,14 @@ public issue for a security problem.
 
 ## Permissions
 
-The plugin inserts default rules after each agent's base allow: the two reads run, and every machine change asks. A read
-never wakes a machine: waking starts billing, so only an asking call does it. Nothing is denied by default.
+**Every tool is allowed by default.** The plugin inserts a block after each agent's base allow that allows all nine
+tools, including the machine changes: with no rule of your own, an agent can create a billing boxd machine, start a
+model run on it, save a snapshot and destroy the machine, without a prompt. The `access` option restricts that in one
+line (`"ask-changes"` asks for every change, `"read-only"` denies them), and a per-tool rule does it for one tool.
+
+What still holds without a prompt: a machine that idles hibernates, `boxd_sleep` always works, `boxd_drop` refuses
+unless the laptop import is fresh and the tree can be accounted for, the ledger records a create before it runs, and a
+read never wakes a machine (waking starts billing, so only a changing call does it).
 
 `boxd_drop` destroys only what the laptop can account for: a proven import, a git repository, and no untracked or
 ignored path. Everything else is refused, and hibernate keeps the disk. A plugin tool asserts its own permission inside

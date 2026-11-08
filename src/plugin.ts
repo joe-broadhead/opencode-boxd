@@ -53,6 +53,7 @@ export function createBoxdPlugin(seam: BoxdSeam = {}) {
       })
       const read = () =>
         readStatus(ctx, {
+          access: options.access,
           host,
           snapshot: options.snapshot,
           guestVersion: host.version,
@@ -60,9 +61,9 @@ export function createBoxdPlugin(seam: BoxdSeam = {}) {
           ledger: () => fleet.status(),
         })
 
-      // Every agent gets the default rules after its base allow: the reads run and every machine change asks.
+      // Every agent gets the block for the access option after its base allow: all allowed, ask on a change, or reads only.
       const stops = [
-        await registerDefaultRules(ctx.agent, defaultRules(), report("rules")).then((registration) => registration.dispose),
+        await registerDefaultRules(ctx.agent, defaultRules(options.access), report("rules"), options.access).then((registration) => registration.dispose),
         await registerSkills(ctx.skill, skills).then((registration) => registration.dispose),
         await registerStatusCommand(ctx, read).then((registration) => registration.dispose),
         await registerStatusRpc(ctx.rpc, read).then((registration) => registration.dispose),

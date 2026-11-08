@@ -38,7 +38,8 @@ describe("the plugin on a stock host", () => {
       expect(rules.slice(1, 1 + block.length)).toEqual(block)
 
       // The host's own evaluation, for the agent the plugin guarded.
-      expect(await effect(host, "build", "boxd_ensure")).toBe("ask")
+      // Every tool is allowed by default (R18), so the host's own evaluation says allow for a change too.
+      expect(await effect(host, "build", "boxd_ensure")).toBe("allow")
       expect(await effect(host, "build", "boxd_status")).toBe("allow")
 
       const status = await statusThroughRpc(host)
@@ -55,7 +56,7 @@ describe("the plugin on a stock host", () => {
     }
   })
 
-  test("a read runs without asking; a machine change asks, and a decline runs nothing", async () => {
+  test("a read and a machine change run without asking by default; an agent that asks, and a decline, run nothing", async () => {
     const host = await startHost()
     try {
       const build = await session(host)
@@ -64,17 +65,19 @@ describe("the plugin on a stock host", () => {
       expect(await attempt(host, build, "build", "boxd_status")).toMatchObject({ asked: undefined, ok: true })
       expect(await attempt(host, build, "build", "boxd_job", "reject", { workId: "review-api" })).toMatchObject({ asked: undefined })
 
-      const declined = await attempt(host, build, "build", "boxd_ensure", "reject", { workId: "review-api", directory: host.location.directory })
-      expect(declined.asked).toBe("boxd_ensure")
-      expect(declined.ok).toBe(false)
-      // The decline stopped the call before the CLI ran: no machine was created.
-      expect(host.boxd.calls().slice(before).filter((call) => call.startsWith("machine new"))).toEqual([])
-      expect(host.boxd.machines()).toEqual({})
-
-      const allowed = await attempt(host, build, "build", "boxd_ensure", "once", { workId: "review-api", directory: host.location.directory })
-      expect(allowed.asked).toBe("boxd_ensure")
-      expect(allowed.output).toMatchObject({ workId: "review-api", machine: "oc-review-api", state: "ready", guestVersion: HOST_VERSION })
+      // Every tool is allowed by default now, so the change runs with no prompt at all.
+      const direct = await attempt(host, build, "build", "boxd_ensure", "reject", { workId: "review-api", directory: host.location.directory })
+      expect(direct.asked).toBeUndefined()
+      expect(direct.output).toMatchObject({ workId: "review-api", machine: "oc-review-api", state: "ready", guestVersion: HOST_VERSION })
       expect(host.boxd.calls().some((call) => call.startsWith("machine new oc-review-api"))).toBe(true)
+
+      // An agent that asks for that tool still gets its prompt, and a decline stops the call before the CLI runs.
+      const asking = await session(host, "build", [rule("boxd_submit", "ask")])
+      const declined = await attempt(host, asking, "build", "boxd_submit", "reject", { workId: "review-api", text: "Add a health check." })
+      expect(declined.asked).toBe("boxd_submit")
+      expect(declined.ok).toBe(false)
+      expect(host.guest.prompts).toEqual([])
+      expect(host.boxd.calls().slice(before).filter((call) => call.startsWith("machine new")).length).toBe(1)
     } finally {
       await host.close()
     }
@@ -111,7 +114,7 @@ describe("the plugin on a stock host", () => {
     }
   })
 
-  test("describe lists every method with its class, and a script's write runs only with an allow rule", async () => {
+  test("describe lists every method with its class, and a write runs by default but not under a deny", async () => {
     const host = await startHost()
     try {
       /** One tools RPC call: its output, or the error the envelope carries. */
@@ -129,18 +132,10 @@ describe("the plugin on a stock host", () => {
       }
 
       const before = host.boxd.calls().length
-      // The client raises the RPC's own error: a resolved ask is refused before dispatch, with no prompt and no call.
-      const refused = await call("boxd_ensure", { sessionID: build, input: { workId: "review-api" } }).then(
-        () => undefined,
-        (error: { data?: { code?: string } }) => error,
-      )
-      expect(refused?.data?.code).toBe("PERMISSION_DENIED")
-      expect(host.boxd.calls().slice(before).filter((line) => line.startsWith("machine new"))).toEqual([])
-
-      // A session that allows the action is the script's grant.
-      const granted = await session(host, "build", [rule("boxd_ensure", "allow")])
-      const ran = (await call("boxd_ensure", { sessionID: granted, input: { workId: "review-api", directory: host.location.directory } })).output
+      // The default block allows every tool, so a script's write is the same call a model's is: it runs.
+      const ran = (await call("boxd_ensure", { sessionID: build, input: { workId: "review-api", directory: host.location.directory } })).output
       expect(ran).toMatchObject({ workId: "review-api", machine: "oc-review-api", state: "ready" })
+      expect(host.boxd.calls().slice(before).filter((line) => line.startsWith("machine new")).length).toBe(1)
 
       // A deny is refused too, with no call: the rule in the session narrows the agent's allow.
       const denied = await session(host, "build", [rule("boxd_drop", "deny")])
@@ -161,6 +156,68 @@ describe("the plugin on a stock host", () => {
       await host.close()
     }
   })
+})
+
+describe("the access option", () => {
+  /** One tools RPC call, as the client raises it: the output, or the error's code. */
+  const caller = (host: Awaited<ReturnType<typeof startHost>>) => ({
+    call: async (method: string, input: unknown) => {
+      const rpc = host.client.rpc as unknown as { call: (request: object) => Promise<Record<string, any>> }
+      return rpc.call({ rpcID: TOOLS_RPC_ID, method, input, location: host.location })
+    },
+  })
+
+  test("all (the default) runs a write with no prompt", async () => {
+    const host = await startHost()
+    try {
+      const build = await session(host)
+      const before = host.boxd.calls().length
+      const ran = (await caller(host).call("boxd_ensure", { sessionID: build, input: { workId: "review-api", directory: host.location.directory } })).output
+      expect(ran).toMatchObject({ workId: "review-api", machine: "oc-review-api", state: "ready" })
+      expect(host.boxd.calls().slice(before).some((line) => line.startsWith("machine new oc-review-api"))).toBe(true)
+      expect(await host.probe().permission.list({ sessionID: build })).toEqual([])
+      expect((await statusThroughRpc(host)).access).toBe("all")
+    } finally {
+      await host.close()
+    }
+  }, 120_000)
+
+  test("ask-changes refuses a write on the RPC path with no server call", async () => {
+    const host = await startHost({ options: { access: "ask-changes" } })
+    try {
+      const build = await session(host)
+      const before = host.boxd.calls().length
+      const refused = await caller(host).call("boxd_ensure", { sessionID: build, input: { workId: "review-api" } }).then(
+        () => undefined,
+        (error: { data?: { code?: string } }) => error,
+      )
+      expect(refused?.data?.code).toBe("PERMISSION_DENIED")
+      expect(host.boxd.calls().slice(before).filter((line) => line.startsWith("machine new"))).toEqual([])
+      // A read still runs, and the status says which posture is in force.
+      expect((await caller(host).call("boxd_status", { sessionID: build, input: {} })).output).toBeDefined()
+      expect((await statusThroughRpc(host)).access).toBe("ask-changes")
+    } finally {
+      await host.close()
+    }
+  }, 120_000)
+
+  test("read-only denies a write", async () => {
+    const host = await startHost({ options: { access: "read-only" } })
+    try {
+      const build = await session(host)
+      const before = host.boxd.calls().length
+      const refused = await caller(host).call("boxd_ensure", { sessionID: build, input: { workId: "review-api" } }).then(
+        () => undefined,
+        (error: { data?: { code?: string } }) => error,
+      )
+      expect(refused?.data?.code).toBe("PERMISSION_DENIED")
+      expect(host.boxd.calls().slice(before)).toEqual([])
+      // The read is untouched by read-only.
+      expect((await caller(host).call("boxd_job", { sessionID: build, input: { workId: "review-api" } })).output).toBeDefined()
+    } finally {
+      await host.close()
+    }
+  }, 120_000)
 })
 
 describe("a create needs its golden image", () => {

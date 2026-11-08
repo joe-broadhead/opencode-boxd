@@ -33,6 +33,7 @@ const host = { version: "2.2.6", range: ">=2.2.3 <2.3.0", tested: true }
 
 const status = (ledgerError?: string): Status =>
   buildStatus({
+    access: "all",
     host,
     snapshot: "opencode-golden",
     guestVersion: "2.2.6",

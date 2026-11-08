@@ -17,6 +17,7 @@ All options go in the plugin entry in `opencode.json`:
 |---|---|---|
 | `snapshot` | `opencode-golden` | The golden snapshot every new machine boots from. A lowercase boxd snapshot name. Build it as [golden-image.md](golden-image.md) describes. |
 | `allowUntestedHost` | `false` | Run on an OpenCode outside `>=2.2.3 <2.3.0`. Status then says the host is untested. |
+| `access` | `"all"` | What the plugin's own tools may do without asking: `"all"` allows everything, `"ask-changes"` allows the reads and asks for every machine change, `"read-only"` allows the reads and denies every change. A later rule of the user's still wins. |
 
 An unknown option, a snapshot name boxd would refuse, or a non-boolean `allowUntestedHost` stops the plugin with
 `OPTIONS_INVALID`; OpenCode's plugin list shows why.
@@ -36,18 +37,19 @@ The ledger is the laptop's copy. A boxd snapshot is an image and holds no sessio
 The plugin inserts its block directly after each agent's base `* * allow`. The last matching rule wins, so a rule of
 yours later in the agent, or in the session, still decides.
 
-| Action | Effect |
-|---|---|
-| `boxd_*` | ask — every tool this plugin adds later, until it is classified |
-| `boxd_status`, `boxd_job` | allow |
-| `boxd_ensure`, `boxd_submit`, `boxd_harvest`, `boxd_sleep`, `boxd_resume`, `boxd_image`, `boxd_drop` | ask |
+| Action | `access: "all"` (default) | `access: "ask-changes"` | `access: "read-only"` |
+|---|---|---|---|
+| `boxd_*` (a tool a later release adds) | allow | allow | allow |
+| `boxd_status`, `boxd_job` | allow | allow | allow |
+| `boxd_ensure`, `boxd_submit`, `boxd_harvest`, `boxd_sleep`, `boxd_resume`, `boxd_image`, `boxd_drop` | allow | ask | deny |
+
+Every tool this plugin registers is allowed by default, so an agent can create, run and destroy a billing machine
+without a prompt. The guards that do not depend on a prompt still hold: a machine that idles hibernates, `boxd_sleep`
+always works, drop refuses anything the laptop cannot account for, and the ledger records a create before it runs.
 
 An agent without a base allow gets no rules: inserting there would turn a default deny into an ask. `/boxd-status` names
-each agent that lacks the block, and prints the block to paste first in that agent's own permissions, followed by your
-top-level rules for boxd tools.
-
-Nothing is denied by default. `boxd_drop` asks because its own guard already makes data loss impossible, and a deny
-would leave a machine billing with no way to clear it from the session.
+each agent that lacks the block, and prints the block for the access value in force to paste first in that agent's own
+permissions, followed by your top-level rules for boxd tools.
 
 ## Platform facts
 

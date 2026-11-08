@@ -4,17 +4,18 @@ import { isSupportedHost, isTestedHost, checkHost, checkGuest, parseVersion } fr
 import { SUPPORTED_HOST, TESTED_HOSTS } from "../../src/constants.js"
 
 describe("plugin options", () => {
-  test("defaults to the golden snapshot and a tested host", () => {
-    expect(parseOptions(undefined)).toEqual({ snapshot: "opencode-golden", allowUntestedHost: false })
-    expect(parseOptions({})).toEqual({ snapshot: "opencode-golden", allowUntestedHost: false })
+  test("defaults to the golden snapshot, a tested host and access all", () => {
+    expect(parseOptions(undefined)).toEqual({ snapshot: "opencode-golden", allowUntestedHost: false, access: "all" })
+    expect(parseOptions({})).toEqual({ snapshot: "opencode-golden", allowUntestedHost: false, access: "all" })
   })
 
-  test("takes a snapshot name and the opt-in", () => {
-    expect(parseOptions({ snapshot: "opencode-next", allowUntestedHost: true })).toEqual({ snapshot: "opencode-next", allowUntestedHost: true })
+  test("takes a snapshot name, the opt-in and each access value", () => {
+    expect(parseOptions({ snapshot: "opencode-next", allowUntestedHost: true })).toEqual({ snapshot: "opencode-next", allowUntestedHost: true, access: "all" })
+    for (const access of ["all", "ask-changes", "read-only"]) expect(parseOptions({ access })).toMatchObject({ access })
   })
 
   test("refuses an unknown option, a bad snapshot name and a non-boolean, each as OPTIONS_INVALID", () => {
-    for (const raw of [{ snapshott: "x" }, { snapshot: "Not A Snapshot" }, { snapshot: "x".repeat(80) }, { allowUntestedHost: "yes" }, [], "x"]) {
+    for (const raw of [{ snapshott: "x" }, { snapshot: "Not A Snapshot" }, { snapshot: "x".repeat(80) }, { allowUntestedHost: "yes" }, { access: "write" }, [], "x"]) {
       expect(() => parseOptions(raw)).toThrow(/^OPTIONS_INVALID: .*Next step: /)
     }
   })

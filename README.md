@@ -68,29 +68,41 @@ keeps the disk.
 
 ## Permissions
 
-The plugin inserts this block into every agent that has a base `* * allow`, directly after it:
+**Every tool is allowed by default.** The plugin inserts this block into every agent that has a base `* * allow`,
+directly after it:
 
 ```json
 [
-  { "action": "boxd_*", "resource": "*", "effect": "ask" },
+  { "action": "boxd_*", "resource": "*", "effect": "allow" },
   { "action": "boxd_status", "resource": "*", "effect": "allow" },
   { "action": "boxd_job", "resource": "*", "effect": "allow" },
-  { "action": "boxd_ensure", "resource": "*", "effect": "ask" },
-  { "action": "boxd_submit", "resource": "*", "effect": "ask" },
-  { "action": "boxd_harvest", "resource": "*", "effect": "ask" },
-  { "action": "boxd_sleep", "resource": "*", "effect": "ask" },
-  { "action": "boxd_resume", "resource": "*", "effect": "ask" },
-  { "action": "boxd_image", "resource": "*", "effect": "ask" },
-  { "action": "boxd_drop", "resource": "*", "effect": "ask" }
+  { "action": "boxd_ensure", "resource": "*", "effect": "allow" },
+  { "action": "boxd_submit", "resource": "*", "effect": "allow" },
+  { "action": "boxd_harvest", "resource": "*", "effect": "allow" },
+  { "action": "boxd_sleep", "resource": "*", "effect": "allow" },
+  { "action": "boxd_resume", "resource": "*", "effect": "allow" },
+  { "action": "boxd_image", "resource": "*", "effect": "allow" },
+  { "action": "boxd_drop", "resource": "*", "effect": "allow" }
 ]
 ```
 
-The last matching rule wins, so a rule of yours later in an agent, or a deny in the session, still decides. Agents
-without a base allow are left alone, and `/boxd-status` names any agent that does not carry the block, with the rules
-to paste.
+That includes the machine changes: `boxd_ensure` creates a billing machine, `boxd_submit` starts a model run on it, and
+`boxd_drop` destroys it. The safety mechanics stay: a machine that idles hibernates, `boxd_sleep` always works, drop's
+own guard refuses anything the laptop cannot account for, and every create is recorded in the ledger before it runs.
 
-`boxd_drop` asks rather than being off. It is irreversible, but its guard only lets it run when the laptop can account
-for everything on the disk, and `boxd_sleep` is always there when you would rather keep the machine.
+To restrict, choose one of three:
+
+1. **`access`**, one option for the plugin: `"all"` (the default), `"ask-changes"` (reads run, every machine change
+   asks) or `"read-only"` (reads run, every machine change is denied).
+2. **An agent's own rules**, such as a read-only agent: `"permissions": [{ "action": "boxd_*", "resource": "*", "effect":
+   "deny" }, { "action": "boxd_status", "resource": "*", "effect": "allow" }, { "action": "boxd_job", "resource": "*",
+   "effect": "allow" }]`.
+3. **A per-tool rule** in your `opencode.json`: `{ "action": "boxd_drop", "resource": "*", "effect": "ask" }`, or
+   `"deny"` to turn one tool off. The tool names are `boxd_status`, `boxd_job`, `boxd_ensure`, `boxd_submit`,
+   `boxd_harvest`, `boxd_sleep`, `boxd_resume`, `boxd_image` and `boxd_drop`.
+
+The last matching rule wins, so a later rule of yours still decides. Agents without a base allow are left alone, and
+`/boxd-status` names any agent that does not carry the block, with the rules to paste.
 
 ## Configure
 

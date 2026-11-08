@@ -43,7 +43,10 @@ To let one agent run a script that harvests, give that agent its own rule:
 { "agents": { "harvester": { "permissions": [{ "action": "boxd_harvest", "resource": "*", "effect": "allow" }] } } }
 ```
 
-Everything else still asks, and a script's ask is refused with `PERMISSION_DENIED` rather than left waiting.
+Every tool is allowed by default (the plugin's `access` option is `"all"`), and a script gets the same default: the
+tools RPC resolves a rule before dispatch, and the default allow is that rule, so a script can call every method. To
+restrict a script, set `access` to `"ask-changes"` (an `ask` is refused, because no one can answer it) or
+`"read-only"`, or give the script's agent its own `deny` rule — the script's grant is a rule in config.
 
 ## The location
 

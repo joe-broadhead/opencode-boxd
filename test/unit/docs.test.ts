@@ -101,11 +101,13 @@ describe("the README", () => {
     expect(README).toContain(`/${COMMAND_STEM}`)
   })
 
-  test("says what each machine change asks for, and why drop asks rather than being off", () => {
-    expect(README).toContain("`boxd_drop` asks rather than being off")
+  test("says every tool is allowed by default, and names the three ways to restrict", () => {
+    expect(README).toContain("**Every tool is allowed by default.**")
+    for (const value of ["\"all\"", "\"ask-changes\"", "\"read-only\""]) expect(README).toContain(value)
     for (const tool of ["boxd_ensure", "boxd_submit", "boxd_harvest", "boxd_sleep", "boxd_resume", "boxd_image", "boxd_drop"]) {
       expect(README).toContain(tool)
     }
+    expect(README).toContain("a machine that idles hibernates")
   })
 
   test("prints the default-rules block exactly as the code generates it, in order", () => {

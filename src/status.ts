@@ -1,7 +1,7 @@
 import type { Plugin, Rpc } from "@opencode/plugin"
 import { COMMAND_STEM, DISPLAY_NAME, PLUGIN_ID, TESTED_HOSTS } from "./constants.js"
 import { isSupportedHost, type HostCheck } from "./host-version.js"
-import { defaultRules, unguardedAgents, type Rule } from "./permissions.js"
+import { defaultRules, unguardedAgents, type Access, type Rule } from "./permissions.js"
 import { cut, shortReason } from "./redact.js"
 import { failureText, nextStepFor, type RunOutcome } from "./outcome.js"
 import { TOOLS } from "./tools.js"
@@ -16,6 +16,8 @@ export type { WorkSummary }
 
 /** What status is built from. The TUI fills what it can see; fields it cannot see stay undefined. */
 export interface StatusFacts {
+  /** What the plugin's own tools may do without asking, from the option. */
+  readonly access: Access
   readonly host: HostCheck
   readonly snapshot: string
   /** This laptop's OpenCode version, which the guest must match. */
@@ -61,15 +63,18 @@ export interface Status {
   readonly unknownTools: readonly string[]
   /** Agents where a new boxd tool would run without asking; empty when there are none. */
   readonly unguardedAgents: readonly string[]
+  /** What the plugin's own tools may do without asking, from the option. */
+  readonly access: Access
   readonly problems: readonly string[]
   /** The one next step: the `Next step` row, "Nothing to do." when nothing is needed. */
   readonly nextStep: string
 }
 
-/** The default rules to paste into an agent's own permissions, one rule a line, as a JSON array body. */
-const AGENT_RULES = defaultRules()
-  .map((rule, index, rules) => `  ${JSON.stringify(rule)}${index < rules.length - 1 ? "," : ""}`)
-  .join("\n")
+/** The default rules for one access value, to paste into an agent's own permissions, one rule a line. */
+const agentRules = (access: Access) =>
+  defaultRules(access)
+    .map((rule, index, rules) => `  ${JSON.stringify(rule)}${index < rules.length - 1 ? "," : ""}`)
+    .join("\n")
 
 /** The next step while agents lack the rules: the family's one fixed sentence. */
 const AGENTS_NEXT_STEP =
@@ -95,6 +100,7 @@ export function buildStatus(facts: StatusFacts): Status {
     version: VERSION,
     state,
     ...(facts.ledgerError ? { error: cut(shortReason(facts.ledgerError) ?? "no reason given", STATUS_LIMIT) } : {}),
+    access: facts.access,
     host: facts.host,
     snapshot: facts.snapshot,
     snapshotPresent: facts.ledger?.snapshotPresent ?? null,
@@ -108,7 +114,7 @@ export function buildStatus(facts: StatusFacts): Status {
     tools: listed.length,
     unknownCount: unknown.length,
     unknownTools: unknown.filter((name) => SAFE_NAME.test(name)).slice(0, LISTED_UNKNOWN),
-    unguardedAgents: unguardedAgents(facts.agents ?? []),
+    unguardedAgents: unguardedAgents(facts.agents ?? [], facts.access),
     problems: facts.problems ?? [],
   }
   return { ...status, nextStep: nextStepOf(status) }
@@ -150,7 +156,12 @@ const list = (names: readonly string[]) => (names.length < 2 ? names.join("") : 
 function accessText(status: Status) {
   const changing = TOOLS.filter((tool) => tool.class !== "read")
   const classes = [...new Set(changing.map((tool) => tool.class))].join(", ")
-  const posture = `reads run without asking; the ${changing.length} machine changes (${classes}) ask first, and nothing is off`
+  const posture =
+    status.access === "all"
+      ? `every tool is allowed without asking, including the ${changing.length} machine changes (${classes}); option access is "all"`
+      : status.access === "ask-changes"
+        ? `reads run without asking; the ${changing.length} machine changes (${classes}) ask first; option access is "ask-changes"`
+        : `reads run without asking; the ${changing.length} machine changes (${classes}) are denied; option access is "read-only"`
   const rules = status.problems.some((problem) => problem.startsWith(RULES_NOT_ADDED))
     ? "the default rules are missing (see the OpenCode row)"
     : status.unguardedAgents.length
@@ -221,7 +232,7 @@ export function formatStatus(status: Status) {
     `- Guest: must be OpenCode ${status.guestVersion ?? "unknown"}, this laptop's version; a job or a harvest checks it`,
     `- Works: ${worksText(status)}`,
     `- Tools: ${toolsText(status)}`,
-    `- Agents without default rules: ${agents.length ? `${agents.join(", ")}\n${AGENT_RULES}` : "none"}`,
+    `- Agents without default rules: ${agents.length ? `${agents.join(", ")}\n${agentRules(status.access)}` : "none"}`,
     `- OpenCode: ${hostText(status)}`,
     `- Next step: ${status.nextStep}`,
   ].join("\n")
@@ -235,7 +246,7 @@ export interface StatusContext {
 /** Reads the live facts through public host APIs; never calls boxd. A failed ledger read is the `failed` state. */
 export async function readStatus(
   ctx: StatusContext,
-  facts: Pick<StatusFacts, "host" | "snapshot" | "guestVersion" | "problems"> & { readonly ledger: () => Promise<FleetStatus> },
+  facts: Pick<StatusFacts, "host" | "snapshot" | "guestVersion" | "problems" | "access"> & { readonly ledger: () => Promise<FleetStatus> },
 ): Promise<Status> {
   const [agents, tools, ledger] = await Promise.all([
     ctx.agent.list(),
@@ -246,6 +257,7 @@ export async function readStatus(
     ),
   ])
   return buildStatus({
+    access: facts.access,
     host: facts.host,
     snapshot: facts.snapshot,
     guestVersion: facts.guestVersion,
@@ -274,10 +286,11 @@ export const StatusRpc = {
       input: { type: "object" },
       output: {
         type: "object",
-        required: ["version", "state", "host", "snapshot", "snapshotPresent", "guestVersion", "works", "openWorks", "unharvested", "orphans", "warned", "failedRuns", "tools", "unknownCount", "unknownTools", "unguardedAgents", "problems", "nextStep"],
+        required: ["version", "state", "access", "host", "snapshot", "snapshotPresent", "guestVersion", "works", "openWorks", "unharvested", "orphans", "warned", "failedRuns", "tools", "unknownCount", "unknownTools", "unguardedAgents", "problems", "nextStep"],
         properties: {
           version: { type: "string" },
           state: { enum: ["connected", "failed"] },
+          access: { enum: ["all", "ask-changes", "read-only"] },
           error: { type: "string" },
           host: {
             type: "object",
