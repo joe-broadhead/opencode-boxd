@@ -1,6 +1,6 @@
-# Publishes a v<version> tag to npm with trusted publishing (OIDC) and provenance, after a reviewer approves the
-# release environment. The guard refuses a private package or a tag that differs from the version, and the pack test runs
-# against the exact tarball this job publishes.
+# Publishes a v<version> tag to npm with trusted publishing (OIDC) and provenance. The guard runs before the release
+# environment, so a private package or a mismatched tag never waits for approval. The publish job runs after a reviewer
+# approves the release environment: it packs the checked tree and tests that exact tarball before it publishes.
 name: release
 
 on:
@@ -9,22 +9,20 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  publish:
+  guard:
     runs-on: ubuntu-24.04
-    environment: release
-    timeout-minutes: 60
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Guard (not private, the tag equals the version)
+      - name: Refuse a private package or a tag that differs from the version
         run: |
           # shellcheck disable=SC2016
           node -e '
@@ -33,6 +31,19 @@ jobs:
             if (manifest.private === true) { console.error("package.json is private"); process.exit(1) }
             if (tag !== `v${manifest.version}`) { console.error(`tag ${tag} does not match version ${manifest.version}`); process.exit(1) }
           '
+
+  publish:
+    needs: guard
+    runs-on: ubuntu-24.04
+    environment: release
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
@@ -62,12 +73,19 @@ jobs:
           fi
       - name: Test the tarball that will be published
         run: PACK_TARBALL="$(ls "$RUNNER_TEMP"/*.tgz)" bun test ./test/pack
-      - name: Publish to npm
+      - name: Publish with provenance
         run: |
-          name=$(node -p 'require("./package.json").name')
-          version=$(node -p 'require("./package.json").version')
-          if [ "$(npm view "$name@$version" version 2>/dev/null)" = "$version" ]; then
-            echo "$name@$version is already on npm; skipping the publish."
-            exit 0
+          name="$(node -p 'require("./package.json").name')"
+          version="$(node -p 'require("./package.json").version')"
+          # A 404 means the version is not on npm yet; any other failure stops the release.
+          if published="$(npm view "$name@$version" version 2>"$RUNNER_TEMP/npm-view.log")"; then
+            if [ "$published" = "$version" ]; then
+              echo "::notice::$name@$version is already on npm; nothing to publish."
+              exit 0
+            fi
+          elif ! grep -q E404 "$RUNNER_TEMP/npm-view.log"; then
+            cat "$RUNNER_TEMP/npm-view.log"
+            echo "::error::Could not check whether $name@$version is already on npm."
+            exit 1
           fi
           npm publish "$RUNNER_TEMP"/*.tgz --provenance --access public
