@@ -68,7 +68,7 @@ first, and only then may the machine sleep, be imaged or be destroyed.
 
 ### The boxd CLI, confirmed against 0.2.29
 
-Measured on 2026-11-07 against `boxd` 0.2.29 (`brew`-style `~/.local/bin/boxd`) and one real account.
+Measured against `boxd` 0.2.29.
 
 - `machine new <name> --from-snapshot <snapshot> --label role=session --label work=<id> --json` is accepted, and the labels
   are set. `--label` is repeatable, `key=value`. A `work=` value is an opaque string; the plugin's short lowercase rule
@@ -102,7 +102,7 @@ Measured on 2026-11-07 against `boxd` 0.2.29 (`brew`-style `~/.local/bin/boxd`) 
   it does not exist, and the ledger records it as `laptopDirectory` beside the fixed guest folder
   `/home/boxd/work/<work id>`. A laptop path never reaches the guest.
 - **boxd 0.3.3 changed the missing-machine wording.** 0.2.29 answered `error: VM '<name>' not found`; 0.3.3 answers
-  `error: no machine "<name>" in <region>` (here `fra`). The plugin treats both as `missing`; a build that matched only
+  `error: no machine "<name>" in <region>` (for example `fra`). The plugin treats both as `missing`; a build that matched only
   "not found" failed every `boxd_ensure` with `BOXD_FAILED` until it was widened. `machine list --json` and
   `snapshots list --json` kept the same keys in 0.3.3.
 - `snapshots save <machine> <name> --json` answers `{"name":…,"paused_automations":0,"size_bytes":…,
@@ -138,8 +138,7 @@ Measured on 2026-11-07 against `boxd` 0.2.29 (`brew`-style `~/.local/bin/boxd`) 
 
 ### The golden image
 
-`opencode-golden` now exists in the account (version 1, 10.5 GiB, `ready`), built on 2026-11-07 from a stock machine.
-It carries OpenCode 2.2.5 and holds no credential file of its own:
+The golden image is built from a stock machine. It carries OpenCode 2.2.5 and holds no credential file of its own:
 
 - The stock boxd image (2 vCPU / 8 GiB, `source: "standalone"`) carries `python3` 3.12.3, `git` 2.43.0, Node 24, the
   in-VM `boxd` CLI at `/usr/local/bin/boxd`, and **OpenCode 1.19.5** at `/usr/local/bin/opencode` →
@@ -160,10 +159,9 @@ It carries OpenCode 2.2.5 and holds no credential file of its own:
   (root, 0644), with the domain-bound values and boxd's CA bundle. The image can therefore hold no key: delete the file
   before `snapshots save`, and a machine created from the image regenerates it at boot (its mtime landed after the
   create). `auth.json` stayed absent, and `OPENCODE_API_KEY` was set in the new machine's environment.
-- **A Go Teams service-account key does not call Go models.** The first real prompt on `opencode-golden` reached
-  provider `opencode-go`, model `hy4`, and answered 403 `provider.auth`: "Go Teams covers workspace members, not service
-  accounts. Use a personal API key to call Go models." The route works; the injected key was the wrong kind. Use a
-  personal key with a spending limit.
+- **A service-account key may not call model providers.** A provider answered a service-account key with 403
+  `provider.auth`, saying it covers workspace members, not service accounts. The route works; use a personal key with a
+  spending limit.
 - The 2.2.5 session export is `{info, messages}`, where each message is `{id, time, type, text?, model?, content?,
   finish?, error?}` and the session info carries `cost`, `tokens` and `outcome` (`ok`/`failed`). An assistant error is
   recorded on the message and the session outcome is `failed`, with cost 0.
