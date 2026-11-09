@@ -59,6 +59,10 @@ checks and the release steps.
   check.
 - **Text.** Model-facing text and docs use plain language and describe what the code does now: no process narrative,
   test counts, machine-local paths, secrets or personal data.
+- **No personal email in anything we publish.** Every commit, tag and package is authored and committed as
+  `joe-broadhead <91376460+joe-broadhead@users.noreply.github.com>`. Before committing or tagging, check that
+  `git config user.email` is that address: a fresh clone inherits the machine's global identity, which is not that
+  address. Never commit, tag or publish with a work or personal address, or with a local hostname.
 
 ## Forbidden in this repository
 
