@@ -67,7 +67,7 @@ function conforms(value: unknown, schema: Record<string, unknown>, at = "input")
 describe("the README", () => {
   test("has the family's sections, in order", () => {
     const headings = [...README.matchAll(/^## (.+)$/gm)].map((match) => match[1])
-    expect(headings).toEqual(["Requirements", "Install", "Sign in", "Use", "Files in and out", "Permissions", "Configure", "Organisation rollout", "Troubleshooting", "Uninstall", "Links"])
+    expect(headings).toEqual(["Requirements", "Install", "Sign in", "Use", "Files in and out", "Permissions", "Configure", "Organisation rollout", "Troubleshooting", "Known limits", "Uninstall", "Links"])
     expect(README.split("\n")[0]).toBe("# boxd for OpenCode")
     expect(README).toContain("Unofficial; not affiliated with boxd.")
   })

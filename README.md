@@ -193,6 +193,25 @@ Each member still needs the boxd CLI signed in on their own laptop.
 The `/boxd` dialog and `/boxd-status` show the same status: connection, account, access, snapshot, guest, works, tools,
 agents without the default rules, the OpenCode version and one next step.
 
+## Known limits
+
+- **The boxd behaviour is measured on one account.** The behaviour the plugin relies on was measured against one boxd CLI
+  release.
+  [docs/architecture.md](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/architecture.md) records each
+  measurement, and [docs/live-check.md](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/live-check.md)
+  lists what to check again after a boxd CLI or API change.
+- **Idle bounds.** boxd gives a new machine a 4-hour idle bound. The plugin sets 30 minutes when it creates or wakes a
+  machine, and that bound is what limits billing when the laptop is gone.
+- **A create can land after boxd stops answering.** If `machine new` times out, the machine may still appear. `boxd_ensure`
+  adopts it when it does, and reports `CREATE_UNCERTAIN` until then.
+- **Two `boxd` commands can run at once.** The plugin does not serialise them. Two reads have been measured together;
+  a read and a write have not.
+- **The golden image is yours to build.** No stock snapshot is named, and a machine whose OpenCode differs from this
+  laptop's is refused with `GUEST_VERSION`.
+- **Model keys.** A model provider can refuse a service-account key. The
+  [golden image page](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/golden-image.md) says what to use.
+- **Sign-in is boxd's.** The plugin runs the boxd CLI you are signed in to, and never runs `boxd auth login` for you.
+
 ## Uninstall
 
 ```sh
