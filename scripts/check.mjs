@@ -102,7 +102,7 @@ function host() {
   return 0
 }
 
-/** R13: the workflows are linted as workflows, by actionlint when it is installed; a notice when it is not. */
+/** The workflows are linted as workflows, by actionlint when it is installed; a notice when it is not. */
 function actionlint() {
   const probe = spawnSync("actionlint", ["-version"], { encoding: "utf8" })
   if (probe.error?.code === "ENOENT") {

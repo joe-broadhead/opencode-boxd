@@ -118,7 +118,7 @@ describe("the README", () => {
     expect(rules).toEqual(defaultRules().map((rule) => ({ ...rule })))
   })
 
-  // R7: the configuration guide prints every value's generated block in full, and none of them is elided.
+  // The configuration guide prints every value's generated block in full, and none of them is elided.
   test.each(["all", "ask-changes", "read-only"] as const)("the configuration guide prints the %s block in full", (access) => {
     const at = CONFIG.indexOf(`\`access: "${access}"\``)
     expect({ access, found: at !== -1 }).toEqual({ access, found: true })

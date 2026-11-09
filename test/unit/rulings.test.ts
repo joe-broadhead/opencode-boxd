@@ -40,7 +40,7 @@ async function proven(overrides: { untracked?: string[]; ignored?: string[]; dir
   return w
 }
 
-describe("a read never bills (DR-1)", () => {
+describe("a read never bills", () => {
   test("boxd_job on a hibernated work reports asleep and never calls wake", async () => {
     const w = await world()
     await w.fleet.ensure({ workId: "review-api" })
@@ -73,7 +73,7 @@ describe("a read never bills (DR-1)", () => {
   })
 })
 
-describe("every wake arms the awake bound (DR-6)", () => {
+describe("every wake arms the awake bound", () => {
   test("ensure on a hibernated machine holds it awake before it returns starting", async () => {
     const w = await world()
     w.boxd.seed("oc-review-api", "hibernated")
@@ -117,7 +117,7 @@ describe("every wake arms the awake bound (DR-6)", () => {
   })
 })
 
-describe("a rebuild works any number of times (DR-7)", () => {
+describe("a rebuild works any number of times", () => {
   test("resume twice recreates twice, forgets the guest helper each time, and prepares again", async () => {
     const w = await proven()
     // The first ensure created a machine too; count the rebuilds from here.
@@ -137,7 +137,7 @@ describe("a rebuild works any number of times (DR-7)", () => {
   })
 })
 
-describe("hibernating is always an exit from billing (DR-8)", () => {
+describe("hibernating is always an exit from billing", () => {
   test("sleep works with no proof and records the warning", async () => {
     const w = await world()
     await w.fleet.ensure({ workId: "review-api" })
@@ -175,7 +175,7 @@ describe("hibernating is always an exit from billing (DR-8)", () => {
   })
 })
 
-describe("no billing machine the ledger does not know (DR-9)", () => {
+describe("no billing machine the ledger does not know", () => {
   test("the intent is recorded before the create", async () => {
     const w = await world()
     w.boxd.createBehaviour = "timeout-missing"
@@ -208,7 +208,7 @@ describe("no billing machine the ledger does not know (DR-9)", () => {
   })
 })
 
-describe("drop destroys only what the laptop can account for (DR-4)", () => {
+describe("drop destroys only what the laptop can account for", () => {
   test("a clean, known, proven tree drops", async () => {
     const w = await proven()
     await expect(w.fleet.drop({ workId: "review-api" })).resolves.toMatchObject({ state: "dropped" })
@@ -316,7 +316,7 @@ describe("a create needs its golden image (SNAPSHOT_MISSING)", () => {
 })
 
 describe("the rest of the review", () => {
-  test("a cyclic parent chain fails instead of recursing (DR-15)", async () => {
+  test("a cyclic parent chain fails instead of recursing", async () => {
     const w = await world()
     await w.fleet.ensure({ workId: "review-api" })
     await w.fleet.submit({ workId: "review-api", text: "Cycle." })
@@ -327,7 +327,7 @@ describe("the rest of the review", () => {
     await refusal(w.fleet.harvest({ workId: "review-api", localDirectory: await mkdtemp(join(tmpdir(), "boxd-local-")) }), "EXPORT_INVALID")
   })
 
-  test("harvest refuses a local directory that does not exist (DR-22)", async () => {
+  test("harvest refuses a local directory that does not exist", async () => {
     const w = await world()
     await w.fleet.ensure({ workId: "review-api" })
     await w.fleet.submit({ workId: "review-api", text: "Harvest nowhere." })

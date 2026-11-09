@@ -1,4 +1,4 @@
-// R18: what the model reads says what the default does. Every tool is allowed under `access: "all"`, so no text the
+// What the model reads says what the default does. Every tool is allowed under `access: "all"`, so no text the
 // model sees may say a tool asks first, is read-only, needs an option turned on, or is off until it is classified. A
 // sentence that names `ask-changes` or `read-only` describes that value, not the default.
 import { describe, expect, test } from "bun:test"

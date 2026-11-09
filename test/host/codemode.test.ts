@@ -1,6 +1,6 @@
 // The Code Mode path on the stock host: a model turn runs a program through the host's `execute` tool, which is how a
 // model reaches a plugin's tools. A read runs, an inner write asks and is refused when declined, and an unknown method
-// is denied. The tools RPC path is `boxd.test.ts`; this file is the other half R2 asks for.
+// is denied. The tools RPC path is `boxd.test.ts`; this file is the other half of that proof.
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { startHost, until } from "./harness.js"
 

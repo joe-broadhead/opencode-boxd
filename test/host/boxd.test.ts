@@ -38,7 +38,7 @@ describe("the plugin on a stock host", () => {
       expect(rules.slice(1, 1 + block.length)).toEqual(block)
 
       // The host's own evaluation, for the agent the plugin guarded.
-      // Every tool is allowed by default (R18), so the host's own evaluation says allow for a change too.
+      // Every tool is allowed by default , so the host's own evaluation says allow for a change too.
       expect(await effect(host, "build", "boxd_ensure")).toBe("allow")
       expect(await effect(host, "build", "boxd_status")).toBe("allow")
 
