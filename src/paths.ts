@@ -83,7 +83,7 @@ async function nearestExisting(path: string): Promise<string> {
 }
 
 /** A laptop file, read once, with the size and digest the ledger records. */
-export interface LoadedFile {
+interface LoadedFile {
   readonly path: string
   readonly bytes: number
   readonly sha256: string

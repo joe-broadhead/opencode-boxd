@@ -62,7 +62,7 @@ const TEXT: StringField = { type: "string", description: "The prompt to admit on
 const MACHINE: StringField = { type: "string", description: 'The machine name, oc-<work id>, owned by an open work.' }
 const SNAPSHOT: StringField = { type: "string", description: "A new lowercase snapshot name. Snapshots are immutable." }
 
-export interface ToolSpec {
+interface ToolSpec {
   readonly name: ToolName
   /** The tool's id, its permission action and its method name in the tools RPC: `boxd_<name>`. */
   readonly id: string
@@ -189,7 +189,7 @@ export const READ_TOOLS = TOOLS.filter((tool) => tool.class === "read").map((too
 export const CHANGING_TOOLS = TOOLS.filter((tool) => tool.class !== "read").map((tool) => tool.id)
 
 /** The tool's answer as the model reads it: the result's JSON, or the coded error with its next step. */
-export interface ToolAnswer {
+interface ToolAnswer {
   readonly output: unknown
   readonly text: string
 }
@@ -248,7 +248,7 @@ export function toolTransform(fleet: Fleet, assert: Plugin.Context["permission"]
  * A read runs; every other class asserts its own action first, with the call's own source, so the prompt is the call and
  * an unattended script's ask can be told apart and refused. The model path and the tools RPC both use this.
  */
-export async function assertTool(
+async function assertTool(
   assert: Plugin.Context["permission"]["assert"],
   spec: ToolSpec,
   input: Record<string, unknown>,

@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process"
 import { boxdError } from "./errors.js"
 
-export type RunResult = { code: number; stdout: string; stderr: string }
+type RunResult = { code: number; stdout: string; stderr: string }
 
 export function run(bin: string, args: string[], options?: { stdin?: string; timeoutMs?: number }): Promise<RunResult> {
   const timeoutMs = options?.timeoutMs ?? 20_000

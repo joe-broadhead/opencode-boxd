@@ -27,7 +27,7 @@ export type Deps = {
   readonly allowedRoots: readonly string[]
 }
 
-export type FleetResult = Record<string, unknown>
+type FleetResult = Record<string, unknown>
 
 /** One work as status reports it: the ledger's facts, and the machine's live state when boxd answered. */
 export interface WorkSummary {

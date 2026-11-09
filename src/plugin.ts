@@ -12,12 +12,12 @@ import { defaultRules, registerDefaultRules } from "./permissions.js"
 import { cliProver } from "./prover.js"
 import { loadSkills, registerSkills } from "./skills.js"
 import { readStatus, registerStatusCommand, registerStatusRpc } from "./status.js"
-import { ownedMethods, toolTransform, TOOLS } from "./tools.js"
+import { ownedMethods, toolTransform } from "./tools.js"
 import type { BoxdPort, GuestPort, Prover } from "./ports.js"
 import { registerToolsRpc } from "./host/tools-rpc.js"
 
 /** Internal seam: the host tests point the plugin at a fake CLI, a fake guest, a fake prover and their own ledger and skills. */
-export interface BoxdSeam {
+interface BoxdSeam {
   readonly boxdBin?: string
   readonly boxd?: BoxdPort
   readonly guest?: GuestPort
@@ -27,7 +27,7 @@ export interface BoxdSeam {
 }
 
 /** Where the ledger lives, unless the seam says otherwise. */
-export const ledgerRoot = () => join(homedir(), ".local", "share", "opencode-boxd")
+const ledgerRoot = () => join(homedir(), ".local", "share", "opencode-boxd")
 
 export function createBoxdPlugin(seam: BoxdSeam = {}) {
   return Plugin.define({
@@ -79,6 +79,3 @@ export function createBoxdPlugin(seam: BoxdSeam = {}) {
     },
   })
 }
-
-/** The tool count the status row and the pack test read: one table, no second list. */
-export const TOOL_COUNT = TOOLS.length

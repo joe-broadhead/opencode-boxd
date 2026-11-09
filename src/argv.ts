@@ -21,7 +21,7 @@ export function createArgs(workId: string, snapshot: string): string[] {
 
 /** Bound, not zero. Zero never sleeps, so a crashed agent leaves a bill running. */
 export const AWAKE_SECONDS = "1800"
-export const SLEEP_SECONDS = "14400"
+const SLEEP_SECONDS = "14400"
 
 export function getArgs(name: string): string[] {
   return ["machine", "get", name, "--json"]

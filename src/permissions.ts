@@ -1,6 +1,5 @@
 import type { Plugin } from "@opencode/plugin"
-import { boxdError } from "./errors.js"
-import { CHANGING_TOOLS, READ_TOOLS, TOOLS } from "./tools.js"
+import { CHANGING_TOOLS, READ_TOOLS } from "./tools.js"
 import { reasonOf } from "./redact.js"
 
 export interface Rule {
@@ -108,16 +107,3 @@ export const unguardedAgents = (agents: readonly { readonly id: string; readonly
   agents
     .filter((agent) => agent.permissions.some((item) => same(item, BASE_ALLOW)) && !hasDefaultRules(agent.permissions, access) && evaluate(agent.permissions, "boxd_new_tool") === "allow")
     .map((agent) => agent.id)
-
-/** The tool lists status derives its Access row from, so the sentence cannot go stale. */
-export const POSTURE = {
-  reads: READ_TOOLS,
-  changing: TOOLS.filter((tool) => tool.class !== "read").map((tool) => `${tool.id} (${tool.class})`),
-} as const
-
-/** A tool spec's own error, raised while the table is built, so a bad table fails at startup rather than at a call. */
-export function assertClassification(): void {
-  for (const tool of TOOLS) {
-    if (tool.id !== `boxd_${tool.name}`) throw boxdError("OPTIONS_INVALID", `Tool ${tool.name} is not named boxd_${tool.name}.`)
-  }
-}

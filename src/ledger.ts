@@ -5,7 +5,7 @@ import { boxdError } from "./errors.js"
 import type { RunOutcome } from "./outcome.js"
 import type { Transfer } from "./transfer.js"
 
-export interface Proof {
+interface Proof {
   harvestedAt: string
   guestVersion: string
   sessions: Array<{ remoteId: string; importedId: string; parentRemoteId?: string }>
@@ -13,7 +13,7 @@ export interface Proof {
 }
 
 /** What the guest's git read found. `known: false` means there is no repository, so nothing can be proven about the disk. */
-export interface GitRecord {
+interface GitRecord {
   known: boolean
   remote: string | null
   branch: string | null
@@ -29,7 +29,7 @@ export interface GitRecord {
 }
 
 /** The guest session's last run, recorded at each harvest, so status and the next step know what happened. */
-export interface LastOutcome {
+interface LastOutcome {
   state: RunOutcome
   error?: string
   at: string

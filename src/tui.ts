@@ -10,7 +10,7 @@ const KEYS = "r refresh · esc close"
 type Context = Plugin.Context
 
 /** The view's text: the /boxd-status report without its heading, which the dialog title carries, and the keys. */
-export function viewMessage(result: { readonly status: Status } | { readonly error: unknown }) {
+function viewMessage(result: { readonly status: Status } | { readonly error: unknown }) {
   return `${reportOf(result)}\n\n${KEYS}`
 }
 
@@ -32,7 +32,7 @@ function reportOf(result: { readonly status: Status } | { readonly error: unknow
 }
 
 /** The members of the TUI context the view uses. */
-export interface ViewContext {
+interface ViewContext {
   readonly location: Context["location"]
   readonly client: Pick<Context["client"], "rpc">
   readonly data: Pick<Context["data"], "on">
@@ -40,7 +40,7 @@ export interface ViewContext {
   readonly keymap: Pick<Context["keymap"], "layer">
 }
 
-export function setupView(context: ViewContext) {
+function setupView(context: ViewContext) {
   let open: number | undefined
   let latest = 0
   /** The event listeners, held only while the view is open. */

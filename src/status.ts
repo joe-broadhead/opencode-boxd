@@ -239,7 +239,7 @@ export function formatStatus(status: Status) {
   ].join("\n")
 }
 
-export interface StatusContext {
+interface StatusContext {
   readonly agent: Pick<Plugin.Context["agent"], "list">
   readonly tool: Pick<Plugin.Context["tool"], "list">
 }

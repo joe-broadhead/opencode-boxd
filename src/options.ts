@@ -2,7 +2,7 @@ import { boxdError } from "./errors.js"
 import { assertSnapshot } from "./names.js"
 import { ACCESS_VALUES, type Access } from "./permissions.js"
 
-export interface Options {
+interface Options {
   /** The golden snapshot every new machine boots from. */
   readonly snapshot: string
   /** Run on an OpenCode version outside the supported range, with a warning in status. */
