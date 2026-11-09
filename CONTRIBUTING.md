@@ -10,7 +10,7 @@ npm run check
 ```
 
 `npm run check` runs every stage in order and stops at the first failure; `node scripts/check.mjs <stage>` runs one.
-Stages: `typecheck`, `unit`, `build`, `icons`, `copies`, `host`, `pack`, `forbidden`, `whitelist`.
+Stages: `typecheck`, `unit`, `build`, `icons`, `copies`, `host`, `pack`, `forbidden`, `whitelist`, `actionlint`.
 
 - `unit` runs against narrow fakes, and imports the real stock OpenCode binaries where they are installed
   (`test/unit/prover.test.ts`).
