@@ -86,7 +86,7 @@ Laptop paths must be inside the project or a folder named in the `allowedRoots` 
 When the host asks, allow the path with the `external_directory` rule as well as the path rule:
 
 ```jsonc
-{ "permissions": { "external_directory": [{ "action": "/srv/work", "resource": "*", "effect": "allow" }] } }
+{ "permissions": [{ "action": "external_directory", "resource": "/srv/work/*", "effect": "allow" }] }
 ```
 
 See [docs/scripting.md](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/scripting.md) for a worked

@@ -71,11 +71,11 @@ If the host asks for permission to touch a folder outside the project, allow it 
 well as the path rule:
 
 ```jsonc
-{ "permissions": {
-  "external_directory": [{ "action": "/srv/work", "resource": "*", "effect": "allow" }],
-  "read": [{ "action": "/srv/work/**", "resource": "*", "effect": "allow" }],
-  "edit": [{ "action": "/srv/work/**", "resource": "*", "effect": "allow" }]
-} }
+{ "permissions": [
+  { "action": "external_directory", "resource": "/srv/work/*", "effect": "allow" },
+  { "action": "read", "resource": "/srv/work/**", "effect": "allow" },
+  { "action": "edit", "resource": "/srv/work/**", "effect": "allow" }
+] }
 ```
 
 A refusal that names `permission.rejected: external_directory` is fixed by that rule, and by naming the folder in the
