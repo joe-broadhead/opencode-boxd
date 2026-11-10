@@ -3,15 +3,21 @@
 // transcript's own id instead of failing. This is the laptop-side fix, and the evidence for the host decision.
 import { describe, expect, test } from "bun:test"
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
-import { arch, homedir, platform } from "node:os"
+import { arch, platform } from "node:os"
 import { join } from "node:path"
 import { TESTED_HOSTS } from "../../src/constants.js"
 import { cliProver } from "../../src/prover.js"
 
+/**
+ * A stock binary: the one named by OPENCODE_BIN_<version>, or else the npm release installed under OPENCODE_STOCK_ROOT,
+ * in a folder per version. With neither set, the describe blocks that need a stock binary are skipped.
+ */
 const binary = (version: string): string | undefined => {
   const given = process.env[`OPENCODE_BIN_${version.replaceAll(".", "_")}`]
   if (given) return given
-  const installed = join(homedir(), "opencode-release", "qa", "stock", version, "node_modules", `@opencode/cli-${platform()}-${arch()}`, "bin", "opencode")
+  const root = process.env.OPENCODE_STOCK_ROOT
+  if (!root) return undefined
+  const installed = join(root, version, "node_modules", `@opencode/cli-${platform()}-${arch()}`, "bin", "opencode")
   return existsSync(installed) ? installed : undefined
 }
 
