@@ -78,13 +78,15 @@ function* walk(dir) {
   }
 }
 
-// The family's working folders never reach a public file. This reads every git-tracked file, so a note in a doc, a
-// skill or a fixture is caught as well as code. AGENTS.md and this script name the folder on purpose and are skipped.
+// The family's working folders and the owner's private names never reach a public file. This reads every git-tracked
+// file, so a note in a doc, a skill or a fixture is caught as well as code. AGENTS.md and this script name them on
+// purpose and are skipped. Case does not matter.
 {
   const { realpathSync, existsSync, readFileSync } = await import("node:fs")
   const { execFileSync } = await import("node:child_process")
   const { join, dirname } = await import("node:path")
   const { fileURLToPath } = await import("node:url")
+  const WORDS = /opencode-release\/|prosus|toqan/i
   const self = realpathSync(fileURLToPath(import.meta.url))
   if (process.argv[1] !== undefined && realpathSync(process.argv[1]) === self) {
     const repo = join(dirname(self), "..")
@@ -102,11 +104,11 @@ function* walk(dir) {
       const buffer = readFileSync(file)
       if (buffer.includes(0)) continue
       buffer.toString("utf8").split(/\r?\n/).forEach((text, index) => {
-        if (/opencode-release\//.test(text)) hits.push(`${path}:${index + 1}`)
+        if (WORDS.test(text)) hits.push(`${path}:${index + 1}`)
       })
     }
     if (hits.length) {
-      console.error(`working-folder: the family's internal working folders must not appear in a public file:\n  ${hits.join("\n  ")}`)
+      console.error(`forbidden-words: the family's working folders and the owner's private names must not appear in a public file:\n  ${hits.join("\n  ")}`)
       process.exitCode = 1
     }
   }
