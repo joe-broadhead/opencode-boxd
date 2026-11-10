@@ -23,7 +23,13 @@ opencode plugin add github:joe-broadhead/opencode-boxd#v0.0.0
 
 Run `opencode reload`, or restart OpenCode, then run `/boxd-status`.
 
-A Git install is removed and updated by its installed spec: `opencode plugin remove github:joe-broadhead/opencode-boxd#v0.0.0`. `opencode plugin update` and `opencode plugin check` take the same spec.
+Each release has its own tag, and a Git install does not update by itself. To move to a newer release, remove the old entry with `opencode plugin remove github:joe-broadhead/opencode-boxd#v0.0.0`, then add the new tag with `opencode plugin add github:joe-broadhead/opencode-boxd#v<version>`.
+
+Or add the plugin to `opencode.json` instead, with the same spec:
+
+```json
+{ "plugins": [{ "package": "github:joe-broadhead/opencode-boxd#v0.0.0" }] }
+```
 
 The install takes the GitHub release tag. Its commit carries the built `dist/`, so the install runs no build.
 A new release is a new tag: install it with its own `#v<version>` spec.
@@ -151,7 +157,7 @@ The snapshot is the one policy worth setting centrally: every member's machines 
 // /Library/Application Support/opencode/opencode.json on macOS
 {
   "plugins": [{
-    "package": "@joe-broadhead/opencode-boxd",
+    "package": "github:joe-broadhead/opencode-boxd#v0.0.0",
     "options": { "snapshot": "opencode-golden" }
   }]
 }
@@ -219,6 +225,7 @@ agents without the default rules, the OpenCode version and one next step.
 - **Model keys.** A model provider can refuse a service-account key. The
   [golden image page](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/golden-image.md) says what to use.
 - **Sign-in is boxd's.** The plugin runs the boxd CLI you are signed in to, and never runs `boxd auth login` for you.
+- Updates are not automatic for a Git install, and `opencode plugin update` and `opencode plugin check` do not work on one: to move to a newer release, remove the old entry and add the new tag.
 
 ## Uninstall
 

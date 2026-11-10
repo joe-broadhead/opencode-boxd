@@ -7,7 +7,7 @@ All options go in the plugin entry in `opencode.json`:
 ```jsonc
 {
   "plugins": [{
-    "package": "@joe-broadhead/opencode-boxd",
+    "package": "github:joe-broadhead/opencode-boxd#v0.0.0",
     "options": { "snapshot": "opencode-golden" }
   }]
 }
