@@ -4,6 +4,8 @@ export interface FakeSession {
   id: string
   parentID?: string
   busy: boolean
+  /** The run stopped with the server: its busy stamp never got an idle one, and nothing runs. */
+  interrupted?: boolean
   directory: string
   messages: Array<{ type: string; text: string }>
   /** The session's last run, as OpenCode records it on the session and its last idle message. */
@@ -20,6 +22,8 @@ export interface FakeGuest {
   /** The next created session's id. */
   next(id: string): void
   idle(sessionID: string): void
+  /** The guest server died mid-run: the session keeps a busy stamp later than its idle stamp, and nothing runs. */
+  interrupt(sessionID: string): void
   /** The session's last run failed with this error, as a provider refusal does. */
   fail(sessionID: string, error: { type: string; message: string }): void
   /** The session's last run completed. */
@@ -61,7 +65,9 @@ export function startFakeGuest(): FakeGuest {
           data: {
             id: session.id,
             ...(session.outcome ? { outcome: session.outcome } : {}),
-            time: { created: 1, busy: session.busy ? 2 : undefined, idle: session.busy ? undefined : 2 },
+            time: session.interrupted
+              ? { created: 1, busy: 2, idle: 1 }
+              : { created: 1, busy: session.busy ? 2 : undefined, idle: session.busy ? undefined : 2 },
           },
         })
       }
@@ -83,6 +89,7 @@ export function startFakeGuest(): FakeGuest {
         if (!session) return json({ error: "not found" }, 404)
         prompts.push({ sessionID: session.id, text: String(body.text ?? "") })
         session.busy = true
+        session.interrupted = false
         session.messages.push({ type: "user", text: String(body.text ?? "") })
         return json({ data: { admitted: session.id } })
       }
@@ -125,6 +132,13 @@ export function startFakeGuest(): FakeGuest {
     idle: (sessionID: string) => {
       const session = sessions.get(sessionID)
       if (session) session.busy = false
+    },
+    interrupt: (sessionID: string) => {
+      const session = sessions.get(sessionID)
+      if (session) {
+        session.busy = false
+        session.interrupted = true
+      }
     },
     fail: (sessionID: string, error: { type: string; message: string }) => {
       const session = sessions.get(sessionID)

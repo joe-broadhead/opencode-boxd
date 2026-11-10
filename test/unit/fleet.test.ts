@@ -231,3 +231,37 @@ describe("the live check's findings", () => {
     expect(String(harvested.next)).not.toContain("clean")
   })
 })
+
+describe("a run the guest's OpenCode died in", () => {
+  test("resume refuses with RUN_INTERRUPTED, job reports the run aborted, harvest keeps that outcome, and a new submit and sleep still work", async () => {
+    const w = await world()
+    await w.fleet.ensure({ workId: "review-api" })
+    await w.fleet.submit({ workId: "review-api", text: "Run a long task." })
+    // The server died mid-run: nothing runs, and the session never went idle, so the phase is not busy.
+    w.guest.phaseById.set("ses_root_review-api", "idle")
+    w.guest.runById.set("ses_root_review-api", { outcome: "aborted" })
+
+    expect(await w.fleet.job({ workId: "review-api" })).toMatchObject({ state: "idle", outcome: "aborted" })
+    const interrupted = await refusal(w.fleet.resume({ workId: "review-api" }), "RUN_INTERRUPTED")
+    expect(interrupted.message).toContain("Next step: Call boxd_harvest")
+
+    // The transcript's own outcome is from an earlier run; the interrupted run is what happened last.
+    const t = transfer("ses_root_review-api", undefined, "Run a long task.")
+    w.guest.exports.set("ses_root_review-api", { info: { ...t.info, outcome: "succeeded" }, messages: [...t.messages, { type: "idle", outcome: "succeeded" }] })
+    expect(await w.fleet.harvest({ workId: "review-api", localDirectory: await local() })).toMatchObject({ state: "proven", outcome: "aborted" })
+
+    await expect(w.fleet.submit({ workId: "review-api", text: "Start again." })).resolves.toMatchObject({ state: "admitted" })
+    w.guest.phaseById.set("ses_root_review-api", "idle")
+    w.guest.runById.set("ses_root_review-api", { outcome: "completed" })
+    expect(await w.fleet.job({ workId: "review-api" })).toMatchObject({ state: "idle", outcome: "completed" })
+    await expect(w.fleet.sleep({ workId: "review-api" })).resolves.toMatchObject({ state: "hibernated" })
+  })
+
+  test("resume on a live run is not an interruption: it answers busy", async () => {
+    const w = await world()
+    await w.fleet.ensure({ workId: "review-api" })
+    await w.fleet.submit({ workId: "review-api", text: "Still running." })
+    w.guest.phaseById.set("ses_root_review-api", "busy")
+    await expect(w.fleet.resume({ workId: "review-api" })).resolves.toMatchObject({ state: "busy" })
+  })
+})

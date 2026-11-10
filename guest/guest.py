@@ -192,11 +192,16 @@ def action_phase(request):
         emit({"phase": "missing"})
         return
     active = unwrap(http("GET", base + "/api/session/active")) or {}
+    if sid in active:
+        emit({"phase": "busy"})
+        return
+    # A busy stamp with no run in the server is a run the server died in: it never reached an idle turn, so the session
+    # is not busy, and its last run was interrupted.
     time = info.get("time") or {}
     busy = time.get("busy")
     idle = time.get("idle")
-    if sid in active or (isinstance(busy, (int, float)) and (not isinstance(idle, (int, float)) or busy > idle)):
-        emit({"phase": "busy"})
+    if isinstance(busy, (int, float)) and (not isinstance(idle, (int, float)) or busy > idle):
+        emit({"phase": "idle", "outcome": "interrupted", "error": None})
         return
     # The last idle turn carries the outcome and, when a run failed, the error an agent must hear about.
     outcome = info.get("outcome")

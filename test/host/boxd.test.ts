@@ -439,3 +439,32 @@ test("the read and change lists match the table", () => {
   expect(READ_TOOLS).toEqual(["boxd_status", "boxd_job"])
   expect(CHANGING_TOOLS).toHaveLength(7)
 })
+
+describe("a run the guest's OpenCode died in", () => {
+  test("the real guest helper reports the interrupted run, resume refuses, and harvest keeps it as aborted", async () => {
+    const host = await startHost()
+    try {
+      const build = await session(host)
+      const work = host.location.directory
+      await attempt(host, build, "build", "boxd_ensure", "always", { workId: "review-api", directory: work })
+      await attempt(host, build, "build", "boxd_submit", "always", { workId: "review-api", text: "Run a long task." })
+      host.guest.interrupt("ses_guest_root")
+
+      const job = await attempt(host, build, "build", "boxd_job", "reject", { workId: "review-api" })
+      expect(job.output).toMatchObject({ state: "idle", outcome: "aborted" })
+
+      const resumed = await attempt(host, build, "build", "boxd_resume", "always", { workId: "review-api" })
+      expect(resumed.output).toMatchObject({ error: "RUN_INTERRUPTED" })
+      expect(String((resumed.output as { next?: string }).next)).toContain("boxd_harvest")
+
+      const harvested = await attempt(host, build, "build", "boxd_harvest", "always", { workId: "review-api", localDirectory: work })
+      expect(harvested.output).toMatchObject({ state: "proven", outcome: "aborted" })
+
+      expect((await attempt(host, build, "build", "boxd_submit", "always", { workId: "review-api", text: "Start again." })).output).toMatchObject({ state: "admitted" })
+      host.guest.complete("ses_guest_root")
+      expect((await attempt(host, build, "build", "boxd_sleep", "always", { workId: "review-api" })).output).toMatchObject({ state: "hibernated" })
+    } finally {
+      await host.close()
+    }
+  })
+})

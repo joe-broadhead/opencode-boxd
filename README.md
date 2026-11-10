@@ -166,13 +166,14 @@ Each member still needs the boxd CLI signed in on their own laptop.
 | `MACHINE_STARTING` | Call `boxd_status` in a later turn. Do not wait inside a call. |
 | `MACHINE_SHARED` | Recreate the machine without `--shared`: sharing deletes the guest's OpenCode sign-in. |
 | `MACHINE_ISOLATED` | Recreate the machine without `--isolated`, which drops git and the in-VM boxd CLI. |
-| `SESSION_BUSY` | Call `boxd_job` until it reports idle, then harvest. If it stays busy after the guest's OpenCode stopped during a run, send a new prompt with `boxd_submit`: that run clears it. |
+| `SESSION_BUSY` | Call `boxd_job` until it reports idle, then harvest. |
 | `GUEST_VERSION` | Boot the machine from an image whose OpenCode is the same version as this laptop's. |
 | `PATH_REFUSED` | A laptop path is outside the project and the allowed roots, or is a symlink. Name its root in `allowedRoots`, and allow it with the `external_directory` rule. |
 | `FILE_TOO_LARGE` | A file is over 8 MiB, or the call is over 32 MiB. |
 | `FILE_CONFLICT` | A harvested file changed on the laptop since the last harvest, so it was not overwritten. |
 | `GUEST_WORKSPACE` | The machine could not prepare `/home/boxd/work/<work id>`. Boot an image whose `/home/boxd` the `boxd` user can write. |
 | `GUEST_RUN_FAILED` | The guest session's last run failed; the transcript is still imported. Read it, then `boxd_submit` again. |
+| `RUN_INTERRUPTED` | The guest's OpenCode stopped during a run, so the run never finished. `boxd_resume` says so once, and `boxd_job` reports the run as aborted. Harvest what exists, then `boxd_submit` again. |
 | `GUEST_AUTH_FAILED` | The failed run was a credential failure. Fix the guest's sign-in as [the golden image](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/golden-image.md) describes, then `boxd_submit` again. |
 | `GUEST_FAILED` | Call `boxd_status`, and recreate the machine with `boxd_resume` if the guest keeps failing. |
 | `BOXD_FAILED` | Read the boxd CLI's own message, and run `boxd_status` before trying again. |

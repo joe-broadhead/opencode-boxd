@@ -351,7 +351,8 @@ export function createFleet(deps: Deps) {
       // phase fills a gap when an export does not carry the session's own outcome.
       const root = transfers.find((transfer) => transfer.info.id === work.rootSessionId)
       const exported = readRun(root?.info, root?.messages)
-      const run: GuestRun = exported.outcome ? exported : live
+      // An interrupted run is what happened last, even when the transcript carries an earlier run's outcome.
+      const run: GuestRun = live.outcome === "aborted" ? live : exported.outcome ? exported : live
       const imported = new Map<string, string>()
       const sessions: Array<{ remoteId: string; importedId: string; parentRemoteId?: string }> = []
       const sha256: Record<string, string> = {}
@@ -464,7 +465,9 @@ export function createFleet(deps: Deps) {
         return { workId: work.workId, machine: work.machine, state: "starting", resumed: "import", next: "Call boxd_resume again once the machine's OpenCode server is up." }
       }
       if (!recreated && work.rootSessionId) {
-        const { phase } = await deps.guest.phase(work.machine, work.rootSessionId)
+        const { phase, run } = await deps.guest.phase(work.machine, work.rootSessionId)
+        // The guest's OpenCode died mid-run: say so, and let the next calls keep what exists and start again.
+        if (phase === "idle" && run.outcome === "aborted") throw boxdError("RUN_INTERRUPTED", "The run was interrupted: the guest's OpenCode stopped during it.")
         if (phase !== "missing") return { workId: work.workId, machine: work.machine, sessionId: work.rootSessionId, state: phase, resumed: "wake" }
       }
       if (!work.proof) throw boxdError("NOT_PROVEN", "The machine is gone and there is no proven export to restart from.")

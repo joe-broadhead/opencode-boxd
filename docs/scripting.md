@@ -122,9 +122,10 @@ A refusal is the RPC error `failed`, with `data: { code, next }`:
 | `NOT_OURS` | no open work has that id, or it is bound to another machine | call `boxd_ensure` for that work id |
 | `MACHINE_GONE` | the machine is missing or destroyed | call `boxd_resume` to rebuild it from the golden snapshot |
 | `SNAPSHOT_MISSING` | the golden snapshot is not in this boxd account | build the image as `docs/golden-image.md` describes, and set `snapshot` |
-| `SESSION_BUSY` | the guest session is still running | call `boxd_job` until it reports idle, then harvest; after the guest's OpenCode stopped during a run, send a new prompt with `boxd_submit`, which clears it |
+| `SESSION_BUSY` | the guest session is still running | call `boxd_job` until it reports idle, then harvest |
 | `NOT_PROVEN` | no fresh laptop import since the last prompt | call `boxd_harvest` first |
 | `GUEST_RUN_FAILED`, `GUEST_AUTH_FAILED` | the guest session's last run failed | read the transcript, then `boxd_submit` again; an auth failure is fixed in the image |
+| `RUN_INTERRUPTED` | `boxd_resume` only: the guest's OpenCode stopped during the session's run | harvest what exists with `boxd_harvest`, then `boxd_submit` again |
 
 Every other code the plugin raises is in `docs/configuration.md`, with its one next step.
 
