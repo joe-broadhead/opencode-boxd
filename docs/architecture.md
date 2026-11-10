@@ -173,6 +173,97 @@ The golden image is built from a stock machine. It carries OpenCode 2.2.5 and ho
   prompt made the guest busy, the harvest answered `SESSION_BUSY`, and the submit's `lastSubmitAt` left the previous
   proof `stale` in `boxd_job`. The ledger kept both calls' fields.
 
+### boxd 0.3.3, measured on 2026-11-10
+
+Measured with `boxd` 0.3.3 on one account, a golden image on OpenCode 2.2.6, and throwaway machines named `oc-lc-*`, all
+removed afterwards. Each item gives the command and what it answered.
+
+**Argv and CLI shapes**
+- `machine new <name> --from-snapshot opencode-golden --label role=session --label work=<id> --json` answered
+  `{"boot":"10ms","name":…,"source":"snapshot/opencode-golden","url":…}`. The create took 1 s. `machine get --json`
+  then gave `auto_hibernate: "14400s"`, `auto_suspend: "off"`, `idle_ignore_outbound: "off"`, `sharing: "private"`,
+  `isolated: "no"`, and the labels.
+- `machine config set <name> auto-hibernate.timeout 1800` answered `auto-hibernate for <name>: 1800s`, and
+  `config get <name> auto-hibernate.timeout --json` answered `{"key":"auto-hibernate.timeout","value":"1800s"}`. The
+  same for `idle.ignore-outbound on` and `off`.
+- `machine hibernate` answered `{"status":"hibernating"}`, `wake` answered `waking`, `stop` `stopped`, `start` `starting`,
+  `pause` `{"status":"standby","suspend_us":…}` and `resume` `{"status":"running",…}`. `machine remove <name> -y --json`
+  answered `{"name":…,"status":"destroyed"}`.
+- `snapshots save <machine> <name> --json` answered `{"size_bytes":…,"status":"ready","version":1}` in 2 s for a
+  9 GiB disk.
+- `machine cp - <name>:<path>` read stdin and answered `copied - → <name>:<path> (12739 bytes)`. `machine exec <name> --
+  python3 <path>` passed stdin through and returned the helper's JSON. Downloading the helper back to stdout matched the
+  repository copy byte for byte.
+
+**Billing and idleness**
+- `boxd manage usage --json` reports `running_seconds`, `standby_seconds`, `hibernated_seconds` and `stopped_seconds` per
+  machine, with `ram_gib_hours`, `vcpu_hours`, `disk_gib_hours` and a cost in micro-EUR. The rates are 12000 for RAM,
+  39000 for vCPU and 80 for disk, per hour. Its values can lag by several minutes (`complete: false`).
+- Hibernated time bills disk only. Over 300 s of hibernation: `hibernated_seconds` +300, `running_seconds`
+  unchanged, `ram_gib_hours` and `vcpu_hours` unchanged, `disk_gib_hours` +0.62, cost +50 micro-EUR.
+- `wake` did not reset a configured `auto-hibernate.timeout`: 1800 s before the hibernate and after the wake.
+- With a 90 s timeout and `idle.ignore-outbound off`, one inbound `machine exec` at +60 s reset the timer. The machine
+  was still running at +128 s and hibernated by +220 s.
+- With a 90 s timeout and `idle.ignore-outbound on`, outbound requests from the guest did not keep the machine awake: it
+  was hibernated at +128 s while the requests ran until about +120 s.
+- Hibernate keeps the guest's memory: a background process survived hibernate and wake. `stop` and `start` clear `/tmp`
+  and the running processes, and keep `/home`.
+- Stop and hibernate cost are not separated by this run: the usage report lagged across the stop window.
+
+**Provisioning**
+- A create from the golden snapshot took 1 s.
+- A client killed 0.3 s and 0.8 s into `machine new` left no machine. Killed at 1.2 s, the machine landed and was
+  `running`. `boxd_status` listed it as an orphan, and `boxd_ensure` with the matching work id adopted it. Adoption
+  leaves its old `work=` label in place.
+
+**Status strings from `machine get --json`**
+- `running`; `hibernated` (for a few seconds after `hibernate`, `get` read `standby`); `standby` after `pause`; `stopped`
+  after `stop`; `starting` after `start`.
+- A removed or never-created machine: `error: no machine "<name>" in fra` on stderr, exit 1. `remove` answers
+  `destroyed` before that.
+
+**Golden image on OpenCode 2.2.6**
+- `opencode --version` is `2.2.6`. `git`, `python3` and `boxd` are present. `OPENCODE_API_KEY` is set in the environment
+  (its value was not printed), and `/etc/profile.d/boxd-env.sh` exists.
+- `OPENCODE_PASSWORD=probe opencode serve --hostname 127.0.0.1 --port 4096` answered `/api/info` with 401 without
+  credentials and 200 with `opencode:probe`. It listened on `127.0.0.1` only, and a connection from the laptop to the
+  machine's public address on port 4096 failed.
+
+**Work path**
+- `boxd_ensure`, `boxd_submit`, `boxd_job` (`idle`, `completed`), `boxd_harvest` (`proven`, `completed`), `boxd_sleep`
+  (`hibernated`) and `boxd_resume` (`wake`) ran in that order on one work.
+- After a `machine remove` from the CLI, `boxd_resume` rebuilt the work from the golden snapshot and imported the
+  transcript (`resumed: import`). This happened twice, and the guest helper was uploaded each time, with the same
+  sha256 as the repository's `guest/guest.py`.
+- `boxd_image` from a machine with a fresh proof saved the snapshot (`state: saved`).
+- A machine on OpenCode 2.2.5, made from a snapshot taken with the CLI: `boxd_ensure` answered `error: GUEST_VERSION`, and
+  `boxd_sleep` hibernated it.
+- With `opencode serve` killed during a run, `boxd_job` answered `MACHINE_STARTING` and `boxd_harvest` answered
+  `SESSION_BUSY`. `boxd_resume` restarted the server and answered `state: busy`, with no coded error. `boxd_sleep`
+  hibernated the machine.
+- A session whose run was killed stays busy. The guest's `time.busy` stays later than `time.idle` with nothing active,
+  so `boxd_job` never reports idle. A new prompt through `boxd_submit` ran to `idle` and `completed`, and that cleared it.
+- Drop refusals and the one drop that succeeded: a non-git guest folder gives `GIT_UNKNOWN`. An untracked file gives
+  `UNTRACKED`, and so does an ignored file, which harvest lists under `ignored`. A staged change gives harvest
+  `dirty: true, patchStored: true`, and `boxd_drop` then answers `state: dropped` and the machine is gone.
+- `boxd_job` on a hibernated work answered `asleep` with `machineStatus: hibernated`. The machine stayed hibernated, and
+  its usage did not change.
+- After a wake from `boxd_ensure` or `boxd_resume`, `auto-hibernate.timeout` was 1800 s and `idle.ignore-outbound` was
+  `off`.
+- `boxd_sleep` on a work that never had a prompt warned that its prompt was not harvested. It now warns only when a
+  prompt was submitted.
+- Harvest's next step said "the tree is clean" for a tree with a stored patch. It now says the change is kept as a patch.
+- `SESSION_BUSY`'s next step said to wait for idle. After a killed run that never comes, so it now also names a new
+  prompt through `boxd_submit`.
+- The first `boxd_submit` after an image answered `GUEST_FAILED`, and `boxd_job` 30 s later answered `MACHINE_STARTING`,
+  while the server process was still listed. It did not recur, and its cause is not known.
+
+**Concurrency**
+- A `boxd_submit` and a `boxd_harvest` on one work, in flight together, both returned. The ledger kept the root session,
+  the submit's `lastSubmitAt` and the proof. The harvest was recorded after the submit's stamp, so the proof was fresh.
+  A submit made after a harvest marks the proof `stale` at once: status showed `stale`, and a harvest made it `fresh`.
+- Two `boxd machine config set` calls on one machine at once both exited 0, neither was refused, and one value stayed.
+
 ## The tools RPC
 
 `boxd.machines.tools` is the family's v2 module, copied verbatim outside its plugin block: a script calls each tool with
