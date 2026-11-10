@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Jelly shows and sets the `access` option, so the same restriction is one setting in every host (default `all`).
 - Nine tools: `boxd_status`, `boxd_job`, `boxd_ensure`, `boxd_submit`, `boxd_harvest`, `boxd_sleep`, `boxd_resume`,
   `boxd_image` and `boxd_drop`. A tool returns when its request is admitted; nothing waits for a model.
 - A ledger at `~/.local/share/opencode-boxd/works/`: the export, the patch and the git record are the laptop's copy of
