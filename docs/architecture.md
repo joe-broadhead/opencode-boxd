@@ -238,11 +238,13 @@ removed afterwards. Each item gives the command and what it answered.
 - `boxd_image` from a machine with a fresh proof saved the snapshot (`state: saved`).
 - A machine on OpenCode 2.2.5, made from a snapshot taken with the CLI: `boxd_ensure` answered `error: GUEST_VERSION`, and
   `boxd_sleep` hibernated it.
-- With `opencode serve` killed during a run, `boxd_job` answered `MACHINE_STARTING` and `boxd_harvest` answered
-  `SESSION_BUSY`. `boxd_resume` restarted the server and answered `state: busy`, with no coded error. `boxd_sleep`
-  hibernated the machine.
-- A session whose run was killed stays busy. The guest's `time.busy` stays later than `time.idle` with nothing active,
-  so `boxd_job` never reports idle. A new prompt through `boxd_submit` ran to `idle` and `completed`, and that cleared it.
+- With `opencode serve` killed during a run, `boxd_job` answered `MACHINE_STARTING` while the server was down. Once it
+  was back, `boxd_harvest` proved the partial transcript with `outcome: aborted`, and `boxd_resume` answered
+  `RUN_INTERRUPTED` with its next step. `boxd_job` then answered `state: idle` with `outcome: aborted`, and `boxd_sleep`
+  hibernated the machine. A new `boxd_submit` ran to `completed`, with no reset.
+- The guest's active list holds a running session (`{"<id>":{"type":"running"}}`), and a `boxd_job` read taken right
+  after a submit answered `busy`. A session whose server died keeps `time.busy` later than `time.idle` with nothing
+  active. The helper reads that as an interrupted run, and the plugin maps it to `aborted`.
 - Drop refusals and the one drop that succeeded: a non-git guest folder gives `GIT_UNKNOWN`. An untracked file gives
   `UNTRACKED`, and so does an ignored file, which harvest lists under `ignored`. A staged change gives harvest
   `dirty: true, patchStored: true`, and `boxd_drop` then answers `state: dropped` and the machine is gone.
@@ -253,10 +255,11 @@ removed afterwards. Each item gives the command and what it answered.
 - `boxd_sleep` on a work that never had a prompt warned that its prompt was not harvested. It now warns only when a
   prompt was submitted.
 - Harvest's next step said "the tree is clean" for a tree with a stored patch. It now says the change is kept as a patch.
-- `SESSION_BUSY`'s next step said to wait for idle. After a killed run that never comes, so it now also names a new
-  prompt through `boxd_submit`.
+- A killed run used to leave its session busy, so `SESSION_BUSY` never ended. It is now `aborted`, and `boxd_resume`
+  raises `RUN_INTERRUPTED` for it.
 - The first `boxd_submit` after an image answered `GUEST_FAILED`, and `boxd_job` 30 s later answered `MACHINE_STARTING`,
-  while the server process was still listed. It did not recur, and its cause is not known.
+  while the server process was still listed. It did not recur, and its cause is not known. The message carries the
+  helper's error word only, not its detail (`src/cli-guest.ts`), so the cause could not be read from it.
 
 **Concurrency**
 - A `boxd_submit` and a `boxd_harvest` on one work, in flight together, both returned. The ledger kept the root session,
