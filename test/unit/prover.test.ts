@@ -7,6 +7,7 @@ import { arch, platform } from "node:os"
 import { join } from "node:path"
 import { TESTED_HOSTS } from "../../src/constants.js"
 import { cliProver } from "../../src/prover.js"
+import { stockGate } from "../support/stock-gate.js"
 
 /**
  * A stock binary: the one named by OPENCODE_BIN_<version>, or else the npm release installed under OPENCODE_STOCK_ROOT,
@@ -37,7 +38,8 @@ const transcript = (id: string, directory: string) => ({
 
 for (const version of TESTED_HOSTS) {
   const run = binary(version)
-  describe.skipIf(run === undefined)(`the prover on stock OpenCode ${version}`, () => {
+  const gate = stockGate(version, run ?? `OPENCODE_BIN_${version.replaceAll(".", "_")}`, run !== undefined)
+  describe.skipIf(gate === "skip")(`the prover on stock OpenCode ${version}`, () => {
     test("imports a transcript, keeps its id, and a second import proves the same id", async () => {
       const root = realpathSync(mkdtempSync(join(realpathSync("/tmp"), "boxd-prover-")))
       const home = join(root, "home")
