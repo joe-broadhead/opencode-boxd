@@ -189,8 +189,8 @@ removed afterwards. Each item gives the command and what it answered.
 - `machine hibernate` answered `{"status":"hibernating"}`, `wake` answered `waking`, `stop` `stopped`, `start` `starting`,
   `pause` `{"status":"standby","suspend_us":…}` and `resume` `{"status":"running",…}`. `machine remove <name> -y --json`
   answered `{"name":…,"status":"destroyed"}`.
-- `snapshots save <machine> <name> --json` answered `{"size_bytes":…,"status":"ready","version":1}` in 2 s for a
-  9 GiB disk.
+- `snapshots save <machine> <name> --json` answered `{"size_bytes":…,"status":"ready","version":1}` in 2 s for an
+  8.4 GiB snapshot.
 - `machine cp - <name>:<path>` read stdin and answered `copied - → <name>:<path> (12739 bytes)`. `machine exec <name> --
   python3 <path>` passed stdin through and returned the helper's JSON. Downloading the helper back to stdout matched the
   repository copy byte for byte.
