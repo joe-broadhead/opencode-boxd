@@ -1,4 +1,4 @@
-// The rulings from the deep review, each proved against the fake CLI and the fake guest: a read never wakes, every wake
+// The guarantees behind the billing and data rules, each proved against the fake CLI and the fake guest: a read never wakes, every wake
 // arms the awake bound, a rebuild works twice, hibernating is always an exit from billing, a timed-out create is adopted,
 // and drop destroys nothing the laptop cannot account for.
 import { describe, expect, test } from "bun:test"
