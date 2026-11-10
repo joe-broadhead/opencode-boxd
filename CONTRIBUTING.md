@@ -32,14 +32,14 @@ Only for development. Install the package into an OpenCode project from the fold
 { "plugins": ["./opencode-boxd"] }
 ```
 
-A published install is `opencode plugin add @joe-broadhead/opencode-boxd`.
+A published install is `opencode plugin add github:joe-broadhead/opencode-boxd#v0.0.0`.
 
 ## Rules
 
 Read [AGENTS.md](AGENTS.md). The short version: every machine change asserts its own permission, the guest must match
 the laptop's OpenCode, the laptop ledger is the source of truth, and no check runs a real boxd machine.
 
-## Release
+## Releasing
 
 Every plugin releases as `v0.0.0`, and it installs from that GitHub tag. The release is one commit on top of a `master`
 head that CI passed, and the tag points at it.
@@ -55,3 +55,5 @@ head that CI passed, and the tag points at it.
    `SHA256SUMS`.
 
 A tag that already exists stops step 3. Delete the old tag and its Release first, then start again.
+
+A Git install is removed and updated by its installed spec: `opencode plugin remove github:joe-broadhead/opencode-boxd#v0.0.0`. `opencode plugin update` and `opencode plugin check` take the same spec.

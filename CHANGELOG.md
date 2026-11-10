@@ -4,6 +4,7 @@ All notable changes to this project are documented here. The format is [Keep a C
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.0.0] - 2026-11-10
+<!-- kit-release: the GitHub release v0.0.0 -->
 
 ### Added
 

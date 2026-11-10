@@ -143,7 +143,7 @@ describe("the README", () => {
       expect(text).not.toMatch(/\b\d+ tests?\b/i)
     }
     // The install spec names the release tag, the one place the README names the plugin's version.
-    expect(README.replace("opencode-boxd#v0.0.0", "")).not.toMatch(/0\.\d+\.\d+/)
+    expect(README.replace(/opencode-boxd#v0\.0\.0/g, "")).not.toMatch(/0\.\d+\.\d+/)
   })
 })
 

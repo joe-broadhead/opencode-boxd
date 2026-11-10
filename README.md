@@ -23,6 +23,8 @@ opencode plugin add github:joe-broadhead/opencode-boxd#v0.0.0
 
 Run `opencode reload`, or restart OpenCode, then run `/boxd-status`.
 
+A Git install is removed and updated by its installed spec: `opencode plugin remove github:joe-broadhead/opencode-boxd#v0.0.0`. `opencode plugin update` and `opencode plugin check` take the same spec.
+
 The install takes the GitHub release tag. Its commit carries the built `dist/`, so the install runs no build.
 A new release is a new tag: install it with its own `#v<version>` spec.
 
@@ -221,7 +223,7 @@ agents without the default rules, the OpenCode version and one next step.
 ## Uninstall
 
 ```sh
-opencode plugin remove @joe-broadhead/opencode-boxd
+opencode plugin remove github:joe-broadhead/opencode-boxd#v0.0.0
 ```
 
 The ledger is yours to keep or delete. Machines are boxd's: `boxd machine remove oc-<work id> -y` destroys one.
