@@ -163,7 +163,7 @@ errors pass through unchanged. No error, log or status line contains a token, a 
 | `MACHINE_STARTING` | The machine or its OpenCode is not up yet. Nothing waits inside a call. |
 | `MACHINE_SHARED` | The machine is shared, which deletes the guest's OpenCode sign-in. |
 | `MACHINE_ISOLATED` | The machine is isolated, so it has no git and no in-VM boxd CLI. |
-| `SESSION_BUSY` | The guest session is still running; harvest only when it is idle. |
+| `SESSION_BUSY` | The guest session is still running; harvest only when it is idle. If it stays busy after the guest's OpenCode stopped during a run, send a new prompt with `boxd_submit`, which clears it. |
 | `GUEST_VERSION` | The machine's OpenCode differs from this laptop's. |
 | `GUEST_RUN_FAILED` | The guest session's last run failed. The transcript is still imported and proven; the error is the run's own. |
 | `GUEST_AUTH_FAILED` | The guest session's last run failed on a model credential. The transcript is still imported; fix the guest's sign-in. |

@@ -56,7 +56,7 @@ task, even when the transcript arrived; say what the error says, and fix a crede
 
 - `GUEST_VERSION`: the machine's OpenCode is not this laptop's version. Stop; boot an image that matches.
 - `MACHINE_SHARED` or `MACHINE_ISOLATED`: the machine is not usable for a session. Recreate it without that flag.
-- `SESSION_BUSY`: harvest later. `boxd_job` says when.
+- `SESSION_BUSY`: harvest later. `boxd_job` says when. If it stays busy after the guest's OpenCode stopped during a run, send a new prompt with `boxd_submit`.
 - `DIRTY`: the guest tree has uncommitted work with no stored diff. Harvest before dropping.
 - `NOT_OURS`: no open work, or the machine is not the ledger's. Call `boxd_ensure` for that work id.
 - `BOXD_MISSING`: the boxd CLI is not on the PATH. Install it and restart OpenCode.

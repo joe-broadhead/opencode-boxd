@@ -166,7 +166,7 @@ Each member still needs the boxd CLI signed in on their own laptop.
 | `MACHINE_STARTING` | Call `boxd_status` in a later turn. Do not wait inside a call. |
 | `MACHINE_SHARED` | Recreate the machine without `--shared`: sharing deletes the guest's OpenCode sign-in. |
 | `MACHINE_ISOLATED` | Recreate the machine without `--isolated`, which drops git and the in-VM boxd CLI. |
-| `SESSION_BUSY` | Call `boxd_job` until it reports idle, then harvest. |
+| `SESSION_BUSY` | Call `boxd_job` until it reports idle, then harvest. If it stays busy after the guest's OpenCode stopped during a run, send a new prompt with `boxd_submit`: that run clears it. |
 | `GUEST_VERSION` | Boot the machine from an image whose OpenCode is the same version as this laptop's. |
 | `PATH_REFUSED` | A laptop path is outside the project and the allowed roots, or is a symlink. Name its root in `allowedRoots`, and allow it with the `external_directory` rule. |
 | `FILE_TOO_LARGE` | A file is over 8 MiB, or the call is over 32 MiB. |

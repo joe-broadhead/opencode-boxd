@@ -16,7 +16,7 @@ export const CODES = {
   MACHINE_STARTING: "Call boxd_status in a later turn. Do not wait inside a call.",
   MACHINE_SHARED: "Recreate the machine without --shared: sharing deletes the guest's OpenCode sign-in.",
   MACHINE_ISOLATED: "Recreate the machine without --isolated, which drops git and the in-VM boxd CLI.",
-  SESSION_BUSY: "Call boxd_job until it reports idle, then harvest.",
+  SESSION_BUSY: "Call boxd_job until it reports idle, then harvest. If it stays busy after the guest's OpenCode stopped during a run, send a new prompt with boxd_submit: that run clears it.",
   GUEST_VERSION: "Boot the machine from an image whose OpenCode is the same version as this laptop's.",
   GUEST_RUN_FAILED: "Read the transcript, then boxd_submit again.",
   GUEST_AUTH_FAILED: "Fix the guest's model credentials (docs/golden-image.md), then boxd_submit again.",

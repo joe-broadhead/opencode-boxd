@@ -691,7 +691,7 @@ describe("the shared copy's own block", () => {
     expect(shapeInput("any", { q: 1 }, { sessionID: "s", agent: "a", action: "x" })).toEqual({ q: 1 })
     expect(shapeResult("any", { text: "t" }, { sessionID: "s", agent: "a", action: "x" })).toEqual({ text: "t" })
     const failure = pluginError(new BoxdError("SESSION_BUSY", "The session is still running."))
-    expect(failure).toEqual({ code: "SESSION_BUSY", what: "The session is still running", next: "Call boxd_job until it reports idle, then harvest." })
+    expect(failure).toEqual({ code: "SESSION_BUSY", what: "The session is still running", next: "Call boxd_job until it reports idle, then harvest. If it stays busy after the guest's OpenCode stopped during a run, send a new prompt with boxd_submit: that run clears it." })
     expect(pluginError(new Error("something else"))).toBeUndefined()
   })
 })
