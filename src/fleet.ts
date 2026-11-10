@@ -404,7 +404,8 @@ export function createFleet(deps: Deps) {
         await deps.boxd.hibernate(work.machine)
         await armAwake(work.machine, "sleep")
       }
-      const unharvested = proofState(work) !== "fresh"
+      // A work that never had a prompt has no unharvested prompt to warn about.
+      const unharvested = work.lastSubmitAt !== undefined && proofState(work) !== "fresh"
       if (unharvested) {
         await deps.ledger.mutate(work.workId, (current) => ({ ...(current ?? work), warnings: addWarning(current?.warnings, { code: "UNHARVESTED_SLEEP", at: deps.now() }) }))
       }
@@ -624,6 +625,11 @@ function dropAdvice(git: Work["git"], proof: "fresh" | "stale" | "missing"): str
   if (!git || !git.known) return "The guest directory is not a git repository, so boxd_drop will refuse. Hibernate instead, or make it one."
   if (git.untracked.length) return `Commit or delete ${list(git.untracked)} on the machine, then harvest again. boxd_drop will refuse until you do.`
   if (git.ignored.length) return `Remove ${list(git.ignored)} on the machine, then harvest again. boxd_drop will refuse until you do.`
+  if (git.dirty) {
+    return git.patchStored
+      ? "The uncommitted change is stored as a patch on this laptop. Call boxd_sleep to hibernate, or boxd_drop, which keeps the patch and then destroys the machine."
+      : "The uncommitted work has no patch on this laptop, so boxd_drop will refuse. Commit it on the machine, harvest again, or hibernate instead."
+  }
   return "Call boxd_sleep to hibernate, or boxd_drop: the import is proven and the tree is clean."
 }
 

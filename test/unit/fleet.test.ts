@@ -208,3 +208,26 @@ describe("session trees", () => {
     await expect(async () => parseExport({ info: { id: "ses_1" } })).toThrow(/^EXPORT_INVALID: /)
   })
 })
+
+// Found by the live check on boxd 0.3.3 (docs/architecture.md, "Platform facts").
+describe("the live check's findings", () => {
+  test("sleep warns about an unharvested prompt only when the work has had one", async () => {
+    const { fleet, ledger } = await world()
+    await fleet.ensure({ workId: "review-api" })
+    const slept = await fleet.sleep({ workId: "review-api" })
+    expect(slept).toMatchObject({ state: "hibernated" })
+    expect(slept).not.toHaveProperty("warning")
+    expect((await ledger.load("review-api"))?.warnings ?? []).toEqual([])
+  })
+
+  test("a harvest of a dirty tree says the change is kept as a patch, not that the tree is clean", async () => {
+    const w = await world()
+    await w.fleet.ensure({ workId: "review-api" })
+    await w.fleet.submit({ workId: "review-api", text: "Leave the tree dirty." })
+    w.guest.phaseById.set("ses_root_review-api", "idle")
+    w.guest.gitState = { known: true, remote: null, branch: "master", sha: "abc", dirty: true, patch: "diff --git a/x b/x\n", untracked: [], ignored: [], untrackedFiles: {} }
+    const harvested = await w.fleet.harvest({ workId: "review-api", localDirectory: await local() })
+    expect(String(harvested.next)).toContain("stored as a patch")
+    expect(String(harvested.next)).not.toContain("clean")
+  })
+})
