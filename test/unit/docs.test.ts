@@ -78,8 +78,8 @@ describe("the README", () => {
     expect(README).toContain("macOS or Linux")
   })
 
-  test("installs from the registry, not from a checkout", () => {
-    expect(README).toContain("opencode plugin add @joe-broadhead/opencode-boxd")
+  test("installs from the GitHub release tag, not from a checkout or the registry", () => {
+    expect(README).toContain("opencode plugin add github:joe-broadhead/opencode-boxd#v0.0.0")
     expect(README).not.toMatch(/plugins.*\.\/opencode-boxd/)
     expect(README).not.toMatch(/npm run build/)
   })
@@ -142,7 +142,8 @@ describe("the README", () => {
       expect(text).not.toMatch(/not published yet|private until|provisional|not yet checked|TODO|FIXME/i)
       expect(text).not.toMatch(/\b\d+ tests?\b/i)
     }
-    expect(README).not.toMatch(/0\.\d+\.\d+/)
+    // The install spec names the release tag, the one place the README names the plugin's version.
+    expect(README.replace("opencode-boxd#v0.0.0", "")).not.toMatch(/0\.\d+\.\d+/)
   })
 })
 

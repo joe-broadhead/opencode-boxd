@@ -18,8 +18,13 @@ Unofficial; not affiliated with boxd.
 ## Install
 
 ```sh
-opencode plugin add @joe-broadhead/opencode-boxd
+opencode plugin add github:joe-broadhead/opencode-boxd#v0.0.0
 ```
+
+Run `opencode reload`, or restart OpenCode, then run `/boxd-status`.
+
+The install takes the GitHub release tag. Its commit carries the built `dist/`, so the install runs no build.
+A new release is a new tag: install it with its own `#v<version>` spec.
 
 A snapshot is an image, not a session. The machine is a cache with more CPU; your laptop keeps the transcript.
 
