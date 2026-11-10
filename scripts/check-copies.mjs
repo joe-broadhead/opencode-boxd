@@ -5,7 +5,7 @@ import { createHash } from "node:crypto"
 import { fileURLToPath } from "node:url"
 
 /** The v2 shared-part hash, as hey-jelly computes it. */
-const PIN = "57377eb3844ff89a4a55fbf6d83f8ab172d4e403b368c116ea4751850fc840fd"
+const PIN = "15d82caa53aaae7ad9efb88dddb97056d3895c4dbf49b8efbb85b743871b2a6d"
 const START = "// >>> PLUGIN-SPECIFIC >>>"
 const END = "// <<< PLUGIN-SPECIFIC <<<"
 
