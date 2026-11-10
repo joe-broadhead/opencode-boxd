@@ -49,7 +49,13 @@ describe("the jelly declaration", () => {
 
   test("uses only the keys Jelly reads: its contracts strip any other", () => {
     expect(Object.keys(jelly).sort()).toEqual(["contributes", "icon", "rpc", "signIns", "skills", "summary", "title", "tools", "views"])
-    expect(jelly.contributes).toEqual({ homeFeeds: [], homeWidgets: [], workKinds: [], settings: [] })
+    // The one setting is the family's access option, with the default the plugin ships with.
+    expect(jelly.contributes).toEqual({
+      homeFeeds: [],
+      homeWidgets: [],
+      workKinds: [],
+      settings: [{ key: "access", label: "Access", type: "string", default: "all", description: "all, ask-changes or read-only. Generates default rules for agents with a base allow rule." }],
+    })
     expect(jelly.rpc).toEqual([])
     expect(jelly.views).toEqual([])
   })
