@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-The latest published minor version of `@joe-broadhead/opencode-boxd` is supported.
+The latest GitHub release (`github:joe-broadhead/opencode-boxd#v<version>`) is supported.
 
 ## Reporting a vulnerability
 
