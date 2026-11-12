@@ -1,3 +1,4 @@
+import { basename } from "node:path"
 import { boxdError, BoxdError } from "./errors.js"
 import { copyFromGuestArgs, copyToGuestArgs, execArgs, guestRequest } from "./argv.js"
 import type { GuestPort } from "./ports.js"
@@ -6,7 +7,8 @@ import { duration, run, runBuffer } from "./run.js"
 import { errorLine, mapOutcome } from "./outcome.js"
 import { shortReason } from "./redact.js"
 
-const HELPER = "/tmp/opencode-boxd/guest.py"
+const HELPER_DIRECTORY = "/tmp/opencode-boxd"
+const HELPER = `${HELPER_DIRECTORY}/guest.py`
 
 /** The guest port over the boxd CLI. `timeoutMs` bounds one helper call on the machine. */
 export function cliGuest(bin = "boxd", timeoutMs = 30_000): GuestPort {
@@ -14,13 +16,24 @@ export function cliGuest(bin = "boxd", timeoutMs = 30_000): GuestPort {
 
   async function call(machine: string, action: string, fields: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
     await ensureHelper(bin, machine, uploaded)
-    const result = await run(bin, execArgs(machine), { stdin: guestRequest(action, fields), timeoutMs }).catch((error: unknown) => {
-      // Name the step that timed out: the guest's own action, on its machine.
-      if (error instanceof BoxdError && error.code === "TIMEOUT") {
-        throw boxdError("TIMEOUT", `The guest's ${action} on ${machine} did not answer within ${duration(timeoutMs)}.`)
-      }
-      throw error
-    })
+    const request = guestRequest(action, fields)
+    const exec = () =>
+      run(bin, execArgs(machine), { stdin: request, timeoutMs }).catch((error: unknown) => {
+        // Name the step that timed out: the guest's own action, on its machine.
+        if (error instanceof BoxdError && error.code === "TIMEOUT") {
+          throw boxdError("TIMEOUT", `The guest's ${action} on ${machine} did not answer within ${duration(timeoutMs)}.`)
+        }
+        throw error
+      })
+    let result = await exec()
+    // A reboot clears /tmp: a resize, a restart or a rebuild outside the plugin leaves a machine without the helper.
+    // Python never started the action when its folder is gone, so copying the helper again and running once more cannot
+    // run anything twice. Any other answer, such as a crash or a boxd CLI that failed, keeps this call's own error.
+    if (!jsonLine(result.stdout) && (await helperFolderGone(bin, machine))) {
+      uploaded.delete(machine)
+      await ensureHelper(bin, machine, uploaded)
+      result = await exec()
+    }
     const parsed = parseLine(result.stdout, result.stderr)
     if (result.code !== 0 || parsed.ok === false) {
       // The helper's error word and its detail, such as the guest server's own answer, redacted and cut to one line.
@@ -117,16 +130,36 @@ async function mkdirOnGuest(bin: string, machine: string, remote: string): Promi
 async function ensureHelper(bin: string, machine: string, uploaded: Set<string>): Promise<void> {
   if (uploaded.has(machine)) return
   const helper = await readGuestHelper()
-  const mkdir = await run(bin, ["machine", "exec", machine, "--", "mkdir", "-p", "/tmp/opencode-boxd"])
+  const mkdir = await run(bin, ["machine", "exec", machine, "--", "mkdir", "-p", HELPER_DIRECTORY])
   if (mkdir.code !== 0) throw boxdError("GUEST_FAILED", "The guest work directory could not be created.")
   const copied = await run(bin, copyToGuestArgs(machine, HELPER), { stdin: helper, timeoutMs: 30_000 })
   if (copied.code !== 0) throw boxdError("GUEST_FAILED", "The guest helper could not be copied to the machine.")
   uploaded.add(machine)
 }
 
+/**
+ * Whether the machine's /tmp clearly lost the helper's folder, as a reboot leaves it: `ls -1a /tmp` answered, listed
+ * `.`, and did not list the folder. A command of plain words reads the same whether `machine exec` runs it directly or
+ * through a shell. A CLI that failed (auth, network, a 503) is not an answer, and the caller keeps its own error.
+ */
+async function helperFolderGone(bin: string, machine: string): Promise<boolean> {
+  const listing = await run(bin, ["machine", "exec", machine, "--", "ls", "-1a", "/tmp"]).catch(() => undefined)
+  if (!listing || listing.code !== 0) return false
+  const names = listing.stdout.split("\n").map((name) => name.trim())
+  return names.includes(".") && !names.includes(basename(HELPER_DIRECTORY))
+}
+
+/** The helper's answer: its last JSON line. */
+function jsonLine(stdout: string): string | undefined {
+  return stdout
+    .trim()
+    .split("\n")
+    .reverse()
+    .find((item) => item.startsWith("{"))
+}
+
 function parseLine(stdout: string, stderr: string): Record<string, unknown> {
-  const lines = stdout.trim().split("\n")
-  const line = [...lines].reverse().find((item) => item.startsWith("{"))
+  const line = jsonLine(stdout)
   if (!line) {
     // The last line the machine wrote to stderr, such as a traceback's error, says why.
     const last = stderr.trim().split("\n").at(-1) ?? ""

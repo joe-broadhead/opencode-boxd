@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // A fake boxd CLI for the host tests. It never touches a real machine: every command answers from a JSON state file,
-// and `machine exec` runs this repository's own guest/guest.py against a loopback fake of the guest OpenCode server.
+// and `machine exec` runs the guest helper the plugin copied to the machine against a loopback fake of the guest
+// OpenCode server.
 //
 // The state file (BOXD_FAKE_STATE) holds the machines, the snapshots, the guest port and a log of every call, which is
 // how a test sees that a refused call ran nothing.
@@ -9,11 +10,13 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join, normalize, sep } from "node:path"
 
 const statePath = process.env.BOXD_FAKE_STATE
-const guestPy = process.env.BOXD_FAKE_GUEST_PY
-if (!statePath || !guestPy) {
-  process.stderr.write("the fake boxd CLI needs BOXD_FAKE_STATE and BOXD_FAKE_GUEST_PY\n")
+if (!statePath) {
+  process.stderr.write("the fake boxd CLI needs BOXD_FAKE_STATE\n")
   process.exit(2)
 }
+/** The machine's /tmp/opencode-boxd/guest.py, kept beside the state file. A reboot clears /tmp, and a test deletes it. */
+const HELPER = "/tmp/opencode-boxd/guest.py"
+const helperCopy = join(dirname(statePath), "guest.py")
 
 const read = () => (existsSync(statePath) ? JSON.parse(readFileSync(statePath, "utf8")) : { machines: {}, snapshots: [], log: [], version: "2.2.6", port: 0 })
 const write = (state) => {
@@ -80,13 +83,23 @@ function exec(name, command) {
     return
   }
   if (command[0] === "mkdir") return
+  // `ls -1a /tmp`: the listing, with the helper's folder while the uploaded copy is there.
+  if (command[0] === "ls" && command[1] === "-1a" && command[2] === "/tmp") {
+    process.stdout.write([".", "..", ...(existsSync(helperCopy) ? ["opencode-boxd"] : []), "systemd-private-x"].join("\n") + "\n")
+    return
+  }
   if (command[0] === "python3") {
+    // Python's own answer for a script that is not there: nothing runs, and stdout stays empty.
+    if (command[1] !== HELPER || !existsSync(helperCopy)) {
+      process.stderr.write(`python3: can't open file '${command[1]}': [Errno 2] No such file or directory\n`)
+      process.exit(2)
+    }
     const request = JSON.parse(readFileSync(0, "utf8") || "{}")
     // The guest helper talks to its own localhost OpenCode; here that is the test's loopback fake.
     request.base = `http://127.0.0.1:${state.port}`
     // The machine's `/home/boxd/work/<id>` is a folder on this laptop, so the real guest helper can work on it.
     if (typeof request.directory === "string") request.directory = fromGuest(request.directory)
-    const result = spawnSync("python3", [guestPy], { input: JSON.stringify(request), encoding: "utf8" })
+    const result = spawnSync("python3", [helperCopy], { input: JSON.stringify(request), encoding: "utf8" })
     if (result.stdout) process.stdout.write(result.stdout)
     if (result.stderr) process.stderr.write(result.stderr)
     process.exit(result.status ?? 1)
@@ -142,8 +155,7 @@ if (group === "machine" && action === "new") {
   const [source, target] = [rest[0], rest[1]]
   if (source === "-") {
     const remote = target.slice(target.indexOf(":") + 1)
-    // The helper lives at /tmp/opencode-boxd/guest.py on the machine; here it is kept beside the state file.
-    const path = remote === "/tmp/opencode-boxd/guest.py" ? join(dirname(statePath), "guest.py") : fromGuest(remote)
+    const path = remote === HELPER ? helperCopy : fromGuest(remote)
     mkdirSync(dirname(path), { recursive: true })
     writeFileSync(path, readFileSync(0))
     process.stdout.write(`copied - → ${target} (${readFileSync(path).length} bytes)\n`)

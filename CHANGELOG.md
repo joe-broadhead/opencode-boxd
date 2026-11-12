@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `GUEST_FAILED` message carries the helper's error and detail, redacted, or the last line the machine wrote.
 - `docs/scripting.md` said a plugin code arrives as the RPC error `failed`. It arrives as the method's output; only the
   four RPC codes are errors.
+- A machine that rebooted, for example after a resize, lost the guest helper with its `/tmp`, and every tool call failed
+  with `GUEST_FAILED` until OpenCode restarted. A call that gets no answer now lists `/tmp`, and only when the folder is
+  clearly gone copies the helper again and runs once more. A crash, or a boxd CLI that failed, keeps its own error and
+  is never run twice.
 
 ## [0.0.0] - 2026-11-10
 <!-- kit-release: the GitHub release v0.0.0 -->

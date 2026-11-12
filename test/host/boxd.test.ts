@@ -4,7 +4,7 @@
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { SUPPORTED_HOST } from "../../src/constants.js"
 import { readFileSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { defaultRules, type Rule } from "../../src/permissions.js"
 import { TOOLS, CHANGING_TOOLS, READ_TOOLS } from "../../src/tools.js"
 import { TOOLS_RPC_ID } from "../../src/host/tools-rpc.js"
@@ -485,6 +485,55 @@ describe("a run the guest's OpenCode died in", () => {
       expect((await attempt(host, build, "build", "boxd_submit", "always", { workId: "review-api", text: "Start again." })).output).toMatchObject({ state: "admitted" })
       host.guest.complete("ses_guest_root")
       expect((await attempt(host, build, "build", "boxd_sleep", "always", { workId: "review-api" })).output).toMatchObject({ state: "hibernated" })
+    } finally {
+      await host.close()
+    }
+  })
+})
+
+describe("a machine whose /tmp was cleared", () => {
+  test("a reboot loses the guest helper, and the next call copies it again and runs once", async () => {
+    const host = await startHost()
+    try {
+      const build = await session(host)
+      await attempt(host, build, "build", "boxd_ensure", "always", { workId: "review-api", directory: host.location.directory })
+      await attempt(host, build, "build", "boxd_submit", "always", { workId: "review-api", text: "Add a health check." })
+      const copies = () => host.boxd.calls().filter((line) => line === "machine cp - oc-review-api:/tmp/opencode-boxd/guest.py").length
+      expect(copies()).toBe(1)
+
+      // A resize or a restart clears /tmp while this OpenCode keeps running.
+      host.boxd.clearTmp()
+      const before = host.boxd.calls().length
+      expect((await attempt(host, build, "build", "boxd_job", "reject", { workId: "review-api" })).output).toMatchObject({ state: "busy" })
+      expect(copies()).toBe(2)
+      // The first call found no helper, so nothing ran; the probe, the copy and the one retry follow it.
+      const after = host.boxd.calls().slice(before)
+      expect(after.filter((line) => line === "machine exec oc-review-api -- ls -1a /tmp")).toHaveLength(1)
+
+      // With the helper back, a call that answers is not probed again.
+      const steady = host.boxd.calls().length
+      expect((await attempt(host, build, "build", "boxd_job", "reject", { workId: "review-api" })).output).toMatchObject({ state: "busy" })
+      expect(host.boxd.calls().slice(steady).some((line) => line.includes("ls -1a"))).toBe(false)
+      expect(host.guest.prompts).toHaveLength(1)
+    } finally {
+      await host.close()
+    }
+  })
+
+  test("a helper that is there and answers nothing is a crash, and is never run twice", async () => {
+    const host = await startHost()
+    try {
+      const build = await session(host)
+      await attempt(host, build, "build", "boxd_ensure", "always", { workId: "review-api", directory: host.location.directory })
+      // The copy on the machine now exits without a word, as a crashed helper does.
+      writeFileSync(join(dirname(host.boxd.state), "guest.py"), "import sys\nsys.exit(1)\n")
+      const before = host.boxd.calls().length
+      const submitted = await attempt(host, build, "build", "boxd_submit", "always", { workId: "review-api", text: "Add a health check." })
+      expect(submitted.output).toMatchObject({ error: "GUEST_FAILED" })
+      const after = host.boxd.calls().slice(before)
+      expect(after.filter((line) => line === "machine exec oc-review-api -- python3 /tmp/opencode-boxd/guest.py")).toHaveLength(1)
+      expect(after.some((line) => line.startsWith("machine cp - oc-review-api:/tmp/opencode-boxd/guest.py"))).toBe(false)
+      expect(host.guest.prompts).toEqual([])
     } finally {
       await host.close()
     }

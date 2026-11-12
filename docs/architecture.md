@@ -21,7 +21,9 @@ OpenCode (laptop)                     boxd machine                   laptop
 - `src/cli-boxd.ts`, `src/cli-guest.ts`, `src/prover.ts` — the three ports, each a thin wrapper over a command. Every
   argument is an argv array, never a shell string.
 - `guest/guest.py` — the helper copied to the machine. It speaks one JSON object in and one out, and talks only to
-  `127.0.0.1`.
+  `127.0.0.1`. It lives in `/tmp/opencode-boxd` on the machine, which a reboot clears: a call that gets no answer lists
+  `/tmp`, and only when the listing clearly lacks the folder copies the helper again and runs the call once more. Python
+  never started the action in that case, so nothing runs twice; a boxd CLI that failed keeps the call's own error.
 - `src/ledger.ts` — the laptop's store: atomic writes, one lock per work, 0700/0600 modes.
 - `src/paths.ts` — the laptop path policy for files in and out: the project and `allowedRoots`, no symlink, an 8 MiB file
   and a 32 MiB call, and a temp-then-rename write that never replaces a local edit.

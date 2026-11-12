@@ -16,6 +16,8 @@ and start from a clean ledger (`~/.local/share/opencode-boxd/works/` with no wor
 - `boxd snapshots list --json`, `boxd snapshots save <machine> <name> --json`.
 - `boxd machine cp - <name>:/tmp/opencode-boxd/guest.py` reads stdin.
 - `boxd machine exec <name> -- python3 /tmp/opencode-boxd/guest.py` passes stdin through and returns stdout.
+- `boxd machine exec <name> -- ls -1a /tmp` prints the listing, `.` and `..` included, and lists `opencode-boxd`
+  while the helper is there.
 - `boxd machine list --json` lists every machine of the account, with `name`.
 - `boxd auth login` is how a user signs in; the plugin never runs it.
 
@@ -53,6 +55,8 @@ destroyed and not-found. `src/cli-boxd.ts` maps them, and a wrong mapping lets a
 1. `boxd_ensure` → `boxd_submit` → `boxd_job` → `boxd_harvest` → `boxd_sleep` → `boxd_resume` (wake).
 2. Destroy the machine from the boxd CLI, then `boxd_resume` (rebuild from the golden snapshot and the transcript), then
    destroy and rebuild a second time in the same OpenCode run: the guest helper must be re-uploaded each time.
+   Then reboot or resize the machine from the boxd CLI in the same run: the next `boxd_job` must copy the helper again
+   (one `ls -1a /tmp` probe, one copy) and answer.
 3. `boxd_image` from a machine with a fresh proof; then a machine whose image version differs from the laptop's (expect
    `GUEST_VERSION`, and `boxd_sleep` must still work).
 4. Kill the guest OpenCode mid-run: `boxd_job`, `boxd_harvest` and `boxd_resume` must each give a coded error, and

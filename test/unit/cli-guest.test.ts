@@ -1,7 +1,7 @@
 // What a failed guest call says: the step that timed out, the helper's own error and detail, or the last line the
 // machine wrote. A tool result carries that sentence, so a caller can tell a hung guest from a refusal.
 import { afterAll, describe, expect, test } from "bun:test"
-import { chmodSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { cliGuest } from "../../src/cli-guest.js"
@@ -10,14 +10,19 @@ import { commandOf, duration } from "../../src/run.js"
 
 const dir = mkdtempSync(join(realpathSync(tmpdir()), "boxd-cli-guest-"))
 const bin = join(dir, "boxd")
-// A boxd CLI whose helper call answers as FAKE_GUEST says; every other command succeeds and prints nothing.
+const log = join(dir, "calls.log")
+// A boxd CLI whose helper call answers as FAKE_GUEST says; every other command succeeds and prints nothing. In the
+// unavailable mode every command fails as the CLI does when boxd answers 503. Each call is logged.
 writeFileSync(
   bin,
   `#!/bin/sh
 cat > /dev/null
+echo "$*" >> "${log}"
+if [ "$FAKE_GUEST" = unavailable ]; then echo "error: the boxd API answered 503 Service Unavailable" >&2; exit 1; fi
 case "$*" in
   *"-- python3 "*)
     case "$FAKE_GUEST" in
+      ok) echo '{"ok": true, "sessions": []}' ;;
       hang) sleep 5 ;;
       crash) echo "Traceback (most recent call last):" >&2; echo "ZeroDivisionError: division by zero" >&2; exit 1 ;;
       refuse) echo '{"ok": false, "error": "HTTP 500", "detail": "the server said no, token=abc123456789"}'; exit 1 ;;
@@ -60,6 +65,28 @@ describe("a failed guest call", () => {
     const error = await failure("crash")
     expect(error.code).toBe("GUEST_FAILED")
     expect(error.what).toBe("The guest helper did not return JSON (ZeroDivisionError: division by zero).")
+  })
+})
+
+describe("a guest call when the boxd CLI itself fails", () => {
+  test("a 503 keeps the call's own error: no copy of the helper, and no second run", async () => {
+    const guest = cliGuest(bin)
+    process.env.FAKE_GUEST = "ok"
+    try {
+      expect(await guest.listSessions("oc-review-api")).toEqual([])
+      writeFileSync(log, "")
+      process.env.FAKE_GUEST = "unavailable"
+      const error = await guest.listSessions("oc-review-api").then(
+        () => undefined,
+        (cause: unknown) => cause as BoxdError,
+      )
+      expect(error?.code).toBe("GUEST_FAILED")
+      expect(error?.what).toBe("The guest helper did not return JSON (error: the boxd API answered 503 Service Unavailable).")
+      // The helper call, then the one listing that could not answer: nothing was copied, and nothing ran twice.
+      expect(readFileSync(log, "utf8").trim().split("\n")).toEqual(["machine exec oc-review-api -- python3 /tmp/opencode-boxd/guest.py", "machine exec oc-review-api -- ls -1a /tmp"])
+    } finally {
+      delete process.env.FAKE_GUEST
+    }
   })
 })
 
