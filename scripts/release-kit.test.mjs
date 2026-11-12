@@ -885,7 +885,7 @@ const pluginSource = (version, { native = false, changelog = TWO } = {}) => ({
   "CHANGELOG.md": changelog,
   ".gitignore": "dist/\nnode_modules/\n",
   "build.mjs": 'import { mkdirSync, writeFileSync } from "node:fs"\nmkdirSync("dist", { recursive: true })\nwriteFileSync("dist/index.js", "export default 1\\n")\nwriteFileSync("dist/tui.js", "export default 2\\n")\n',
-  "src/host.ts": 'export const TESTED_HOSTS = ["2.2.3", "2.2.6"] as const\n',
+  "src/host.ts": 'export const TESTED_HOSTS = ["9.8.1", "9.8.4"] as const\n',
   ...(native ? { ".github/workflows/native.yml": "name: native\n" } : {}),
 })
 
@@ -1010,7 +1010,7 @@ describe("release-github.mjs plan", () => {
 
   test("plans a new release: the version, the tag, the hosts, the CI run", () => {
     const { run } = setup()
-    assert.deepEqual(run(), { version: "0.0.1", tag: "v0.0.1", hosts: '["2.2.3","2.2.6"]', native: "false", mode: "new", commit: "", ci_run: "501", previous: "", manifest_sha256: "" })
+    assert.deepEqual(run(), { version: "0.0.1", tag: "v0.0.1", hosts: '["9.8.1","9.8.4"]', native: "false", mode: "new", commit: "", ci_run: "501", previous: "", manifest_sha256: "" })
   })
 
   test("refuses a run that is not on master, or a sha that is not the run's", () => {
