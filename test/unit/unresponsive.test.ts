@@ -112,7 +112,8 @@ describe("a guest call that hangs", () => {
 })
 
 describe("the guest's health action", () => {
-  test("reads /proc, names processes by command name only, and talks to no server", () => {
+  // The helper runs on the Linux guest. It reads /proc, which macOS has not, so this test runs only where /proc is.
+  test.skipIf(process.platform !== "linux")("reads /proc, names processes by command name only, and talks to no server", () => {
     const helper = fileURLToPath(new URL("../../guest/guest.py", import.meta.url))
     // A port nothing listens on: the action must not need the guest's OpenCode.
     const result = spawnSync("python3", [helper], { input: JSON.stringify({ action: "health", base: "http://127.0.0.1:9" }), encoding: "utf8" })
