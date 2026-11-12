@@ -171,9 +171,11 @@ errors pass through unchanged. No error, log or status line contains a token, a 
 | `RUN_INTERRUPTED` | The guest's OpenCode stopped during a run, so the run never finished. The transcript is kept. Call `boxd_harvest`, then `boxd_submit` again. |
 | `GUEST_AUTH_FAILED` | The guest session's last run failed on a model credential. The transcript is still imported; fix the guest's sign-in. |
 | `GUEST_FAILED` | The guest helper failed an action. |
+| `GUEST_UNRESPONSIVE` | A guest call timed out, and a probe of the machine found under a tenth of its memory available, or a load over four per CPU. The message gives the free memory, the load and the three largest processes by name and pid. |
+| `GUEST_SERVER_DOWN` | A guest call timed out, and a probe found the machine well but nothing listening on the OpenCode port. The next guest call starts the server again. |
 | `BOXD_FAILED` | The boxd CLI refused a command or returned something unusable. |
 | `BOXD_MISSING` | The boxd CLI is not on the `PATH`. |
-| `TIMEOUT` | A boxd command did not answer in time. |
+| `TIMEOUT` | A boxd command did not answer in time. After a guest call, a probe that found the machine well, server included, adds what it found. |
 | `NOT_PROVEN` | No fresh laptop import. Sleep, image and drop refuse. |
 | `DIRTY` | The guest tree has uncommitted work and no stored patch. |
 | `EXPORT_INVALID` | An export is not in OpenCode's session shape. |

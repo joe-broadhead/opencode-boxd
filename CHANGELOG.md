@@ -5,6 +5,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `GUEST_UNRESPONSIVE` and `GUEST_SERVER_DOWN`: a guest call that times out is followed by one probe of the machine,
+  which reads `/proc` and the server's port and never talks to OpenCode. A machine under a tenth of its memory or over
+  four load per CPU answers `GUEST_UNRESPONSIVE` with the free memory, the load and the three largest processes, and
+  its one next step is to tell the user; one with nothing on the OpenCode port answers `GUEST_SERVER_DOWN`, which the
+  next `boxd_job` fixes. A machine that looks well keeps `TIMEOUT`, with the facts, and a probe that does not answer,
+  or answers with a line that is not JSON, keeps the plain timeout.
+
 ### Fixed
 
 - `boxd_ensure` on an open work rewrote its ledger record from a short list of fields and dropped the rest: the files

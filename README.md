@@ -192,6 +192,8 @@ one next step).
 | `RUN_INTERRUPTED` | The guest's OpenCode stopped during a run, so the run never finished. `boxd_resume` says so once, and `boxd_job` reports the run as aborted. Harvest what exists, then `boxd_submit` again. |
 | `GUEST_AUTH_FAILED` | The failed run was a credential failure. Fix the guest's sign-in as [the golden image](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/golden-image.md) describes, then `boxd_submit` again. |
 | `GUEST_FAILED` | Call `boxd_status`, and recreate the machine with `boxd_resume` if the guest keeps failing. |
+| `GUEST_UNRESPONSIVE` | The guest's OpenCode did not answer and the machine is short of memory or overloaded; the message names the largest processes. Tell the user, who can free it; waiting a turn does not. |
+| `GUEST_SERVER_DOWN` | The guest's OpenCode did not answer and nothing listens on its port, on a machine that is otherwise well. Call `boxd_job` in a later turn: it starts the server again. |
 | `BOXD_FAILED` | Read the boxd CLI's own message, and run `boxd_status` before trying again. |
 | `BOXD_MISSING` | Install the boxd CLI, sign in to it, and restart OpenCode so it is on the `PATH`. |
 | `TIMEOUT` | Call `boxd_status` in a later turn instead. Do not retry inside the same call. |

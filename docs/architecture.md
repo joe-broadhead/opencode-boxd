@@ -23,7 +23,11 @@ OpenCode (laptop)                     boxd machine                   laptop
 - `guest/guest.py` — the helper copied to the machine. It speaks one JSON object in and one out, and talks only to
   `127.0.0.1`. It lives in `/tmp/opencode-boxd` on the machine, which a reboot clears: a call that gets no answer lists
   `/tmp`, and only when the listing clearly lacks the folder copies the helper again and runs the call once more. Python
-  never started the action in that case, so nothing runs twice; a boxd CLI that failed keeps the call's own error.
+  never started the action in that case, so nothing runs twice; a boxd CLI that failed keeps the call's own error. Its
+  `health` action reads `/proc` and the server's port, never OpenCode: after a helper call times out, the plugin runs it
+  once, for at most 10 s. A machine short of memory or overloaded answers `GUEST_UNRESPONSIVE`, and one with nothing on
+  the OpenCode port `GUEST_SERVER_DOWN`, with the facts instead of a bare `TIMEOUT`. A process is named by its command
+  name, never its arguments.
 - `src/ledger.ts` — the laptop's store: atomic writes, one lock per work, 0700/0600 modes.
 - `src/paths.ts` — the laptop path policy for files in and out: the project and `allowedRoots`, no symlink, an 8 MiB file
   and a 32 MiB call, and a temp-then-rename write that never replaces a local edit.

@@ -10,6 +10,7 @@ import json
 import os
 import re
 import secrets
+import socket
 import subprocess
 import sys
 import urllib.error
@@ -331,6 +332,56 @@ def action_prepare(request):
     emit({"prepared": path})
 
 
+def action_health(request):
+    """Why the machine may not answer: free memory, load, the largest processes and the server's port. Reads /proc.
+
+    It never talks to OpenCode, so it answers when the server is the thing that hangs. A process is named by its
+    command name, never its arguments, which can hold a secret."""
+    meminfo = {}
+    try:
+        with open("/proc/meminfo", encoding="utf8") as handle:
+            for line in handle:
+                key, _, value = line.partition(":")
+                if key in ("MemTotal", "MemAvailable"):
+                    meminfo[key] = int(value.split()[0]) // 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    load = None
+    try:
+        with open("/proc/loadavg", encoding="utf8") as handle:
+            load = float(handle.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        pass
+    processes = []
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            with open(f"/proc/{entry}/status", encoding="utf8", errors="replace") as handle:
+                fields = dict(line.rstrip("\n").split(":\t", 1) for line in handle if ":\t" in line)
+            rss = int(fields.get("VmRSS", "0 kB").split()[0]) // 1024
+        except (OSError, ValueError, IndexError):
+            continue
+        processes.append({"pid": int(entry), "name": fields.get("Name", "?").strip()[:32], "rssMiB": rss})
+    processes.sort(key=lambda item: item["rssMiB"], reverse=True)
+    port = int(base_url(request).rsplit(":", 1)[1])
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=2):
+            server = "listening"
+    except OSError:
+        server = "closed"
+    emit(
+        {
+            "memTotalMiB": meminfo.get("MemTotal"),
+            "memAvailableMiB": meminfo.get("MemAvailable"),
+            "load1": load,
+            "cpus": os.cpu_count(),
+            "top": processes[:3],
+            "server": server,
+        }
+    )
+
+
 ACTIONS = {
     "info": action_info,
     "serve": action_serve,
@@ -343,6 +394,7 @@ ACTIONS = {
     "git": action_git,
     "digest": action_digest,
     "prepare": action_prepare,
+    "health": action_health,
 }
 
 

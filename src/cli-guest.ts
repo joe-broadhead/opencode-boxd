@@ -9,6 +9,8 @@ import { shortReason } from "./redact.js"
 
 const HELPER_DIRECTORY = "/tmp/opencode-boxd"
 const HELPER = `${HELPER_DIRECTORY}/guest.py`
+/** How long the probe after a timeout may take: it reads /proc, so a machine that answers at all answers this fast. */
+const PROBE_MS = 10_000
 
 /** The guest port over the boxd CLI. `timeoutMs` bounds one helper call on the machine. */
 export function cliGuest(bin = "boxd", timeoutMs = 30_000): GuestPort {
@@ -18,12 +20,17 @@ export function cliGuest(bin = "boxd", timeoutMs = 30_000): GuestPort {
     await ensureHelper(bin, machine, uploaded)
     const request = guestRequest(action, fields)
     const exec = () =>
-      run(bin, execArgs(machine), { stdin: request, timeoutMs }).catch((error: unknown) => {
-        // Name the step that timed out: the guest's own action, on its machine.
-        if (error instanceof BoxdError && error.code === "TIMEOUT") {
-          throw boxdError("TIMEOUT", `The guest's ${action} on ${machine} did not answer within ${duration(timeoutMs)}.`)
-        }
-        throw error
+      run(bin, execArgs(machine), { stdin: request, timeoutMs }).catch(async (error: unknown) => {
+        if (!(error instanceof BoxdError) || error.code !== "TIMEOUT") throw error
+        // One cheap probe says whether waiting a turn can help: a guest out of memory never answers by itself.
+        const health = await probe(bin, machine, Math.min(PROBE_MS, timeoutMs))
+        // No answer to the probe either: name the step that timed out, the guest's own action on its machine.
+        if (!health) throw boxdError("TIMEOUT", `The guest's ${action} on ${machine} did not answer within ${duration(timeoutMs)}.`)
+        const facts = healthText(health)
+        const late = `The guest's ${action} on ${machine} did not answer in time`
+        if (strained(health)) throw boxdError("GUEST_UNRESPONSIVE", `${late}, but the machine did: ${facts}.`)
+        if (health.server !== "listening") throw boxdError("GUEST_SERVER_DOWN", `${late}, and nothing listens on its OpenCode port: ${facts}.`)
+        throw boxdError("TIMEOUT", `${late}. The machine answered a probe and looks well: ${facts}.`)
       })
     let result = await exec()
     // A reboot clears /tmp: a resize, a restart or a rebuild outside the plugin leaves a machine without the helper.
@@ -118,6 +125,62 @@ export function cliGuest(bin = "boxd", timeoutMs = 30_000): GuestPort {
       }
     },
   }
+}
+
+/**
+ * What the machine says about itself when the helper's call hung: free memory, load, the three largest processes and
+ * whether the server's port is open. Undefined when the probe does not answer either, so the caller keeps the plain
+ * timeout: then nothing is known about the guest.
+ */
+async function probe(bin: string, machine: string, timeoutMs: number): Promise<Record<string, unknown> | undefined> {
+  const result = await run(bin, execArgs(machine), { stdin: guestRequest("health", {}), timeoutMs }).catch(() => undefined)
+  if (!result || result.code !== 0) return undefined
+  const line = jsonLine(result.stdout)
+  // A line that is not JSON is no answer: the caller keeps its coded timeout.
+  const parsed = line ? parseObject(line) : undefined
+  return parsed?.ok === true ? parsed : undefined
+}
+
+function parseObject(line: string): Record<string, unknown> | undefined {
+  try {
+    const value: unknown = JSON.parse(line)
+    return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+const number = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : undefined)
+
+/**
+ * A machine that cannot answer by itself: under a tenth of its memory available, or a load over four per CPU. It comes
+ * before a closed server port, which a guest out of memory also shows.
+ */
+function strained(health: Record<string, unknown>): boolean {
+  const total = number(health.memTotalMiB)
+  const available = number(health.memAvailableMiB)
+  const load = number(health.load1)
+  const cpus = number(health.cpus) ?? 1
+  return (total !== undefined && available !== undefined && available < total / 10) || (load !== undefined && load > 4 * cpus)
+}
+
+const mib = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? `${Math.round(value)} MiB` : "unknown")
+/** A process name from the guest, as plain characters: it is untrusted text. */
+const processName = (value: unknown) => (typeof value === "string" ? value.replace(/[^\w.+:/-]/g, "").slice(0, 32) : "") || "?"
+
+function healthText(health: Record<string, unknown>): string {
+  const memory = `${mib(health.memAvailableMiB)} of ${mib(health.memTotalMiB)} memory available`
+  const load = typeof health.load1 === "number" && Number.isFinite(health.load1) ? `load ${health.load1}` : "load unknown"
+  const top = (Array.isArray(health.top) ? health.top : [])
+    .slice(0, 3)
+    .map((item) => {
+      const record = item && typeof item === "object" ? (item as Record<string, unknown>) : {}
+      const pid = typeof record.pid === "number" && Number.isInteger(record.pid) ? ` (pid ${record.pid})` : ""
+      return `${processName(record.name)}${pid} ${mib(record.rssMiB)}`
+    })
+  const largest = top.length ? `largest ${top.join(", ")}` : "no process list"
+  const server = health.server === "listening" ? "the OpenCode port is open" : "nothing listens on the OpenCode port"
+  return `${memory}, ${load}, ${largest}; ${server}`
 }
 
 /** The file's folders must exist before `machine cp` writes into them. */

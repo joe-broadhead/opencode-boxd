@@ -63,5 +63,8 @@ A failed call returns `error`, `message` and `next`. Read `message` first: it sa
 - `DIRTY`: the guest tree has uncommitted work with no stored diff. Harvest before dropping.
 - `NOT_OURS`: no open work, or the machine is not the ledger's. Call `boxd_ensure` for that work id.
 - `BOXD_MISSING`: the boxd CLI is not on the PATH. Install it and restart OpenCode.
+- `GUEST_UNRESPONSIVE`: the machine is short of memory or overloaded, and waiting will not fix it. Tell the user what
+  the message names: the free memory, the load and the largest processes.
+- `GUEST_SERVER_DOWN`: nothing listens on the guest's OpenCode port. `boxd_job` in a later turn starts it again.
 
 Everything else: `/boxd-status` shows the next step, one line.
