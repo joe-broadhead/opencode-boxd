@@ -186,6 +186,13 @@ function outcomeText(outcome: RunOutcome | null): string {
   return ", last run completed"
 }
 
+/** Why a machine is down, beside its state. */
+function asleepText(work: WorkSummary): string {
+  if (work.asleepBy === "boxd_sleep") return ` by boxd_sleep${work.sleptAt ? ` at ${work.sleptAt}` : ""}`
+  if (work.asleepBy === "idle_or_cli") return " by the idle bound or the boxd CLI"
+  return ""
+}
+
 /** The Snapshot row: the configured image, and whether this account actually has it. */
 function snapshotText({ snapshot, snapshotPresent }: Status) {
   if (snapshotPresent === false) return `${snapshot} (not in this boxd account)`
@@ -198,7 +205,7 @@ function worksText({ openWorks, unharvested, warned, orphans, works }: Status) {
   const unowned = orphans.length ? `; machines no ledger records: ${list(orphans)}` : ""
   if (openWorks === 0) return `no open work${unowned}`
   const machines = works
-    .map((work) => `${work.workId} (${work.machineStatus ?? "state unknown"}${outcomeText(work.outcome)}${work.outcome === "failed" && work.error ? `: ${work.error}` : ""})`)
+    .map((work) => `${work.workId} (${work.machineStatus ?? "state unknown"}${asleepText(work)}${outcomeText(work.outcome)}${work.outcome === "failed" && work.error ? `: ${work.error}` : ""})`)
     .join(", ")
   const stale = unharvested.length ? `; no fresh laptop import: ${list(unharvested)}` : "; every work has a fresh laptop import"
   const asleep = warned.length ? `; hibernated before a harvest: ${list(warned)}` : ""
@@ -316,6 +323,8 @@ export const StatusRpc = {
                 warnings: strings,
                 outcome: { type: ["string", "null"], enum: ["completed", "failed", "aborted", null] },
                 error: { type: "string" },
+                asleepBy: { enum: ["boxd_sleep", "idle_or_cli"] },
+                sleptAt: { type: "string" },
               },
             },
           },

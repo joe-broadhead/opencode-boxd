@@ -185,6 +185,36 @@ describe("the control plane", () => {
   })
 })
 
+describe("why a machine is down", () => {
+  test("boxd_sleep is recorded with its time; a wake clears it, and a machine that idled down says so", async () => {
+    const { fleet, boxd, ledger } = await world()
+    await fleet.ensure({ workId: "review-api" })
+    await fleet.sleep({ workId: "review-api" })
+    const sleptAt = (await ledger.load("review-api"))?.sleptAt
+    expect(sleptAt).toBeString()
+    expect(await fleet.job({ workId: "review-api" })).toMatchObject({ state: "asleep", machineStatus: "hibernated", asleepBy: "boxd_sleep", sleptAt })
+    expect((await fleet.status()).works[0]).toMatchObject({ machineStatus: "hibernated", asleepBy: "boxd_sleep", sleptAt })
+
+    // The plugin's own wake clears the record, so a later idle hibernation is not blamed on that sleep.
+    await fleet.resume({ workId: "review-api" })
+    expect((await ledger.load("review-api"))?.sleptAt).toBeUndefined()
+    expect((await fleet.status()).works[0]).not.toHaveProperty("asleepBy")
+    boxd.seed("oc-review-api", "hibernated")
+    const idled = await fleet.job({ workId: "review-api" })
+    expect(idled).toMatchObject({ state: "asleep", asleepBy: "idle_or_cli" })
+    expect(idled).not.toHaveProperty("sleptAt")
+  })
+
+  test("a create clears a sleep recorded for the machine it replaces", async () => {
+    const { fleet, boxd, ledger } = await world()
+    await fleet.ensure({ workId: "review-api" })
+    await fleet.sleep({ workId: "review-api" })
+    boxd.machines.delete("oc-review-api")
+    await fleet.ensure({ workId: "review-api" })
+    expect((await ledger.load("review-api"))?.sleptAt).toBeUndefined()
+  })
+})
+
 describe("proof state", () => {
   test("is fresh only after a harvest later than the last prompt", () => {
     expect(proofState({ workId: "w", machine: "oc-w", snapshot: "s", laptopDirectory: "/d", guestDirectory: "/home/boxd/work/w" })).toBe("missing")

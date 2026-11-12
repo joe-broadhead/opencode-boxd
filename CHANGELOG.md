@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `boxd_submit` answers `queued: true` when the session was still running, so the prompt waits in its inbox for that
   run. The read is a report, not a gate: a server that cannot say which sessions run still takes the prompt. A message
   of another kind than the one asked for is never read as the assistant's last words or a run's outcome.
+- A machine that is down says why. `boxd_job`'s `asleep` answer and each work in status carry `asleepBy`:
+  `boxd_sleep`, with the `sleptAt` the ledger recorded, or `idle_or_cli` for the idle bound or the boxd CLI. The plugin
+  clears the record when it wakes or recreates the machine. A wake outside the plugin followed by a later idle
+  hibernation still reads `boxd_sleep` with the older time: the plugin cannot see that wake.
 
 ### Fixed
 

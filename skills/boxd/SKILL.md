@@ -53,6 +53,8 @@ task, even when the transcript arrived; say what the error says, and fix a crede
 - Do not publish the guest port, pass `--shared` or `--isolated`, or run `opencode run` on the machine. The tools talk
   to `127.0.0.1` through `boxd machine exec`, and sharing deletes the guest's sign-in.
 - Do not wait inside a tool call. `boxd_submit` admits and returns.
+- Do not guess why a machine is down: `asleepBy` is `boxd_sleep` (with `sleptAt`) or `idle_or_cli`, the idle bound or
+  the boxd CLI.
 - Do not promise a machine sleeps forever: while a work is open it hibernates after 30 idle minutes, and after `boxd_sleep` it may stay off for up to four hours.
 
 ## When something fails

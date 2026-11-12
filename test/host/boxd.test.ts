@@ -426,7 +426,8 @@ describe("the status RPC", () => {
       host.boxd.seed("oc-review-api", { status: "hibernated" })
       const status = await statusThroughRpc(host)
       expect(status).toMatchObject({ state: "connected", openWorks: 1, guestVersion: HOST_VERSION, snapshot: "opencode-golden", unknownCount: 0 })
-      expect(status.works).toEqual([{ workId: "review-api", machine: "oc-review-api", sessionId: null, proof: "missing", dirty: false, machineStatus: "hibernated", warnings: [], outcome: null }])
+      // Hibernated by something the plugin did not record: the idle bound or the boxd CLI.
+      expect(status.works).toEqual([{ workId: "review-api", machine: "oc-review-api", sessionId: null, proof: "missing", dirty: false, machineStatus: "hibernated", warnings: [], outcome: null, asleepBy: "idle_or_cli" }])
       expect(status.unharvested).toEqual(["review-api"])
       expect(String(status.nextStep)).toContain("boxd_harvest for review-api")
     } finally {

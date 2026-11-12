@@ -123,6 +123,11 @@ permissions, followed by your top-level rules for boxd tools.
   `/boxd-status`, the `/boxd` dialog and the status RPC read the same. No read wakes a machine, because waking starts
   billing. The plugin never reads your boxd account or credentials.
 - **A read never wakes.** `boxd_job` reports `asleep` for a hibernated machine and names `boxd_resume` as the next step.
+  `asleepBy` is `boxd_sleep` (with `sleptAt`) when the plugin hibernated it and has not woken it since, and
+  `idle_or_cli` otherwise: the 30-minute idle bound, or the boxd CLI. boxd does not say when a machine hibernated by
+  itself. Status shows the same per work. The plugin cannot see a wake it did not make: a machine woken outside it,
+  by the boxd CLI or an SSH connection, and put down again by the idle bound still reports `boxd_sleep` with the older
+  `sleptAt`, until the plugin wakes or recreates it.
 - **Hibernating destroys nothing.** `boxd_sleep` needs no proof and works when the guest cannot be harvested; it records
   a warning that the last prompt is not on the laptop yet, which status shows. `boxd_image` and `boxd_drop` still need a
   fresh proof.

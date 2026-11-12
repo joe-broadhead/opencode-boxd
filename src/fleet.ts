@@ -43,7 +43,14 @@ export interface WorkSummary {
   readonly outcome: RunOutcome | null
   /** A failed run's redacted error line. */
   readonly error?: string
+  /** Why a machine that is down is down: `boxd_sleep`, or the idle bound or the boxd CLI. Only while it is down. */
+  readonly asleepBy?: AsleepBy
+  /** When `boxd_sleep` hibernated it, when that is why. */
+  readonly sleptAt?: string
 }
+
+/** Who put a machine to sleep: the plugin's own `boxd_sleep`, or something it did not record (the idle bound, the CLI). */
+export type AsleepBy = "boxd_sleep" | "idle_or_cli"
 
 export interface FleetStatus {
   readonly snapshot: string
@@ -133,6 +140,7 @@ export function createFleet(deps: Deps) {
       await deps.boxd.wake(work.machine)
       // The bound is armed before anything else can throw: a woken machine must never idle for hours.
       await armAwake(work.machine, "hold")
+      await woke(work.workId)
       throw boxdError("MACHINE_STARTING", `Machine ${work.machine} is waking.`)
     }
     if (machine.status !== "running") throw boxdError("MACHINE_STARTING", `Machine ${work.machine} is ${machine.status}.`)
@@ -144,11 +152,21 @@ export function createFleet(deps: Deps) {
     return machine
   }
 
+  /** The plugin woke or recreated the machine, so a sleep it recorded no longer says why the machine is down. */
+  async function woke(workId: string): Promise<void> {
+    if (!(await deps.ledger.load(workId))?.sleptAt) return
+    await deps.ledger.mutate(workId, (current) => {
+      const { sleptAt: _, ...rest } = current!
+      return rest
+    })
+  }
+
   /** Creates the machine, and adopts one a timed-out `machine new` left behind, so no billing machine is unrecorded. */
   async function create(name: string, workId: string): Promise<MachineInfo> {
     try {
       const machine = await deps.boxd.create({ name, snapshot, workId })
       deps.guest.forget(name)
+      await woke(workId)
       return machine
     } catch (error) {
       if (!(error instanceof BoxdError) || error.code !== "TIMEOUT") throw error
@@ -156,6 +174,7 @@ export function createFleet(deps: Deps) {
       const machine = await deps.boxd.get(name)
       if (machine.status === "missing") throw boxdError("CREATE_UNCERTAIN", `boxd did not answer within the timeout, and no machine named ${name} exists yet.`)
       deps.guest.forget(name)
+      await woke(workId)
       return machine
     }
   }
@@ -189,6 +208,7 @@ export function createFleet(deps: Deps) {
               warnings: (work.warnings ?? []).map((warning) => warning.code),
               outcome: work.lastOutcome?.state ?? null,
               ...(work.lastOutcome?.error ? { error: work.lastOutcome.error } : {}),
+              ...(machine ? asleepOf(work, machine.status) : {}),
             }
           }),
         ),
@@ -244,6 +264,7 @@ export function createFleet(deps: Deps) {
         if (machine.status === "hibernated" || machine.status === "standby" || machine.status === "stopped") {
           await deps.boxd.wake(name)
           await armAwake(name, "hold")
+          await woke(input.workId)
         }
         return { workId: input.workId, machine: name, state: "starting", next: "Call boxd_status in a later turn." }
       }
@@ -303,6 +324,7 @@ export function createFleet(deps: Deps) {
           machine: work.machine,
           state: "asleep",
           machineStatus: status,
+          ...asleepOf(work, status),
           next: "Call boxd_resume to wake it. This read does not wake a machine, because waking starts billing.",
         }
       }
@@ -401,14 +423,21 @@ export function createFleet(deps: Deps) {
     async sleep(input: { workId: string }): Promise<FleetResult> {
       const work = await loadOwned(input.workId)
       const machine = await machineOf(work)
-      if (machine.status !== "missing" && machine.status !== "destroyed") {
+      const hibernated = machine.status !== "missing" && machine.status !== "destroyed"
+      if (hibernated) {
         await deps.boxd.hibernate(work.machine)
         await armAwake(work.machine, "sleep")
       }
       // A work that never had a prompt has no unharvested prompt to warn about.
       const unharvested = work.lastSubmitAt !== undefined && proofState(work) !== "fresh"
-      if (unharvested) {
-        await deps.ledger.mutate(work.workId, (current) => ({ ...(current ?? work), warnings: addWarning(current?.warnings, { code: "UNHARVESTED_SLEEP", at: deps.now() }) }))
+      if (unharvested || hibernated) {
+        const at = deps.now()
+        await deps.ledger.mutate(work.workId, (current) => ({
+          ...(current ?? work),
+          // Recorded, so a later read can say the machine is down because it was put to sleep, not because it idled.
+          ...(hibernated ? { sleptAt: at } : {}),
+          ...(unharvested ? { warnings: addWarning(current?.warnings, { code: "UNHARVESTED_SLEEP", at }) } : {}),
+        }))
       }
       return {
         workId: work.workId,
@@ -443,6 +472,7 @@ export function createFleet(deps: Deps) {
       if (machine.status === "hibernated" || machine.status === "standby" || machine.status === "stopped") {
         await deps.boxd.wake(work.machine)
         await armAwake(work.machine, "hold")
+        await woke(work.workId)
         return { workId: work.workId, machine: work.machine, state: "starting", resumed: "wake", next: "Call boxd_status in a later turn." }
       }
       if (machine.status === "starting" || machine.status === "other") {
@@ -600,6 +630,15 @@ function jobNext(workId: string, phase: "busy" | "idle" | "missing", run: GuestR
   if (run.outcome === "failed") return `${failureText(run, workId)} ${nextStepFor(run)}`
   if (run.outcome === "aborted") return `The last run of ${workId} was aborted. Call boxd_harvest before sleep, image or drop, then boxd_submit again if you still need it.`
   return "Call boxd_harvest before sleep, image or drop."
+}
+
+/**
+ * Why a machine that is down is down. `boxd_sleep` is recorded with its time; anything else is the idle bound or the
+ * boxd CLI, whose time boxd does not report. A machine that is up has no answer.
+ */
+function asleepOf(work: Work, status: MachineInfo["status"]): { asleepBy?: AsleepBy; sleptAt?: string } {
+  if (status !== "hibernated" && status !== "standby" && status !== "stopped") return {}
+  return work.sleptAt && status === "hibernated" ? { asleepBy: "boxd_sleep", sleptAt: work.sleptAt } : { asleepBy: "idle_or_cli" }
 }
 
 function refuseUnsafe(machine: MachineInfo): void {

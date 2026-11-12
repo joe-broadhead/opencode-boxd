@@ -60,7 +60,9 @@ session you cannot get back.
    (`completed`, `failed` or `aborted`) when it is idle. A running machine's answer also carries `lastText`, the
    session's newest assistant text (redacted, at most 300 characters), `lastActivityAt`, and `pending`, the prompts
    waiting in its inbox: a run can complete and still say its task did not happen. It never wakes a machine, because
-   waking starts billing; a hibernated work reports `asleep` with `boxd_resume` as its next step.
+   waking starts billing; a hibernated work reports `asleep` with `boxd_resume` as its next step, and `asleepBy` says
+   who put it down: `boxd_sleep`, with `sleptAt`, or `idle_or_cli` for the idle bound or the boxd CLI, whose time boxd
+   does not report.
 4. `boxd_harvest`, optionally with `files: ["SUMMARY.md"]` and `to`, copies the files a work produced back to this
    laptop. The session tree is exported, imported here parents first, git is recorded, and then the files move.
 5. `boxd_sleep` to hibernate, `boxd_resume` to wake or rebuild, `boxd_image` to save a snapshot, `boxd_drop` to destroy.
