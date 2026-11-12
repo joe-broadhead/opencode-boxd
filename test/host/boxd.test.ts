@@ -10,6 +10,9 @@ import { TOOLS, CHANGING_TOOLS, READ_TOOLS } from "../../src/tools.js"
 import { TOOLS_RPC_ID } from "../../src/host/tools-rpc.js"
 import { agentRules, attempt, cleanup, effect, HOST_VERSION, session, startHost, statusThroughRpc, until } from "./harness.js"
 
+/** The released version, from package.json: status reports it. */
+const PACKAGE_VERSION: string = JSON.parse(readFileSync(join(import.meta.dir, "..", "..", "package.json"), "utf8")).version
+
 setDefaultTimeout(120_000)
 afterAll(cleanup)
 
@@ -43,7 +46,7 @@ describe("the plugin on a stock host", () => {
       expect(await effect(host, "build", "boxd_status")).toBe("allow")
 
       const status = await statusThroughRpc(host)
-      expect(status).toMatchObject({ version: "0.0.0", state: "connected", host: { version: HOST_VERSION, range: SUPPORTED_HOST, tested: true }, openWorks: 0, unguardedAgents: [], nextStep: "Nothing to do." })
+      expect(status).toMatchObject({ version: PACKAGE_VERSION, state: "connected", host: { version: HOST_VERSION, range: SUPPORTED_HOST, tested: true }, openWorks: 0, unguardedAgents: [], nextStep: "Nothing to do." })
       expect(status.works).toEqual([])
 
       const text = await statusText(host, await session(host))

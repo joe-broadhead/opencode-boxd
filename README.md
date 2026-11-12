@@ -18,7 +18,7 @@ Unofficial; not affiliated with boxd.
 ## Install
 
 ```sh
-opencode plugin add github:joe-broadhead/opencode-boxd#v0.0.0
+opencode plugin add github:joe-broadhead/opencode-boxd#v0.0.1
 ```
 
 Run `opencode reload`, or restart OpenCode, then run `/boxd-status`.
@@ -28,7 +28,7 @@ Each release has its own tag, and a Git install does not update by itself. To mo
 Or add the plugin to `opencode.json` instead, with the same spec:
 
 ```json
-{ "plugins": [{ "package": "github:joe-broadhead/opencode-boxd#v0.0.0" }] }
+{ "plugins": [{ "package": "github:joe-broadhead/opencode-boxd#v0.0.1" }] }
 ```
 
 The install takes the GitHub release tag. Its commit carries the built `dist/`, so the install runs no build.
@@ -162,7 +162,7 @@ The snapshot is the one policy worth setting centrally: every member's machines 
 // /Library/Application Support/opencode/opencode.json on macOS
 {
   "plugins": [{
-    "package": "github:joe-broadhead/opencode-boxd#v0.0.0",
+    "package": "github:joe-broadhead/opencode-boxd#v0.0.1",
     "options": { "snapshot": "opencode-golden" }
   }]
 }
@@ -246,7 +246,7 @@ agents without the default rules, the OpenCode version and one next step.
 ## Uninstall
 
 ```sh
-opencode plugin remove github:joe-broadhead/opencode-boxd#v0.0.0
+opencode plugin remove github:joe-broadhead/opencode-boxd#v0.0.1
 ```
 
 The ledger is yours to keep or delete. Machines are boxd's: `boxd machine remove oc-<work id> -y` destroys one.

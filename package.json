@@ -1,6 +1,6 @@
 {
   "name": "@joe-broadhead/opencode-boxd",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Unofficial OpenCode plugin for boxd: run a session on a private boxd machine and keep the transcript on your laptop",
   "keywords": [
     "opencode",
