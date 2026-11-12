@@ -13,7 +13,7 @@ interface Options {
   readonly allowedRoots: readonly string[]
 }
 
-const EXAMPLE = `"plugins": [{ "package": "github:joe-broadhead/opencode-boxd#v0.0.0", "options": { "snapshot": "opencode-golden" } }]`
+const EXAMPLE = `"plugins": [{ "package": "github:joe-broadhead/opencode-boxd#v0.0.1", "options": { "snapshot": "opencode-golden" } }]`
 const ACCEPTED = {
   snapshot: "a lowercase boxd snapshot name (opencode-golden by default)",
   allowUntestedHost: "true or false (the default)",
