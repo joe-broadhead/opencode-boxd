@@ -203,26 +203,30 @@ def action_phase(request):
     if isinstance(busy, (int, float)) and (not isinstance(idle, (int, float)) or busy > idle):
         emit({"phase": "idle", "outcome": "interrupted", "error": None})
         return
-    # The last idle turn carries the outcome and, when a run failed, the error an agent must hear about.
+    # The last idle turn carries the outcome and, when a run failed, the error an agent must hear about. The server lists
+    # messages newest first, so the one idle message asked for is the last run's.
     outcome = info.get("outcome")
     if outcome not in ("succeeded", "failed", "interrupted"):
         outcome = None
     error = None
     try:
-        messages = unwrap(http("GET", base + f"/api/session/{sid}/message")) or []
-        for message in reversed(messages if isinstance(messages, list) else []):
-            if not isinstance(message, dict) or message.get("type") != "idle":
-                continue
+        message = newest(base, sid, "idle")
+        if isinstance(message, dict):
             if outcome is None and message.get("outcome") in ("succeeded", "failed", "interrupted"):
                 outcome = message["outcome"]
             failure = message.get("error")
             if outcome == "failed" and isinstance(failure, dict):
                 error = {"type": str(failure.get("type") or "error"), "message": str(failure.get("message") or "")}
-            break
     except GuestError:
         # An outcome is a report, not a gate: a server that cannot list messages still answers the phase.
         pass
     emit({"phase": "idle", "outcome": outcome, "error": error})
+
+
+def newest(base, sid, kind):
+    """The session's newest message of one type, or None: one message, not a page of the transcript."""
+    messages = unwrap(http("GET", base + f"/api/session/{sid}/message?type={kind}&order=desc&limit=1")) or []
+    return messages[0] if isinstance(messages, list) and messages else None
 
 
 UNTRACKED_LIMIT = 100

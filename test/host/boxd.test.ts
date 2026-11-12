@@ -318,6 +318,24 @@ describe("a failed run is reported, never hidden", () => {
     }
   })
 
+  test("the newest run's error is the one reported, after an earlier run completed", async () => {
+    const host = await startHost()
+    try {
+      const build = await session(host)
+      await attempt(host, build, "build", "boxd_ensure", "always", { workId: "review-api", directory: host.location.directory })
+      await attempt(host, build, "build", "boxd_submit", "always", { workId: "review-api", text: "Reply with OK." })
+      host.guest.complete("ses_guest_root")
+      await attempt(host, build, "build", "boxd_submit", "always", { workId: "review-api", text: "Reply with OK again." })
+      host.guest.fail("ses_guest_root", AUTH)
+
+      // The server lists messages newest first: the newest idle message is this run's, not the first run's.
+      const job = await attempt(host, build, "build", "boxd_job", "reject", { workId: "review-api" })
+      expect(job.output).toMatchObject({ state: "idle", outcome: "failed", warning: "GUEST_AUTH_FAILED", error: "provider.auth: Go Teams covers workspace members, not service accounts. Use a personal API key to call Go models" })
+    } finally {
+      await host.close()
+    }
+  })
+
   test("a completed run reports completed, with no warning", async () => {
     const host = await startHost()
     try {

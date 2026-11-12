@@ -1,5 +1,6 @@
 // A loopback fake of the guest OpenCode server: the few endpoints guest/guest.py uses. It answers in OpenCode's own
-// envelope (`{ data: … }`), keeps sessions in memory, and lets a test mark a session idle or busy.
+// envelope (`{ data: … }`), keeps sessions in memory, and lets a test mark a session idle or busy. Messages list as the
+// real server lists them: newest first and 50 a page unless asked otherwise, optionally of one type.
 export interface FakeSession {
   id: string
   parentID?: string
@@ -7,11 +8,13 @@ export interface FakeSession {
   /** The run stopped with the server: its busy stamp never got an idle one, and nothing runs. */
   interrupted?: boolean
   directory: string
-  messages: Array<{ type: string; text: string }>
+  /** The transcript, oldest first. Each finished run ends with an idle message that carries its outcome. */
+  messages: Array<FakeMessage>
   /** The session's last run, as OpenCode records it on the session and its last idle message. */
   outcome?: "succeeded" | "failed" | "interrupted"
-  error?: { type: string; message: string }
 }
+
+export type FakeMessage = { type: string; text?: string; outcome?: "succeeded" | "failed"; error?: { type: string; message: string } }
 
 export interface FakeGuest {
   readonly url: string
@@ -75,13 +78,11 @@ export function startFakeGuest(): FakeGuest {
       if (messages) {
         const session = sessions.get(messages[1]!)
         if (!session) return json({ error: "not found" }, 404)
-        return json({
-          data: [
-            ...session.messages.map((message, index) => ({ id: `msg_${index}`, ...message })),
-            // The idle turn carries the run's outcome, and its error when it failed.
-            { id: "msg_idle", type: "idle", ...(session.outcome ? { outcome: session.outcome } : {}), ...(session.error ? { error: session.error } : {}) },
-          ],
-        })
+        // The real server's defaults: newest first, 50 a page, every type unless `type` names one.
+        const type = url.searchParams.get("type")
+        const listed = session.messages.map((message, index) => ({ id: `msg_${index}`, ...message })).filter((message) => !type || message.type === type)
+        const ordered = (url.searchParams.get("order") ?? "desc") === "desc" ? listed.reverse() : listed
+        return json({ data: ordered.slice(0, Number(url.searchParams.get("limit") ?? 50)), cursor: {} })
       }
       const prompt = /^\/api\/session\/(ses_[A-Za-z0-9_-]+)\/prompt$/.exec(path)
       if (prompt && request.method === "POST") {
@@ -113,7 +114,7 @@ export function startFakeGuest(): FakeGuest {
           ...(info.parentID ? { parentID: info.parentID } : {}),
           busy: false,
           directory: String((body.location as { directory?: string } | undefined)?.directory ?? ""),
-          messages: Array.isArray(body.messages) ? (body.messages as Array<{ type: string; text: string }>) : [],
+          messages: Array.isArray(body.messages) ? (body.messages as FakeMessage[]) : [],
         })
         imports.push({ id: info.id, ...(info.parentID ? { parentID: info.parentID } : {}) })
         return json({ data: { id: info.id } })
@@ -145,7 +146,7 @@ export function startFakeGuest(): FakeGuest {
       if (session) {
         session.busy = false
         session.outcome = "failed"
-        session.error = error
+        session.messages.push({ type: "idle", outcome: "failed", error })
       }
     },
     complete: (sessionID: string) => {
@@ -153,7 +154,7 @@ export function startFakeGuest(): FakeGuest {
       if (session) {
         session.busy = false
         session.outcome = "succeeded"
-        delete session.error
+        session.messages.push({ type: "idle", outcome: "succeeded" })
       }
     },
     close: () => server.stop(true),

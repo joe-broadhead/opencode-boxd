@@ -59,7 +59,10 @@ first, and only then may the machine sleep, be imaged or be destroyed.
   lose each other's fields. `submit` stamps `lastSubmitAt` before the prompt, so a crash fails towards "stale".
 - The import runs with `--standalone`, so it never depends on a service being up.
 - A session's last run is `info.outcome` (`succeeded`, `failed`, `interrupted`) on `GET /api/session/<id>`, and the
-  same outcome with the failure's structured error on the last `idle` message from `GET /api/session/<id>/message`. An
+  same outcome with the failure's structured error on the last `idle` message from `GET /api/session/<id>/message`.
+  That list is newest first and 50 a page unless `order` and `limit` say otherwise, and `type` filters it before the
+  page is cut, on 2.2.3 and 2.2.6 alike. The helper asks for `?type=idle&order=desc&limit=1`: one message, the last
+  run's. An
   export carries both, so a harvest reads the outcome from the transcript and `boxd_job` from the live session: no model
   call either way. `src/outcome.ts` maps them to `completed`, `failed` and `aborted`.
 - `POST /api/session` creates a session, `POST /api/session/<id>/prompt` admits one, and
