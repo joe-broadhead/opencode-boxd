@@ -18,6 +18,9 @@ OpenCode (laptop)                     boxd machine                   laptop
   the status RPC, the tools RPC and the tool transform.
 - `src/fleet.ts` — the control plane: ensure, submit, job, harvest, sleep, resume, image, drop. It refuses to sleep,
   image or drop work whose laptop import is not fresh, and refuses to drop a machine it does not own.
+- `src/cli-flavor.ts` — reads `boxd --help` once per binary and refuses the in-VM CLI with `BOXD_MISSING` before `cli-boxd.ts`
+  sends a command: the in-VM CLI takes `--vm <name>` for `config set` and `snapshots save`, where the laptop CLI takes the
+  machine as an argument. A CLI that cannot answer `--help` is not refused; its next command reports its own failure.
 - `src/cli-boxd.ts`, `src/cli-guest.ts`, `src/prover.ts` — the three ports, each a thin wrapper over a command. Every
   argument is an argv array, never a shell string.
 - `guest/guest.py` — the helper copied to the machine. It speaks one JSON object in and one out, and talks only to

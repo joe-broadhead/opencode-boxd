@@ -182,7 +182,7 @@ errors pass through unchanged. No error, log or status line contains a token, a 
 | `GUEST_UNRESPONSIVE` | A guest call timed out, and a probe of the machine found under a tenth of its memory available, or a load over four per CPU. The message gives the free memory, the load and the three largest processes by name and pid. |
 | `GUEST_SERVER_DOWN` | A guest call timed out, and a probe found the machine well but nothing listening on the OpenCode port. The next guest call starts the server again. |
 | `BOXD_FAILED` | The boxd CLI refused a command or returned something unusable. |
-| `BOXD_MISSING` | The boxd CLI is not on the `PATH`. |
+| `BOXD_MISSING` | The boxd CLI is not on the `PATH`, or the one there is the in-VM CLI, which this plugin does not support. |
 | `TIMEOUT` | A boxd command did not answer in time. After a guest call, a probe that found the machine well, server included, adds what it found. |
 | `NOT_PROVEN` | No fresh laptop import. Sleep, image and drop refuse. |
 | `DIRTY` | The guest tree has uncommitted work and no stored patch. |

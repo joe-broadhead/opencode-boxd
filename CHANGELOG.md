@@ -28,6 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   do on a 401, and how to look at a slow guest with the boxd CLI. The README and the golden-image page say that a
   short-lived token stops every guest once nothing renews it.
 
+- The boxd CLI that runs inside a boxd machine is refused. It takes `--vm <name>` where the laptop CLI takes the machine
+  as an argument, so the plugin's commands failed one by one and the awake bound ended as `AWAKE_UNBOUND`. Every tool now
+  reads `boxd --help` once and answers `BOXD_MISSING`, saying the plugin drives remote machines from the laptop's CLI,
+  before it changes anything. A CLI that cannot answer `--help` is not refused.
+
 ### Fixed
 
 - `boxd_ensure` on an open work rewrote its ledger record from a short list of fields and dropped the rest: the files

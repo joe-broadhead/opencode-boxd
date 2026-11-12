@@ -200,7 +200,7 @@ one next step).
 | `GUEST_UNRESPONSIVE` | The guest's OpenCode did not answer and the machine is short of memory or overloaded; the message names the largest processes. Tell the user, who can free it; waiting a turn does not. |
 | `GUEST_SERVER_DOWN` | The guest's OpenCode did not answer and nothing listens on its port, on a machine that is otherwise well. Call `boxd_job` in a later turn: it starts the server again. |
 | `BOXD_FAILED` | Read the boxd CLI's own message, and run `boxd_status` before trying again. |
-| `BOXD_MISSING` | Install the boxd CLI, sign in to it, and restart OpenCode so it is on the `PATH`. |
+| `BOXD_MISSING` | Install the laptop's boxd CLI, sign in to it, and restart OpenCode so it is on the `PATH`. The CLI that runs inside a boxd machine is not the one this plugin drives. |
 | `TIMEOUT` | Call `boxd_status` in a later turn instead. Do not retry inside the same call. |
 | `NOT_PROVEN` | Call `boxd_harvest` before sleeping, imaging or dropping this work. |
 | `DIRTY` | Call `boxd_harvest`, which stores the uncommitted diff with the export, before dropping. |
@@ -224,6 +224,9 @@ agents without the default rules, the OpenCode version and one next step.
   [docs/architecture.md](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/architecture.md) records each
   measurement, and [docs/live-check.md](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/live-check.md)
   lists what to check again after a boxd CLI or API change.
+- **The laptop's boxd CLI only.** The plugin drives remote machines from a laptop. The boxd CLI that runs inside a boxd
+  machine takes `--vm <name>` where the laptop CLI takes the machine as an argument, so it is not supported: every
+  tool answers `BOXD_MISSING` on it, and no machine is changed.
 - **Idle bounds.** boxd gives a new machine a 4-hour idle bound. The plugin sets 30 minutes when it creates or wakes a
   machine, and that bound is what limits billing when the laptop is gone.
 - **A create can land after boxd stops answering.** If `machine new` times out, the machine may still appear. `boxd_ensure`

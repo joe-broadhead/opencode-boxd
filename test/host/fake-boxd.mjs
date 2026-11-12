@@ -25,6 +25,11 @@ const write = (state) => {
 }
 
 const argv = process.argv.slice(2)
+// `boxd --help` is how the plugin tells the laptop CLI from the in-VM one. It reads nothing and is not logged.
+if (argv.length === 1 && argv[0] === "--help") {
+  process.stdout.write("boxd CLI\n\nCommands:\n  machine    Create, inspect, and control machines\n  snapshots  Save machine state\n")
+  process.exit(0)
+}
 const state = read()
 // Every call is logged before it is answered, so a test can see what ran and what did not.
 state.log.push(argv.join(" "))

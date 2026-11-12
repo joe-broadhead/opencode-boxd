@@ -20,6 +20,8 @@ and start from a clean ledger (`~/.local/share/opencode-boxd/works/` with no wor
   while the helper is there.
 - `boxd machine list --json` lists every machine of the account, with `name`.
 - `boxd auth login` is how a user signs in; the plugin never runs it.
+- `boxd --help` on the laptop CLI names neither `boxd inside a machine` nor `from inside the VM`, the two phrases the
+  in-VM CLI's help uses and `src/cli-flavor.ts` looks for. Only the in-VM help has been read; the laptop CLI's has not.
 
 If any key or flag differs, the whole control plane is inert and the fakes hid it. Note the exact shape in
 `docs/architecture.md` once confirmed.
