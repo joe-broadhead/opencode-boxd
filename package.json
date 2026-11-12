@@ -150,7 +150,6 @@
   "scripts": {
     "check": "node scripts/check.mjs",
     "typecheck": "node scripts/check.mjs typecheck",
-    "build": "node scripts/check.mjs build",
     "test": "node scripts/check.mjs unit",
     "test:host": "node scripts/check.mjs host",
     "test:pack": "node scripts/check.mjs pack",
