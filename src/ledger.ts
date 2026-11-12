@@ -70,6 +70,8 @@ export interface Work {
   uploads?: MovedFile[]
   /** Files copied back, by name, size and digest; a drop counts one as recovered while its digest still matches. */
   downloads?: MovedFile[]
+  /** When `boxd_sleep` last hibernated the machine; cleared when the plugin wakes or recreates it. */
+  sleptAt?: string
   /** Set before `machine new`, and cleared once the machine is recorded: a timeout must not orphan a billing machine. */
   pendingCreate?: { at: string; snapshot: string }
   dropped?: boolean

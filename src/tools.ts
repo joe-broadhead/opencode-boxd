@@ -188,7 +188,7 @@ export const READ_TOOLS = TOOLS.filter((tool) => tool.class === "read").map((too
 /** Every tool that changes a machine, spends money or writes the laptop: `access` decides whether these ask. */
 export const CHANGING_TOOLS = TOOLS.filter((tool) => tool.class !== "read").map((tool) => tool.id)
 
-/** The tool's answer as the model reads it: the result's JSON, or the coded error with its next step. */
+/** The tool's answer as the model reads it: the result's JSON, or the coded error with what happened and its next step. */
 interface ToolAnswer {
   readonly output: unknown
   readonly text: string
@@ -199,7 +199,8 @@ export async function runTool(name: ToolName, fleet: Fleet, input: Record<string
     const output = await toolSpec(name).run(fleet, input)
     return { output, text: JSON.stringify(output) }
   } catch (error) {
-    if (error instanceof BoxdError) return { output: { error: error.code, next: error.next }, text: error.message }
+    // The structured result keeps what happened: a Code Mode program and a script read the output, not the text.
+    if (error instanceof BoxdError) return { output: { error: error.code, message: error.what, next: error.next }, text: error.message }
     throw error
   }
 }

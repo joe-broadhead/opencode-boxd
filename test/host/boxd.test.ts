@@ -4,7 +4,7 @@
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { SUPPORTED_HOST } from "../../src/constants.js"
 import { readFileSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { defaultRules, type Rule } from "../../src/permissions.js"
 import { TOOLS, CHANGING_TOOLS, READ_TOOLS } from "../../src/tools.js"
 import { TOOLS_RPC_ID } from "../../src/host/tools-rpc.js"
@@ -131,6 +131,10 @@ describe("the plugin on a stock host", () => {
         expect({ name: method.name, kind: method.kind, class: method.class, action: method.action }).toEqual({ name: method.name, kind: "plugin", class: spec.class, action: spec.id })
       }
 
+      // A plugin code is the method's output, not an RPC error: the code, what happened and the next step.
+      const unopened = (await call("boxd_job", { sessionID: build, input: { workId: "review-api" } })).output
+      expect(unopened).toEqual({ error: "NOT_OURS", message: 'No open work "review-api".', next: "Call boxd_ensure for this work id, and act only on the machine the ledger records for it." })
+
       const before = host.boxd.calls().length
       // The default block allows every tool, so a script's write is the same call a model's is: it runs.
       const ran = (await call("boxd_ensure", { sessionID: build, input: { workId: "review-api", directory: host.location.directory } })).output
@@ -232,7 +236,7 @@ describe("a create needs its golden image", () => {
 
       const before = host.boxd.calls().length
       const refused = await attempt(host, build, "build", "boxd_ensure", "always", { workId: "review-api", directory: host.location.directory })
-      expect(refused.output).toMatchObject({ error: "SNAPSHOT_MISSING" })
+      expect(refused.output).toMatchObject({ error: "SNAPSHOT_MISSING", message: 'The golden snapshot "opencode-golden" is not in this boxd account.' })
       expect(host.boxd.calls().slice(before).filter((call) => call.startsWith("machine new"))).toEqual([])
       expect(host.boxd.machines()).toEqual({})
 
@@ -313,6 +317,24 @@ describe("a failed run is reported, never hidden", () => {
       const status = await statusThroughRpc(host)
       expect(status.failedRuns).toEqual([{ workId: "review-api", error: "provider.auth: Go Teams covers workspace members, not service accounts. Use a personal API key to call Go models" }])
       expect(String(status.nextStep)).toContain("The last run of review-api failed")
+    } finally {
+      await host.close()
+    }
+  })
+
+  test("the newest run's error is the one reported, after an earlier run completed", async () => {
+    const host = await startHost()
+    try {
+      const build = await session(host)
+      await attempt(host, build, "build", "boxd_ensure", "always", { workId: "review-api", directory: host.location.directory })
+      await attempt(host, build, "build", "boxd_submit", "always", { workId: "review-api", text: "Reply with OK." })
+      host.guest.complete("ses_guest_root")
+      await attempt(host, build, "build", "boxd_submit", "always", { workId: "review-api", text: "Reply with OK again." })
+      host.guest.fail("ses_guest_root", AUTH)
+
+      // The server lists messages newest first: the newest idle message is this run's, not the first run's.
+      const job = await attempt(host, build, "build", "boxd_job", "reject", { workId: "review-api" })
+      expect(job.output).toMatchObject({ state: "idle", outcome: "failed", warning: "GUEST_AUTH_FAILED", error: "provider.auth: Go Teams covers workspace members, not service accounts. Use a personal API key to call Go models" })
     } finally {
       await host.close()
     }
@@ -404,7 +426,8 @@ describe("the status RPC", () => {
       host.boxd.seed("oc-review-api", { status: "hibernated" })
       const status = await statusThroughRpc(host)
       expect(status).toMatchObject({ state: "connected", openWorks: 1, guestVersion: HOST_VERSION, snapshot: "opencode-golden", unknownCount: 0 })
-      expect(status.works).toEqual([{ workId: "review-api", machine: "oc-review-api", sessionId: null, proof: "missing", dirty: false, machineStatus: "hibernated", warnings: [], outcome: null }])
+      // Hibernated by something the plugin did not record: the idle bound or the boxd CLI.
+      expect(status.works).toEqual([{ workId: "review-api", machine: "oc-review-api", sessionId: null, proof: "missing", dirty: false, machineStatus: "hibernated", warnings: [], outcome: null, asleepBy: "idle_or_cli" }])
       expect(status.unharvested).toEqual(["review-api"])
       expect(String(status.nextStep)).toContain("boxd_harvest for review-api")
     } finally {
@@ -463,6 +486,122 @@ describe("a run the guest's OpenCode died in", () => {
       expect((await attempt(host, build, "build", "boxd_submit", "always", { workId: "review-api", text: "Start again." })).output).toMatchObject({ state: "admitted" })
       host.guest.complete("ses_guest_root")
       expect((await attempt(host, build, "build", "boxd_sleep", "always", { workId: "review-api" })).output).toMatchObject({ state: "hibernated" })
+    } finally {
+      await host.close()
+    }
+  })
+})
+
+describe("a machine whose /tmp was cleared", () => {
+  test("a reboot loses the guest helper, and the next call copies it again and runs once", async () => {
+    const host = await startHost()
+    try {
+      const build = await session(host)
+      await attempt(host, build, "build", "boxd_ensure", "always", { workId: "review-api", directory: host.location.directory })
+      await attempt(host, build, "build", "boxd_submit", "always", { workId: "review-api", text: "Add a health check." })
+      const copies = () => host.boxd.calls().filter((line) => line === "machine cp - oc-review-api:/tmp/opencode-boxd/guest.py").length
+      expect(copies()).toBe(1)
+
+      // A resize or a restart clears /tmp while this OpenCode keeps running.
+      host.boxd.clearTmp()
+      const before = host.boxd.calls().length
+      expect((await attempt(host, build, "build", "boxd_job", "reject", { workId: "review-api" })).output).toMatchObject({ state: "busy" })
+      expect(copies()).toBe(2)
+      // The first call found no helper, so nothing ran; the probe, the copy and the one retry follow it.
+      const after = host.boxd.calls().slice(before)
+      expect(after.filter((line) => line === "machine exec oc-review-api -- ls -1a /tmp")).toHaveLength(1)
+
+      // With the helper back, a call that answers is not probed again.
+      const steady = host.boxd.calls().length
+      expect((await attempt(host, build, "build", "boxd_job", "reject", { workId: "review-api" })).output).toMatchObject({ state: "busy" })
+      expect(host.boxd.calls().slice(steady).some((line) => line.includes("ls -1a"))).toBe(false)
+      expect(host.guest.prompts).toHaveLength(1)
+    } finally {
+      await host.close()
+    }
+  })
+
+  test("a helper that is there and answers nothing is a crash, and is never run twice", async () => {
+    const host = await startHost()
+    try {
+      const build = await session(host)
+      await attempt(host, build, "build", "boxd_ensure", "always", { workId: "review-api", directory: host.location.directory })
+      // The copy on the machine now exits without a word, as a crashed helper does.
+      writeFileSync(join(dirname(host.boxd.state), "guest.py"), "import sys\nsys.exit(1)\n")
+      const before = host.boxd.calls().length
+      const submitted = await attempt(host, build, "build", "boxd_submit", "always", { workId: "review-api", text: "Add a health check." })
+      expect(submitted.output).toMatchObject({ error: "GUEST_FAILED" })
+      const after = host.boxd.calls().slice(before)
+      expect(after.filter((line) => line === "machine exec oc-review-api -- python3 /tmp/opencode-boxd/guest.py")).toHaveLength(1)
+      expect(after.some((line) => line.startsWith("machine cp - oc-review-api:/tmp/opencode-boxd/guest.py"))).toBe(false)
+      expect(host.guest.prompts).toEqual([])
+    } finally {
+      await host.close()
+    }
+  })
+})
+
+describe("what a guest session last did", () => {
+  test("boxd_job carries the session's last words, redacted, when it last changed, and the prompts that wait", async () => {
+    const host = await startHost()
+    try {
+      const build = await session(host)
+      await attempt(host, build, "build", "boxd_ensure", "always", { workId: "review-api", directory: host.location.directory })
+      const first = await attempt(host, build, "build", "boxd_submit", "always", { workId: "review-api", text: "Open the pull request." })
+      expect(first.output).not.toHaveProperty("queued")
+
+      const at = Date.parse("2026-11-11T09:30:00.000Z")
+      host.guest.say("ses_guest_root", `I could not push: github.com answered 401 for token=ghp_${"a".repeat(36)}. ${"More detail. ".repeat(40)}`, at)
+
+      // A second prompt for a running session waits in its inbox, and the submit says so.
+      const second = await attempt(host, build, "build", "boxd_submit", "always", { workId: "review-api", text: "Then tag it." })
+      expect(second.output).toMatchObject({ state: "admitted", queued: true })
+      expect(String((second.output as { next?: string }).next)).toContain("waits in its inbox")
+
+      const busy = (await attempt(host, build, "build", "boxd_job", "reject", { workId: "review-api" })).output as Record<string, unknown>
+      expect(busy).toMatchObject({ state: "busy", pending: 1, lastActivityAt: "2026-11-11T09:30:00.000Z" })
+      const text = String(busy.lastText)
+      expect(text).toStartWith("I could not push: github.com answered 401 for token=[redacted] More detail.")
+      expect(text).not.toContain("ghp_")
+      expect(Array.from(text)).toHaveLength(300)
+
+      host.guest.complete("ses_guest_root")
+      const idle = (await attempt(host, build, "build", "boxd_job", "reject", { workId: "review-api" })).output as Record<string, unknown>
+      // A completed run whose last words say the task did not happen: the outcome alone would hide it.
+      expect(idle).toMatchObject({ state: "idle", outcome: "completed", lastText: text })
+    } finally {
+      await host.close()
+    }
+  })
+
+  test("a server that cannot say which sessions run still takes the prompt: queued is a report, not a gate", async () => {
+    const host = await startHost()
+    try {
+      const build = await session(host)
+      await attempt(host, build, "build", "boxd_ensure", "always", { workId: "review-api", directory: host.location.directory })
+      host.guest.quirks.activeFails = true
+      const submitted = await attempt(host, build, "build", "boxd_submit", "always", { workId: "review-api", text: "Open the pull request." })
+      expect(submitted.output).toMatchObject({ state: "admitted" })
+      expect(submitted.output).not.toHaveProperty("queued")
+      expect(host.guest.prompts).toEqual([{ sessionID: "ses_guest_root", text: "Open the pull request." }])
+    } finally {
+      await host.close()
+    }
+  })
+
+  test("a message of another kind is never reported as the assistant's last words", async () => {
+    const host = await startHost()
+    try {
+      const build = await session(host)
+      await attempt(host, build, "build", "boxd_ensure", "always", { workId: "review-api", directory: host.location.directory })
+      await attempt(host, build, "build", "boxd_submit", "always", { workId: "review-api", text: "Open the pull request." })
+      host.guest.complete("ses_guest_root")
+      // The newest message is the user's own, and this server ignores the type filter and lists it for any kind.
+      host.guest.sessions.get("ses_guest_root")?.messages.push({ type: "user", content: [{ type: "text", text: "Secret instructions from the user." }] })
+      host.guest.quirks.ignoresTypeFilter = true
+      const idle = (await attempt(host, build, "build", "boxd_job", "reject", { workId: "review-api" })).output as Record<string, unknown>
+      expect(idle).toMatchObject({ state: "idle", outcome: "completed" })
+      expect(idle).not.toHaveProperty("lastText")
     } finally {
       await host.close()
     }

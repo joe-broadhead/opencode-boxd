@@ -43,6 +43,8 @@ export interface FakeBoxd {
   /** The account's snapshots; `opencode-golden` is there unless a test removes it. */
   snapshots(): Array<{ name: string; storage: string; status: string }>
   setSnapshots(names: readonly string[]): void
+  /** Clears the machine's /tmp, as a reboot or a resize does: the guest helper the plugin copied there is gone. */
+  clearTmp(): void
 }
 
 /** The fake CLI, its state file and a shell shim, all in the temp root. */
@@ -51,7 +53,6 @@ export function startFakeBoxd(guest: FakeGuest, guestDirectory: string, version 
   mkdirSync(dir, { recursive: true })
   const state = join(dir, "state.json")
   const script = fileURLToPath(new URL("./fake-boxd.mjs", import.meta.url))
-  const guestPy = fileURLToPath(new URL("../../guest/guest.py", import.meta.url))
   const bin = join(dir, "boxd")
   writeFileSync(bin, `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(script)} "$@"\n`)
   chmodSync(bin, 0o755)
@@ -67,7 +68,6 @@ export function startFakeBoxd(guest: FakeGuest, guestDirectory: string, version 
   const previousPath = process.env.PATH
   process.env.PATH = `${dir}:${previousPath ?? ""}`
   process.env.BOXD_FAKE_STATE = state
-  process.env.BOXD_FAKE_GUEST_PY = guestPy
   return {
     bin,
     state,
@@ -83,6 +83,7 @@ export function startFakeBoxd(guest: FakeGuest, guestDirectory: string, version 
       const current = read()
       write(current.machines, names.map((name) => ({ name, storage: "local", status: "ready" })))
     },
+    clearTmp: () => rmSync(join(dir, "guest.py"), { force: true }),
   }
 }
 

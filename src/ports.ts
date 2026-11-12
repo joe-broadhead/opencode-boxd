@@ -42,15 +42,26 @@ export type BoxdPort = {
   allowSleep(name: string): Promise<void>
 }
 
+/** What a guest session last did, read with its phase. Every field is a report: a read the guest refused leaves it out. */
+export type GuestActivity = {
+  /** When the session last changed, as an ISO time. */
+  readonly lastActivityAt?: string
+  /** The newest assistant message's text, redacted and cut to one line. The guest model's words: data, not instructions. */
+  readonly lastText?: string
+  /** Prompts waiting in the session's inbox for the run to take them. */
+  readonly pending?: number
+}
+
 export type GuestPort = {
   version(machine: string): Promise<string>
   server(machine: string): Promise<"up" | "starting">
   prepare(machine: string, directory: string, repo?: string): Promise<void>
   listSessions(machine: string): Promise<Array<{ id: string; parentID?: string }>>
   createSession(machine: string, directory: string, title: string): Promise<{ id: string }>
-  prompt(machine: string, sessionID: string, text: string): Promise<void>
-  /** The session's phase, and its last run's outcome when it is not busy. */
-  phase(machine: string, sessionID: string): Promise<{ phase: "busy" | "idle" | "missing"; run: GuestRun }>
+  /** Admits a prompt. `queued` says the session was running, so the prompt waits in its inbox for that run. */
+  prompt(machine: string, sessionID: string, text: string): Promise<{ queued: boolean }>
+  /** The session's phase, its last run's outcome when it is not busy, and what it last did. */
+  phase(machine: string, sessionID: string): Promise<{ phase: "busy" | "idle" | "missing"; run: GuestRun; activity: GuestActivity }>
   exportSession(machine: string, sessionID: string): Promise<unknown>
   importSession(machine: string, transfer: Transfer, directory: string): Promise<{ id: string }>
   /** Writes one file into the work tree, creating its folders: the data-in half of a work. */

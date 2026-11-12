@@ -38,10 +38,21 @@ export function cut(text: string, limit: number) {
  * redacted, and at most 160 characters, cut between whole characters. Undefined when nothing is left.
  */
 export function shortReason(text: string): string | undefined {
-  const reason = oneLine(SECRETS.reduce((value, [pattern, replacement]) => value.replace(pattern, replacement), withoutUrlSecrets(text))).replace(/[.\s]+$/, "")
+  const reason = redactedLine(text).replace(/[.\s]+$/, "")
   if (reason === "") return undefined
   return cut(reason, REASON_LIMIT)
 }
+
+/**
+ * Text a guest session wrote, such as its last message, made safe in the same way and cut to `limit` characters. Its
+ * closing punctuation stays. Undefined when nothing is left.
+ */
+export function excerpt(text: string, limit: number): string | undefined {
+  const line = redactedLine(text)
+  return line === "" ? undefined : cut(line, limit)
+}
+
+const redactedLine = (text: string) => oneLine(SECRETS.reduce((value, [pattern, replacement]) => value.replace(pattern, replacement), withoutUrlSecrets(text)))
 
 /** An error's message, or the value itself, as a short reason; `fallback` when nothing is left. */
 export const reasonOf = (error: unknown, fallback = "no reason given") =>

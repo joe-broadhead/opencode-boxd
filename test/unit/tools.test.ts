@@ -49,6 +49,17 @@ describe("the tool table", () => {
     }
   })
 
+  test("a coded error's result keeps the code, what happened and the next step, so a program can read all three", async () => {
+    const { fleet } = await world()
+    const answer = await runTool("job", fleet, { workId: "never-opened" })
+    expect(answer.output).toEqual({
+      error: "NOT_OURS",
+      message: 'No open work "never-opened".',
+      next: "Call boxd_ensure for this work id, and act only on the machine the ledger records for it.",
+    })
+    expect(answer.text).toBe(`NOT_OURS: No open work "never-opened". Next step: Call boxd_ensure for this work id, and act only on the machine the ledger records for it.`)
+  })
+
   test("input is checked by the tool, so a missing or empty string is a coded error, not a crash", async () => {
     const { fleet } = await world()
     for (const name of ["ensure", "job", "submit", "harvest", "sleep", "resume", "image", "drop"] as ToolName[]) {

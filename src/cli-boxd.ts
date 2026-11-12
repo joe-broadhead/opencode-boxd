@@ -14,10 +14,11 @@ import {
   wakeArgs,
 } from "./argv.js"
 import type { BoxdPort, MachineInfo, MachineStatus } from "./ports.js"
+import { assertLaptopCli } from "./cli-flavor.js"
 import { parseJson, run } from "./run.js"
 
 export function cliBoxd(bin = "boxd"): BoxdPort {
-  return {
+  return guarded(bin, {
     get: (name) => get(bin, name),
     list: async () => {
       const result = await run(bin, listArgs())
@@ -63,7 +64,19 @@ export function cliBoxd(bin = "boxd"): BoxdPort {
       await ok(bin, allowSleepArgs(name))
       await ok(bin, outboundArgs(name, "on"))
     },
-  }
+  })
+}
+
+/** Every call first checks that the CLI is the laptop's: the in-VM CLI's commands differ, and would fail one by one. */
+function guarded(bin: string, port: BoxdPort): BoxdPort {
+  const entries = Object.entries(port).map(([name, method]) => [
+    name,
+    async (...args: unknown[]) => {
+      await assertLaptopCli(bin)
+      return (method as (...input: unknown[]) => unknown)(...args)
+    },
+  ])
+  return Object.fromEntries(entries) as BoxdPort
 }
 
 async function get(bin: string, name: string): Promise<MachineInfo> {

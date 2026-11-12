@@ -123,6 +123,11 @@ permissions, followed by your top-level rules for boxd tools.
   `/boxd-status`, the `/boxd` dialog and the status RPC read the same. No read wakes a machine, because waking starts
   billing. The plugin never reads your boxd account or credentials.
 - **A read never wakes.** `boxd_job` reports `asleep` for a hibernated machine and names `boxd_resume` as the next step.
+  `asleepBy` is `boxd_sleep` (with `sleptAt`) when the plugin hibernated it and has not woken it since, and
+  `idle_or_cli` otherwise: the 30-minute idle bound, or the boxd CLI. boxd does not say when a machine hibernated by
+  itself. Status shows the same per work. The plugin cannot see a wake it did not make: a machine woken outside it,
+  by the boxd CLI or an SSH connection, and put down again by the idle bound still reports `boxd_sleep` with the older
+  `sleptAt`, until the plugin wakes or recreates it.
 - **Hibernating destroys nothing.** `boxd_sleep` needs no proof and works when the guest cannot be harvested; it records
   a warning that the last prompt is not on the laptop yet, which status shows. `boxd_image` and `boxd_drop` still need a
   fresh proof.
@@ -138,6 +143,9 @@ permissions, followed by your top-level rules for boxd tools.
   `GUEST_RUN_FAILED` or `GUEST_AUTH_FAILED` as a warning, and status shows each work's last outcome. The error is `<type>: <first line>`, passed
   through redaction; a provider's response body is never read. It comes from the guest or the imported transcript, never
   from a model call.
+- **A job says what the session last did.** On a running machine `boxd_job` adds `lastText` (the newest assistant text,
+  redacted and cut to 300 characters), `lastActivityAt` and `pending` (prompts waiting in the session's inbox). Each is
+  read from the guest's own session with no model call, and left out when the guest does not answer it.
 - **Drop only destroys what the laptop can account for.** It refuses a non-git directory, untracked or ignored paths, and
   a dirty tree with no stored patch. Tracked changes are stored as `git diff HEAD`; untracked contents are stored beside
   it when the guest can read them, which is not the same as a faithful copy, so a drop still refuses.
@@ -148,7 +156,9 @@ permissions, followed by your top-level rules for boxd tools.
 
 ## Errors
 
-Every plugin error reads `CODE: What happened. Next step: What to do.`, with exactly one next step. Upstream and host
+Every plugin error reads `CODE: What happened. Next step: What to do.`, with exactly one next step. A tool's result
+for it is `{ "error": "<CODE>", "message": "<what happened>", "next": "<what to do>" }`, so a Code Mode program or a
+script reads the same three parts the model does. Upstream and host
 errors pass through unchanged. No error, log or status line contains a token, a code or a signed URL.
 
 | Code | What it means |
@@ -169,9 +179,11 @@ errors pass through unchanged. No error, log or status line contains a token, a 
 | `RUN_INTERRUPTED` | The guest's OpenCode stopped during a run, so the run never finished. The transcript is kept. Call `boxd_harvest`, then `boxd_submit` again. |
 | `GUEST_AUTH_FAILED` | The guest session's last run failed on a model credential. The transcript is still imported; fix the guest's sign-in. |
 | `GUEST_FAILED` | The guest helper failed an action. |
+| `GUEST_UNRESPONSIVE` | A guest call timed out, and a probe of the machine found under a tenth of its memory available, or a load over four per CPU. The message gives the free memory, the load and the three largest processes by name and pid. |
+| `GUEST_SERVER_DOWN` | A guest call timed out, and a probe found the machine well but nothing listening on the OpenCode port. The next guest call starts the server again. |
 | `BOXD_FAILED` | The boxd CLI refused a command or returned something unusable. |
-| `BOXD_MISSING` | The boxd CLI is not on the `PATH`. |
-| `TIMEOUT` | A boxd command did not answer in time. |
+| `BOXD_MISSING` | The boxd CLI is not on the `PATH`, or the one there is the in-VM CLI, which this plugin does not support. |
+| `TIMEOUT` | A boxd command did not answer in time. After a guest call, a probe that found the machine well, server included, adds what it found. |
 | `NOT_PROVEN` | No fresh laptop import. Sleep, image and drop refuse. |
 | `DIRTY` | The guest tree has uncommitted work and no stored patch. |
 | `EXPORT_INVALID` | An export is not in OpenCode's session shape. |

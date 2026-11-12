@@ -22,6 +22,8 @@ export const CODES = {
   RUN_INTERRUPTED: "Call boxd_harvest to keep what exists, then boxd_submit again.",
   GUEST_AUTH_FAILED: "Fix the guest's model credentials (docs/golden-image.md), then boxd_submit again.",
   GUEST_FAILED: "Call boxd_status, and recreate the machine with boxd_resume if the guest keeps failing.",
+  GUEST_UNRESPONSIVE: "Tell the user the machine is short of memory or overloaded, and which processes the message names, so they can free it.",
+  GUEST_SERVER_DOWN: "Call boxd_job in a later turn: it starts the guest's OpenCode again, and reports starting until it is up.",
   BOXD_FAILED: "Read the boxd CLI's own message, and run boxd_status before trying again.",
   BOXD_MISSING: "Put the boxd CLI on the server's PATH and sign it in, in that server's HOME (its config is at ~/.config/boxd on Linux, or ~/Library/Application Support/boxd on macOS); an isolated or service instance needs its own HOME with both setups.",
   TIMEOUT: "Call boxd_status in a later turn instead. Do not retry inside the same call.",
@@ -47,12 +49,15 @@ export type Code = keyof typeof CODES
 /** One plugin error: the code, what happened, and the code's next step. */
 export class BoxdError extends Error {
   readonly code: Code
+  /** What happened, the sentence between the code and the next step. */
+  readonly what: string
   readonly next: string
 
   constructor(code: Code, message: string) {
     super(errorText(code, message, CODES[code]))
     this.name = "BoxdError"
     this.code = code
+    this.what = message
     this.next = CODES[code]
   }
 }

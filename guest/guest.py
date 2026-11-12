@@ -10,6 +10,7 @@ import json
 import os
 import re
 import secrets
+import socket
 import subprocess
 import sys
 import urllib.error
@@ -150,8 +151,15 @@ def action_prompt(request):
     text = request.get("text")
     if not isinstance(text, str) or not text:
         fail("empty prompt")
-    http("POST", base_url(request) + f"/api/session/{sid}/prompt", {"text": text})
-    emit({"admitted": sid})
+    base = base_url(request)
+    # A prompt for a running session waits in its inbox until that run takes it: say so, so the caller knows. That is a
+    # report, not a gate: a server that cannot say which sessions run still takes the prompt.
+    try:
+        running = sid in (unwrap(http("GET", base + "/api/session/active")) or {})
+    except (GuestError, ValueError):
+        running = False
+    http("POST", base + f"/api/session/{sid}/prompt", {"text": text})
+    emit({"admitted": sid, "queued": running})
 
 
 def action_export(request):
@@ -193,7 +201,7 @@ def action_phase(request):
         return
     active = unwrap(http("GET", base + "/api/session/active")) or {}
     if sid in active:
-        emit({"phase": "busy"})
+        emit({"phase": "busy", **activity(base, sid, info)})
         return
     # A busy stamp with no run in the server is a run the server died in: it never reached an idle turn, so the session
     # is not busy, and its last run was interrupted.
@@ -201,28 +209,64 @@ def action_phase(request):
     busy = time.get("busy")
     idle = time.get("idle")
     if isinstance(busy, (int, float)) and (not isinstance(idle, (int, float)) or busy > idle):
-        emit({"phase": "idle", "outcome": "interrupted", "error": None})
+        emit({"phase": "idle", "outcome": "interrupted", "error": None, **activity(base, sid, info)})
         return
-    # The last idle turn carries the outcome and, when a run failed, the error an agent must hear about.
+    # The last idle turn carries the outcome and, when a run failed, the error an agent must hear about. The server lists
+    # messages newest first, so the one idle message asked for is the last run's.
     outcome = info.get("outcome")
     if outcome not in ("succeeded", "failed", "interrupted"):
         outcome = None
     error = None
     try:
-        messages = unwrap(http("GET", base + f"/api/session/{sid}/message")) or []
-        for message in reversed(messages if isinstance(messages, list) else []):
-            if not isinstance(message, dict) or message.get("type") != "idle":
-                continue
+        message = newest(base, sid, "idle")
+        if isinstance(message, dict):
             if outcome is None and message.get("outcome") in ("succeeded", "failed", "interrupted"):
                 outcome = message["outcome"]
             failure = message.get("error")
             if outcome == "failed" and isinstance(failure, dict):
                 error = {"type": str(failure.get("type") or "error"), "message": str(failure.get("message") or "")}
-            break
     except GuestError:
         # An outcome is a report, not a gate: a server that cannot list messages still answers the phase.
         pass
-    emit({"phase": "idle", "outcome": outcome, "error": error})
+    emit({"phase": "idle", "outcome": outcome, "error": error, **activity(base, sid, info)})
+
+
+TEXT_LIMIT = 2000
+
+
+def activity(base, sid, info):
+    """When the session last did something, the text of its newest assistant message, and the prompts in its inbox.
+
+    A report, not a gate: a read the server refuses leaves its field out. The laptop redacts and cuts the text."""
+    stamps = [info.get("time", {}).get(key) for key in ("updated", "busy", "idle")] if isinstance(info.get("time"), dict) else []
+    text = None
+    try:
+        message = newest(base, sid, "assistant")
+    except GuestError:
+        message = None
+    if isinstance(message, dict):
+        time = message.get("time") if isinstance(message.get("time"), dict) else {}
+        stamps += [time.get("completed"), time.get("created")]
+        content = message.get("content") if isinstance(message.get("content"), list) else []
+        parts = [part["text"] for part in content if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str)]
+        text = " ".join(parts).strip()[:TEXT_LIMIT] or None
+    pending = None
+    try:
+        inbox = unwrap(http("GET", base + f"/api/session/{sid}/inbox")) or []
+        pending = sum(1 for item in inbox if isinstance(item, dict) and item.get("type") == "user") if isinstance(inbox, list) else None
+    except GuestError:
+        pass
+    numbers = [stamp for stamp in stamps if isinstance(stamp, (int, float)) and not isinstance(stamp, bool)]
+    return {"activityAt": max(numbers) if numbers else None, "lastText": text, "pending": pending}
+
+
+def newest(base, sid, kind):
+    """The session's newest message of one type, or None: one message, not a page of the transcript.
+
+    A server that ignores the type filter would hand back another kind, which is no answer: it is checked here."""
+    messages = unwrap(http("GET", base + f"/api/session/{sid}/message?type={kind}&order=desc&limit=1")) or []
+    message = messages[0] if isinstance(messages, list) and messages else None
+    return message if isinstance(message, dict) and message.get("type") == kind else None
 
 
 UNTRACKED_LIMIT = 100
@@ -327,6 +371,56 @@ def action_prepare(request):
     emit({"prepared": path})
 
 
+def action_health(request):
+    """Why the machine may not answer: free memory, load, the largest processes and the server's port. Reads /proc.
+
+    It never talks to OpenCode, so it answers when the server is the thing that hangs. A process is named by its
+    command name, never its arguments, which can hold a secret."""
+    meminfo = {}
+    try:
+        with open("/proc/meminfo", encoding="utf8") as handle:
+            for line in handle:
+                key, _, value = line.partition(":")
+                if key in ("MemTotal", "MemAvailable"):
+                    meminfo[key] = int(value.split()[0]) // 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    load = None
+    try:
+        with open("/proc/loadavg", encoding="utf8") as handle:
+            load = float(handle.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        pass
+    processes = []
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            with open(f"/proc/{entry}/status", encoding="utf8", errors="replace") as handle:
+                fields = dict(line.rstrip("\n").split(":\t", 1) for line in handle if ":\t" in line)
+            rss = int(fields.get("VmRSS", "0 kB").split()[0]) // 1024
+        except (OSError, ValueError, IndexError):
+            continue
+        processes.append({"pid": int(entry), "name": fields.get("Name", "?").strip()[:32], "rssMiB": rss})
+    processes.sort(key=lambda item: item["rssMiB"], reverse=True)
+    port = int(base_url(request).rsplit(":", 1)[1])
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=2):
+            server = "listening"
+    except OSError:
+        server = "closed"
+    emit(
+        {
+            "memTotalMiB": meminfo.get("MemTotal"),
+            "memAvailableMiB": meminfo.get("MemAvailable"),
+            "load1": load,
+            "cpus": os.cpu_count(),
+            "top": processes[:3],
+            "server": server,
+        }
+    )
+
+
 ACTIONS = {
     "info": action_info,
     "serve": action_serve,
@@ -339,6 +433,7 @@ ACTIONS = {
     "git": action_git,
     "digest": action_digest,
     "prepare": action_prepare,
+    "health": action_health,
 }
 
 

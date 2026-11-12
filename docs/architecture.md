@@ -18,10 +18,19 @@ OpenCode (laptop)                     boxd machine                   laptop
   the status RPC, the tools RPC and the tool transform.
 - `src/fleet.ts` — the control plane: ensure, submit, job, harvest, sleep, resume, image, drop. It refuses to sleep,
   image or drop work whose laptop import is not fresh, and refuses to drop a machine it does not own.
+- `src/cli-flavor.ts` — reads `boxd --help` once per binary and refuses the in-VM CLI (its help carries two phrases, and both are required) with `BOXD_MISSING` before `cli-boxd.ts`
+  sends a command: the in-VM CLI takes `--vm <name>` for `config set` and `snapshots save`, where the laptop CLI takes the
+  machine as an argument. A CLI that cannot answer `--help` is not refused; its next command reports its own failure.
 - `src/cli-boxd.ts`, `src/cli-guest.ts`, `src/prover.ts` — the three ports, each a thin wrapper over a command. Every
   argument is an argv array, never a shell string.
 - `guest/guest.py` — the helper copied to the machine. It speaks one JSON object in and one out, and talks only to
-  `127.0.0.1`.
+  `127.0.0.1`. It lives in `/tmp/opencode-boxd` on the machine, which a reboot clears: a call that gets no answer lists
+  `/tmp`, and only when the listing clearly lacks the folder copies the helper again and runs the call once more. Python
+  never started the action in that case, so nothing runs twice; a boxd CLI that failed keeps the call's own error. Its
+  `health` action reads `/proc` and the server's port, never OpenCode: after a helper call times out, the plugin runs it
+  once, for at most 10 s. A machine short of memory or overloaded answers `GUEST_UNRESPONSIVE`, and one with nothing on
+  the OpenCode port `GUEST_SERVER_DOWN`, with the facts instead of a bare `TIMEOUT`. A process is named by its command
+  name, never its arguments.
 - `src/ledger.ts` — the laptop's store: atomic writes, one lock per work, 0700/0600 modes.
 - `src/paths.ts` — the laptop path policy for files in and out: the project and `allowedRoots`, no symlink, an 8 MiB file
   and a 32 MiB call, and a temp-then-rename write that never replaces a local edit.
@@ -59,7 +68,18 @@ first, and only then may the machine sleep, be imaged or be destroyed.
   lose each other's fields. `submit` stamps `lastSubmitAt` before the prompt, so a crash fails towards "stale".
 - The import runs with `--standalone`, so it never depends on a service being up.
 - A session's last run is `info.outcome` (`succeeded`, `failed`, `interrupted`) on `GET /api/session/<id>`, and the
-  same outcome with the failure's structured error on the last `idle` message from `GET /api/session/<id>/message`. An
+  same outcome with the failure's structured error on the last `idle` message from `GET /api/session/<id>/message`.
+  That list is newest first and 50 a page unless `order` and `limit` say otherwise, and `type` filters it before the
+  page is cut, on 2.2.3 and 2.2.6 alike. The helper asks for `?type=idle&order=desc&limit=1`: one message, the last
+  run's.
+- An assistant message is `{type: "assistant", time: {created, completed?}, content: [...]}`, where `content` holds
+  `text`, `reasoning` and `tool` parts. `boxd_job` reads the newest one (`?type=assistant&order=desc&limit=1`) and keeps
+  its `text` parts only, redacted and cut to 300 characters on the laptop. `lastActivityAt` is the latest of the
+  session's `time.updated`, `busy` and `idle` and that message's times, all epoch milliseconds.
+- `POST /api/session/<id>/prompt` admits a prompt for a running session too: it waits in `GET /api/session/<id>/inbox`
+  (`user`, `synthetic`, `compaction` and `move` items, in enqueue order) until the run takes it, as a steer by default.
+  `boxd_submit` reads `/api/session/active` first and says `queued`; `boxd_job` counts the inbox's `user` items as
+  `pending`. An
   export carries both, so a harvest reads the outcome from the transcript and `boxd_job` from the live session: no model
   call either way. `src/outcome.ts` maps them to `completed`, `failed` and `aborted`.
 - `POST /api/session` creates a session, `POST /api/session/<id>/prompt` admits one, and
@@ -258,8 +278,8 @@ removed afterwards. Each item gives the command and what it answered.
 - A killed run used to leave its session busy, so `SESSION_BUSY` never ended. It is now `aborted`, and `boxd_resume`
   raises `RUN_INTERRUPTED` for it.
 - The first `boxd_submit` after an image answered `GUEST_FAILED`, and `boxd_job` 30 s later answered `MACHINE_STARTING`,
-  while the server process was still listed. It did not recur, and its cause is not known. The message carries the
-  helper's error word only, not its detail (`src/cli-guest.ts`), so the cause could not be read from it.
+  while the server process was still listed. It did not recur, and its cause is not known. A `GUEST_FAILED` message
+  now carries the helper's error and its detail, redacted, and the tool result keeps it as `message`.
 
 **Concurrency**
 - A `boxd_submit` and a `boxd_harvest` on one work, in flight together, both returned. The ledger kept the root session,

@@ -54,10 +54,15 @@ session you cannot get back.
    the current project.
 2. `boxd_submit` with the task, and optionally `files: [{ from, to }]` to copy data in. Each `from` is a laptop file
    inside the project or an allowed root, and each `to` is a path inside the work tree. It returns when the guest has
-   admitted the prompt, not when the model finishes.
+   admitted the prompt, not when the model finishes, with `queued: true` when the session was still running, so the
+   prompt waits in its inbox for that run.
 3. `boxd_job` in a later turn: busy, idle, asleep, gone or starting, with the guest session's last outcome
-   (`completed`, `failed` or `aborted`) when it is idle. It never wakes a machine, because waking starts billing; a
-   hibernated work reports `asleep` with `boxd_resume` as its next step.
+   (`completed`, `failed` or `aborted`) when it is idle. A running machine's answer also carries `lastText`, the
+   session's newest assistant text (redacted, at most 300 characters), `lastActivityAt`, and `pending`, the prompts
+   waiting in its inbox: a run can complete and still say its task did not happen. It never wakes a machine, because
+   waking starts billing; a hibernated work reports `asleep` with `boxd_resume` as its next step, and `asleepBy` says
+   who put it down: `boxd_sleep`, with `sleptAt`, or `idle_or_cli` for the idle bound or the boxd CLI, whose time boxd
+   does not report.
 4. `boxd_harvest`, optionally with `files: ["SUMMARY.md"]` and `to`, copies the files a work produced back to this
    laptop. The session tree is exported, imported here parents first, git is recorded, and then the files move.
 5. `boxd_sleep` to hibernate, `boxd_resume` to wake or rebuild, `boxd_image` to save a snapshot, `boxd_drop` to destroy.
@@ -167,6 +172,9 @@ Each member still needs the boxd CLI signed in on their own laptop.
 
 ## Troubleshooting
 
+A tool that fails returns `error` (the code), `message` (what happened, such as which step timed out) and `next` (the
+one next step).
+
 | Code | What to do |
 |---|---|
 | `HOST_UNTESTED` | Use OpenCode `>=2.2.3 <2.3.0`, or set `"allowUntestedHost": true` to run anyway. |
@@ -189,8 +197,10 @@ Each member still needs the boxd CLI signed in on their own laptop.
 | `RUN_INTERRUPTED` | The guest's OpenCode stopped during a run, so the run never finished. `boxd_resume` says so once, and `boxd_job` reports the run as aborted. Harvest what exists, then `boxd_submit` again. |
 | `GUEST_AUTH_FAILED` | The failed run was a credential failure. Fix the guest's sign-in as [the golden image](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/golden-image.md) describes, then `boxd_submit` again. |
 | `GUEST_FAILED` | Call `boxd_status`, and recreate the machine with `boxd_resume` if the guest keeps failing. |
+| `GUEST_UNRESPONSIVE` | The guest's OpenCode did not answer and the machine is short of memory or overloaded; the message names the largest processes. Tell the user, who can free it; waiting a turn does not. |
+| `GUEST_SERVER_DOWN` | The guest's OpenCode did not answer and nothing listens on its port, on a machine that is otherwise well. Call `boxd_job` in a later turn: it starts the server again. |
 | `BOXD_FAILED` | Read the boxd CLI's own message, and run `boxd_status` before trying again. |
-| `BOXD_MISSING` | Install the boxd CLI, sign in to it, and restart OpenCode so it is on the `PATH`. |
+| `BOXD_MISSING` | Install the laptop's boxd CLI, sign in to it, and restart OpenCode so it is on the `PATH`. The CLI that runs inside a boxd machine is not the one this plugin drives. |
 | `TIMEOUT` | Call `boxd_status` in a later turn instead. Do not retry inside the same call. |
 | `NOT_PROVEN` | Call `boxd_harvest` before sleeping, imaging or dropping this work. |
 | `DIRTY` | Call `boxd_harvest`, which stores the uncommitted diff with the export, before dropping. |
@@ -214,6 +224,9 @@ agents without the default rules, the OpenCode version and one next step.
   [docs/architecture.md](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/architecture.md) records each
   measurement, and [docs/live-check.md](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/live-check.md)
   lists what to check again after a boxd CLI or API change.
+- **The laptop's boxd CLI only.** The plugin drives remote machines from a laptop. The boxd CLI that runs inside a boxd
+  machine takes `--vm <name>` where the laptop CLI takes the machine as an argument, so it is not supported: every
+  tool answers `BOXD_MISSING` on it, and no machine is changed.
 - **Idle bounds.** boxd gives a new machine a 4-hour idle bound. The plugin sets 30 minutes when it creates or wakes a
   machine, and that bound is what limits billing when the laptop is gone.
 - **A create can land after boxd stops answering.** If `machine new` times out, the machine may still appear. `boxd_ensure`
@@ -225,6 +238,9 @@ agents without the default rules, the OpenCode version and one next step.
 - **Model keys.** A model provider can refuse a service-account key. The
   [golden image page](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/golden-image.md) says what to use.
 - **Sign-in is boxd's.** The plugin runs the boxd CLI you are signed in to, and never runs `boxd auth login` for you.
+- **Guest credentials are boxd's too.** A guest reads its model key and any push token from `boxd env` at boot; the
+  plugin never reads or renews them. A token that expires, such as a one-hour GitHub App token, stops every guest that
+  uses it unless something renews it, and a guest session cannot finish an interactive sign-in by itself.
 - Updates are not automatic for a Git install, and `opencode plugin update` and `opencode plugin check` do not work on one: to move to a newer release, remove the old entry and add the new tag.
 
 ## Uninstall
