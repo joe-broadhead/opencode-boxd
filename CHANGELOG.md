@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   clears the record when it wakes or recreates the machine. A wake outside the plugin followed by a later idle
   hibernation still reads `boxd_sleep` with the older time: the plugin cannot see that wake.
 
+- The skill covers many works from one Code Mode loop, where a guest's credentials come from and what a session should
+  do on a 401, and how to look at a slow guest with the boxd CLI. The README and the golden-image page say that a
+  short-lived token stops every guest once nothing renews it.
+
 ### Fixed
 
 - `boxd_ensure` on an open work rewrote its ledger record from a short list of fields and dropped the rest: the files
@@ -41,6 +45,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with `GUEST_FAILED` until OpenCode restarted. A call that gets no answer now lists `/tmp`, and only when the folder is
   clearly gone copies the helper again and runs once more. A crash, or a boxd CLI that failed, keeps its own error and
   is never run twice.
+- The skill said `directory` moves the guest's folder and that `boxd_job` answers only busy, idle or missing. It now
+  says `directory` is the laptop folder, names every job state, and says what `proof` `fresh`, `stale` and `missing`
+  mean.
 
 ## [0.0.0] - 2026-11-10
 <!-- kit-release: the GitHub release v0.0.0 -->

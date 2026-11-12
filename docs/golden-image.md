@@ -88,6 +88,10 @@ Two things to know:
 - The injected variables are readable by anything on the machine and by anyone who can boot a machine in the
   organisation: they are injected at boot, not baked into the image, but every boot has them. Rotate the key if someone
   leaves.
+- A short-lived token, such as a GitHub App installation token that lives one hour, must be set again before it
+  expires. A refresh that runs on the laptop stops while the laptop sleeps, and every guest that pushes after that gets
+  a 401. Tell a session in its prompt to stop and report a 401 or 403: it cannot finish an interactive sign-in, such as
+  `boxd manage integrations connect git`, without a person.
 
 ### Signing in on the machine, as a fallback
 

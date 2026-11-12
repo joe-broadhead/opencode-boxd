@@ -235,6 +235,9 @@ agents without the default rules, the OpenCode version and one next step.
 - **Model keys.** A model provider can refuse a service-account key. The
   [golden image page](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/golden-image.md) says what to use.
 - **Sign-in is boxd's.** The plugin runs the boxd CLI you are signed in to, and never runs `boxd auth login` for you.
+- **Guest credentials are boxd's too.** A guest reads its model key and any push token from `boxd env` at boot; the
+  plugin never reads or renews them. A token that expires, such as a one-hour GitHub App token, stops every guest that
+  uses it unless something renews it, and a guest session cannot finish an interactive sign-in by itself.
 - Updates are not automatic for a Git install, and `opencode plugin update` and `opencode plugin check` do not work on one: to move to a newer release, remove the old entry and add the new tag.
 
 ## Uninstall
