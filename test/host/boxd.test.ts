@@ -131,6 +131,10 @@ describe("the plugin on a stock host", () => {
         expect({ name: method.name, kind: method.kind, class: method.class, action: method.action }).toEqual({ name: method.name, kind: "plugin", class: spec.class, action: spec.id })
       }
 
+      // A plugin code is the method's output, not an RPC error: the code, what happened and the next step.
+      const unopened = (await call("boxd_job", { sessionID: build, input: { workId: "review-api" } })).output
+      expect(unopened).toEqual({ error: "NOT_OURS", message: 'No open work "review-api".', next: "Call boxd_ensure for this work id, and act only on the machine the ledger records for it." })
+
       const before = host.boxd.calls().length
       // The default block allows every tool, so a script's write is the same call a model's is: it runs.
       const ran = (await call("boxd_ensure", { sessionID: build, input: { workId: "review-api", directory: host.location.directory } })).output
@@ -232,7 +236,7 @@ describe("a create needs its golden image", () => {
 
       const before = host.boxd.calls().length
       const refused = await attempt(host, build, "build", "boxd_ensure", "always", { workId: "review-api", directory: host.location.directory })
-      expect(refused.output).toMatchObject({ error: "SNAPSHOT_MISSING" })
+      expect(refused.output).toMatchObject({ error: "SNAPSHOT_MISSING", message: 'The golden snapshot "opencode-golden" is not in this boxd account.' })
       expect(host.boxd.calls().slice(before).filter((call) => call.startsWith("machine new"))).toEqual([])
       expect(host.boxd.machines()).toEqual({})
 

@@ -261,8 +261,8 @@ removed afterwards. Each item gives the command and what it answered.
 - A killed run used to leave its session busy, so `SESSION_BUSY` never ended. It is now `aborted`, and `boxd_resume`
   raises `RUN_INTERRUPTED` for it.
 - The first `boxd_submit` after an image answered `GUEST_FAILED`, and `boxd_job` 30 s later answered `MACHINE_STARTING`,
-  while the server process was still listed. It did not recur, and its cause is not known. The message carries the
-  helper's error word only, not its detail (`src/cli-guest.ts`), so the cause could not be read from it.
+  while the server process was still listed. It did not recur, and its cause is not known. A `GUEST_FAILED` message
+  now carries the helper's error and its detail, redacted, and the tool result keeps it as `message`.
 
 **Concurrency**
 - A `boxd_submit` and a `boxd_harvest` on one work, in flight together, both returned. The ledger kept the root session,

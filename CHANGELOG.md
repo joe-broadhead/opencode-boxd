@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `boxd_job` could report an earlier run's error, or none, for a failed run. The guest's message list is newest first,
   and the helper walked it oldest first and stopped at the first idle message. It now asks for the newest idle message
   only, so a credential failure after a completed run reports `GUEST_AUTH_FAILED` with its own error.
+- A coded error's tool result kept only `error` and `next`, so a Code Mode program or a script never saw what happened.
+  It is now `{ error, message, next }`. A timeout names its step, such as the guest's `phase` on `oc-<work id>`, and a
+  `GUEST_FAILED` message carries the helper's error and detail, redacted, or the last line the machine wrote.
+- `docs/scripting.md` said a plugin code arrives as the RPC error `failed`. It arrives as the method's output; only the
+  four RPC codes are errors.
 
 ## [0.0.0] - 2026-11-10
 <!-- kit-release: the GitHub release v0.0.0 -->

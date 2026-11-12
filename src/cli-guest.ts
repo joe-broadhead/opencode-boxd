@@ -1,21 +1,31 @@
-import { boxdError } from "./errors.js"
+import { boxdError, BoxdError } from "./errors.js"
 import { copyFromGuestArgs, copyToGuestArgs, execArgs, guestRequest } from "./argv.js"
 import type { GuestPort } from "./ports.js"
 import { readGuestHelper } from "./cli-boxd.js"
-import { run, runBuffer } from "./run.js"
+import { duration, run, runBuffer } from "./run.js"
 import { errorLine, mapOutcome } from "./outcome.js"
+import { shortReason } from "./redact.js"
 
 const HELPER = "/tmp/opencode-boxd/guest.py"
 
-export function cliGuest(bin = "boxd"): GuestPort {
+/** The guest port over the boxd CLI. `timeoutMs` bounds one helper call on the machine. */
+export function cliGuest(bin = "boxd", timeoutMs = 30_000): GuestPort {
   const uploaded = new Set<string>()
 
   async function call(machine: string, action: string, fields: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
     await ensureHelper(bin, machine, uploaded)
-    const result = await run(bin, execArgs(machine), { stdin: guestRequest(action, fields), timeoutMs: 30_000 })
-    const parsed = parseLine(result.stdout)
+    const result = await run(bin, execArgs(machine), { stdin: guestRequest(action, fields), timeoutMs }).catch((error: unknown) => {
+      // Name the step that timed out: the guest's own action, on its machine.
+      if (error instanceof BoxdError && error.code === "TIMEOUT") {
+        throw boxdError("TIMEOUT", `The guest's ${action} on ${machine} did not answer within ${duration(timeoutMs)}.`)
+      }
+      throw error
+    })
+    const parsed = parseLine(result.stdout, result.stderr)
     if (result.code !== 0 || parsed.ok === false) {
-      throw boxdError("GUEST_FAILED", `The guest ${action} failed (${String(parsed.error ?? result.stderr).slice(0, 300)}).`)
+      // The helper's error word and its detail, such as the guest server's own answer, redacted and cut to one line.
+      const reason = [parsed.error, parsed.detail].filter((part): part is string => typeof part === "string" && part !== "").join(": ") || result.stderr
+      throw boxdError("GUEST_FAILED", `The guest ${action} failed (${shortReason(reason) ?? "no reason given"}).`)
     }
     return parsed
   }
@@ -114,10 +124,15 @@ async function ensureHelper(bin: string, machine: string, uploaded: Set<string>)
   uploaded.add(machine)
 }
 
-function parseLine(stdout: string): Record<string, unknown> {
+function parseLine(stdout: string, stderr: string): Record<string, unknown> {
   const lines = stdout.trim().split("\n")
   const line = [...lines].reverse().find((item) => item.startsWith("{"))
-  if (!line) throw boxdError("GUEST_FAILED", "The guest helper did not return JSON.")
+  if (!line) {
+    // The last line the machine wrote to stderr, such as a traceback's error, says why.
+    const last = stderr.trim().split("\n").at(-1) ?? ""
+    const reason = shortReason(last)
+    throw boxdError("GUEST_FAILED", `The guest helper did not return JSON${reason ? ` (${reason})` : ""}.`)
+  }
   return JSON.parse(line) as Record<string, unknown>
 }
 

@@ -47,12 +47,15 @@ export type Code = keyof typeof CODES
 /** One plugin error: the code, what happened, and the code's next step. */
 export class BoxdError extends Error {
   readonly code: Code
+  /** What happened, the sentence between the code and the next step. */
+  readonly what: string
   readonly next: string
 
   constructor(code: Code, message: string) {
     super(errorText(code, message, CODES[code]))
     this.name = "BoxdError"
     this.code = code
+    this.what = message
     this.next = CODES[code]
   }
 }

@@ -148,7 +148,9 @@ permissions, followed by your top-level rules for boxd tools.
 
 ## Errors
 
-Every plugin error reads `CODE: What happened. Next step: What to do.`, with exactly one next step. Upstream and host
+Every plugin error reads `CODE: What happened. Next step: What to do.`, with exactly one next step. A tool's result
+for it is `{ "error": "<CODE>", "message": "<what happened>", "next": "<what to do>" }`, so a Code Mode program or a
+script reads the same three parts the model does. Upstream and host
 errors pass through unchanged. No error, log or status line contains a token, a code or a signed URL.
 
 | Code | What it means |

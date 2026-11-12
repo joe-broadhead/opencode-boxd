@@ -83,9 +83,9 @@ export class FakeBoxd implements BoxdPort {
       isolated: false,
       source: `snapshot/${input.snapshot}`,
     }
-    if (this.createBehaviour === "timeout-missing") throw boxdError("TIMEOUT", "boxd machine new did not answer within 30000 ms.")
+    if (this.createBehaviour === "timeout-missing") throw boxdError("TIMEOUT", "boxd machine new oc-review-api did not answer within 30 s.")
     this.machines.set(input.name, machine)
-    if (this.createBehaviour === "timeout-then-exists") throw boxdError("TIMEOUT", "boxd machine new did not answer within 30000 ms.")
+    if (this.createBehaviour === "timeout-then-exists") throw boxdError("TIMEOUT", "boxd machine new oc-review-api did not answer within 30 s.")
     return machine
   }
 

@@ -167,6 +167,9 @@ Each member still needs the boxd CLI signed in on their own laptop.
 
 ## Troubleshooting
 
+A tool that fails returns `error` (the code), `message` (what happened, such as which step timed out) and `next` (the
+one next step).
+
 | Code | What to do |
 |---|---|
 | `HOST_UNTESTED` | Use OpenCode `>=2.2.3 <2.3.0`, or set `"allowUntestedHost": true` to run anyway. |

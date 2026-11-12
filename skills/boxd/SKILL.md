@@ -54,6 +54,8 @@ task, even when the transcript arrived; say what the error says, and fix a crede
 
 ## When something fails
 
+A failed call returns `error`, `message` and `next`. Read `message` first: it says which step failed or timed out.
+
 - `GUEST_VERSION`: the machine's OpenCode is not this laptop's version. Stop; boot an image that matches.
 - `MACHINE_SHARED` or `MACHINE_ISOLATED`: the machine is not usable for a session. Recreate it without that flag.
 - `SESSION_BUSY`: harvest later. `boxd_job` says when.

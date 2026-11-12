@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process"
+import { basename } from "node:path"
 import { boxdError } from "./errors.js"
 
 type RunResult = { code: number; stdout: string; stderr: string }
@@ -11,7 +12,7 @@ export function run(bin: string, args: string[], options?: { stdin?: string; tim
     const stderr: Buffer[] = []
     const timer = setTimeout(() => {
       child.kill("SIGTERM")
-      reject(boxdError("TIMEOUT", `${bin} ${args[0] ?? ""} did not answer within ${timeoutMs} ms.`))
+      reject(boxdError("TIMEOUT", `${commandOf(bin, args)} did not answer within ${duration(timeoutMs)}.`))
     }, timeoutMs)
     child.stdout.on("data", (chunk) => stdout.push(chunk))
     child.stderr.on("data", (chunk) => stderr.push(chunk))
@@ -36,7 +37,7 @@ export function runBuffer(bin: string, args: string[], options?: { stdin?: Buffe
     const stderr: Buffer[] = []
     const timer = setTimeout(() => {
       child.kill("SIGTERM")
-      reject(boxdError("TIMEOUT", `${bin} ${args[0] ?? ""} did not answer within ${options?.timeoutMs ?? 60_000} ms.`))
+      reject(boxdError("TIMEOUT", `${commandOf(bin, args)} did not answer within ${duration(options?.timeoutMs ?? 60_000)}.`))
     }, options?.timeoutMs ?? 60_000)
     child.stdout.on("data", (chunk) => stdout.push(chunk))
     child.stderr.on("data", (chunk) => stderr.push(chunk))
@@ -52,6 +53,22 @@ export function runBuffer(bin: string, args: string[], options?: { stdin?: Buffe
     else child.stdin.end()
   })
 }
+
+/**
+ * The command a timeout names: the subcommand and the machine, such as `boxd machine exec oc-review-api`, up to the
+ * first flag or `--`. Never the command's input, which can be a prompt or a file.
+ */
+export function commandOf(bin: string, args: readonly string[]): string {
+  const words: string[] = []
+  for (const arg of args) {
+    if (arg.startsWith("-") || words.length === 4) break
+    words.push(arg)
+  }
+  return [basename(bin), ...words].join(" ")
+}
+
+/** A timeout as a person writes it: whole seconds, or milliseconds below that. */
+export const duration = (ms: number) => (ms % 1000 === 0 ? `${ms / 1000} s` : `${ms} ms`)
 
 export function parseJson(text: string): unknown {
   const start = text.indexOf("{")

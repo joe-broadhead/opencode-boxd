@@ -111,7 +111,7 @@ loaded before, send the call again once: the request loads the location. Jobs ke
 
 ## Refusals
 
-A refusal is the RPC error `failed`, with `data: { code, next }`:
+A call the RPC refuses before the method runs is the RPC error `failed`, with `data: { code, next }`:
 
 | Code | When | What to do |
 |---|---|---|
@@ -119,6 +119,12 @@ A refusal is the RPC error `failed`, with `data: { code, next }`:
 | `SESSION_UNKNOWN` | OpenCode does not know the session in this location | create the session in the location you mean, and pass its id |
 | `SESSION_AGENT_REQUIRED` | the session names no agent | create a session that names an agent |
 | `TOOL_UNAVAILABLE` | OpenCode does not list the method's tool now | call `describe` to see the methods there are |
+
+A method that ran and refused answers with its output, not an RPC error: `{ "error": "<code>", "message": "<what
+happened>", "next": "<the one next step>" }`, the same object the model path gets. The codes a script meets most:
+
+| Code | When | What to do |
+|---|---|---|
 | `NOT_OURS` | no open work has that id, or it is bound to another machine | call `boxd_ensure` for that work id |
 | `MACHINE_GONE` | the machine is missing or destroyed | call `boxd_resume` to rebuild it from the golden snapshot |
 | `SNAPSHOT_MISSING` | the golden snapshot is not in this boxd account | build the image as `docs/golden-image.md` describes, and set `snapshot` |
