@@ -213,35 +213,30 @@ export function createFleet(deps: Deps) {
         await requireSnapshot()
         // The intent is recorded before the create: a create that times out must never be an unowned billing machine.
         await deps.ledger.mutate(input.workId, (current) => ({
+          ...current,
           workId: input.workId,
           machine: name,
           snapshot,
           laptopDirectory,
           guestDirectory,
           ...(repo ?? current?.repo ? { repo: repo ?? current?.repo } : {}),
-          ...(current?.rootSessionId ? { rootSessionId: current.rootSessionId } : {}),
-          ...(current?.lastSubmitAt ? { lastSubmitAt: current.lastSubmitAt } : {}),
-          ...(current?.proof ? { proof: current.proof } : {}),
-          ...(current?.git ? { git: current.git } : {}),
-          ...(current?.warnings ? { warnings: current.warnings } : {}),
           pendingCreate: { at: deps.now(), snapshot },
         }))
         machine = await create(name, input.workId)
         if (machine.sharing === "shared" || machine.isolated) await removeRefused(name)
       }
       work = await deps.ledger.mutate(input.workId, (current) => {
+        // Everything the ledger knows stays, such as the files moved and the last outcome, which a drop and status read.
+        // Only the create intent is done once the machine is recorded.
+        const { pendingCreate: _, ...known } = current ?? {}
         const next: Work = {
+          ...known,
           workId: input.workId,
           machine: name,
           snapshot,
           laptopDirectory,
           guestDirectory,
           ...(repo ?? current?.repo ? { repo: repo ?? current?.repo } : {}),
-          ...(current?.rootSessionId ? { rootSessionId: current.rootSessionId } : {}),
-          ...(current?.lastSubmitAt ? { lastSubmitAt: current.lastSubmitAt } : {}),
-          ...(current?.proof ? { proof: current.proof } : {}),
-          ...(current?.git ? { git: current.git } : {}),
-          ...(current?.warnings ? { warnings: current.warnings } : {}),
         }
         return next
       })

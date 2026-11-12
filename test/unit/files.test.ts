@@ -169,6 +169,28 @@ describe("data out (GAP-4) and the drop it frees (GAP-5)", () => {
     await expect(w.fleet.drop({ workId: "review-api" })).resolves.toMatchObject({ state: "dropped" })
   })
 
+  test("ensuring an open work again keeps what the ledger knows: its files, its last outcome and its harvested outputs", async () => {
+    const { w, laptop } = await openWork()
+    const data = join(laptop, "bookmarks.json")
+    await writeFile(data, "[]\n")
+    await w.fleet.submit({ workId: "review-api", text: "Write SUMMARY.md.", files: [{ from: data, to: "data/bookmarks.json" }] })
+    w.guest.phaseById.set("ses_root_review-api", "idle")
+    w.guest.runById.set("ses_root_review-api", { outcome: "completed" })
+    w.guest.remote.set("SUMMARY.md", Buffer.from("done\n"))
+    w.guest.gitState = { known: true, remote: null, branch: null, sha: "abc", dirty: false, untracked: ["SUMMARY.md"], ignored: [], untrackedFiles: {} }
+    await w.fleet.harvest({ workId: "review-api", files: ["SUMMARY.md"] })
+    const before = await w.ledger.load("review-api")
+
+    // A coordinator ensures each work again at the start of a turn, such as after a resize.
+    await w.fleet.ensure({ workId: "review-api", directory: laptop })
+    const after = await w.ledger.load("review-api")
+    expect(after?.uploads).toEqual(before?.uploads)
+    expect(after?.downloads).toEqual(before?.downloads)
+    expect(after?.lastOutcome).toEqual(before?.lastOutcome)
+    // So SUMMARY.md still counts as recovered, and the drop the harvest allowed is still allowed.
+    await expect(w.fleet.drop({ workId: "review-api" })).resolves.toMatchObject({ state: "dropped" })
+  })
+
   test("a harvested file that changed on the guest keeps the refusal", async () => {
     const { w } = await openWork()
     await w.fleet.submit({ workId: "review-api", text: "Write SUMMARY.md." })

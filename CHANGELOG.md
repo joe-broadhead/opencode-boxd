@@ -3,6 +3,14 @@
 All notable changes to this project are documented here. The format is [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `boxd_ensure` on an open work rewrote its ledger record from a short list of fields and dropped the rest: the files
+  moved in and out and the last run's outcome. A drop then refused an output that a harvest had already brought back,
+  and status lost a failed run. Ensure now keeps every field and clears only the create intent.
+
 ## [0.0.0] - 2026-11-10
 <!-- kit-release: the GitHub release v0.0.0 -->
 
