@@ -4,10 +4,12 @@ import { run } from "./run.js"
 /** `--help` reads no state, so a CLI that answers at all answers this fast. */
 const HELP_MS = 10_000
 /**
- * How the in-VM boxd CLI describes itself. Its top-level help says it acts in its own machine's region only, and
- * lists `local` as "from inside the VM". The laptop CLI has neither, and a CLI that says neither is taken to be one.
+ * How the in-VM boxd CLI describes itself: its top-level help says both that "boxd inside a machine" acts in its own
+ * machine's region only and that `local` works "from inside the VM". Both phrases are required: the laptop CLI's help
+ * has not been read, and one phrase alone could be its own wording, which would block every tool. A CLI that does not
+ * say both is taken to be the laptop's.
  */
-const IN_VM = /boxd inside a machine|from inside the VM/i
+const IN_VM = (text: string) => /boxd inside a machine/i.test(text) && /from inside the VM/i.test(text)
 
 /** The binaries whose flavour has been read and found to be the laptop's. */
 const checked = new Set<string>()
@@ -26,7 +28,7 @@ export async function assertLaptopCli(bin: string): Promise<void> {
     return undefined
   })
   if (!help || help.code !== 0) return
-  if (IN_VM.test(help.stdout)) {
+  if (IN_VM(help.stdout)) {
     throw boxdError(
       "BOXD_MISSING",
       "The boxd CLI on the PATH is the one that runs inside a boxd machine. This plugin drives remote machines from the laptop's boxd CLI, and the in-VM CLI is not supported.",

@@ -27,6 +27,22 @@ Options:
 
           Default: BOXD_REGION. boxd inside a machine acts in its machine's region only.
 `
+// One in-VM phrase each: a laptop CLI could carry either in its own wording, so neither alone refuses it.
+const REGION_ONLY_HELP = `boxd CLI
+
+Commands:
+  machine    Create, inspect, and control machines
+
+Options:
+      --region <REGION>
+          Default: BOXD_REGION. boxd inside a machine acts in its machine's region only.
+`
+const LOCAL_ONLY_HELP = `boxd CLI
+
+Commands:
+  machine    Create, inspect, and control machines
+  local      Interact with your local machine (laptop) from inside the VM
+`
 const LAPTOP_HELP = `boxd CLI
 
 Usage: boxd [OPTIONS] [COMMAND]
@@ -39,10 +55,10 @@ Commands:
 const MACHINE = JSON.stringify({ name: "oc-demo", status: "running", sharing: "private", isolated: "no" })
 
 /** A fake CLI that logs its arguments to `<name>.log`, answers `--help` as `help` says, and a machine read with MACHINE. */
-function fakeCli(name: string, help: "in-vm" | "laptop" | "fails" | "hangs"): { bin: string; calls: () => string[] } {
+function fakeCli(name: string, help: "in-vm" | "laptop" | "fails" | "hangs" | "region-only" | "local-only"): { bin: string; calls: () => string[] } {
   const bin = join(dir, name)
   const log = join(dir, `${name}.log`)
-  const text = help === "in-vm" ? IN_VM_HELP : LAPTOP_HELP
+  const text = help === "in-vm" ? IN_VM_HELP : help === "region-only" ? REGION_ONLY_HELP : help === "local-only" ? LOCAL_ONLY_HELP : LAPTOP_HELP
   writeFileSync(
     bin,
     `#!/bin/sh
@@ -87,6 +103,13 @@ describe("the boxd CLI the plugin finds on the PATH", () => {
     expect((await port.get("oc-demo")).status).toBe("running")
     expect((await port.get("oc-demo")).status).toBe("running")
     expect(calls().filter((line) => line === "--help")).toHaveLength(1)
+  })
+
+  test("a help with only one of the in-VM phrases is not refused, either way round", async () => {
+    for (const help of ["region-only", "local-only"] as const) {
+      const { bin } = fakeCli(help, help)
+      expect((await cliBoxd(bin).get("oc-demo")).status).toBe("running")
+    }
   })
 
   test("a CLI that cannot answer --help is not refused: the command that follows reports its own result", async () => {
