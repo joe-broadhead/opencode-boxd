@@ -68,7 +68,15 @@ first, and only then may the machine sleep, be imaged or be destroyed.
   same outcome with the failure's structured error on the last `idle` message from `GET /api/session/<id>/message`.
   That list is newest first and 50 a page unless `order` and `limit` say otherwise, and `type` filters it before the
   page is cut, on 2.2.3 and 2.2.6 alike. The helper asks for `?type=idle&order=desc&limit=1`: one message, the last
-  run's. An
+  run's.
+- An assistant message is `{type: "assistant", time: {created, completed?}, content: [...]}`, where `content` holds
+  `text`, `reasoning` and `tool` parts. `boxd_job` reads the newest one (`?type=assistant&order=desc&limit=1`) and keeps
+  its `text` parts only, redacted and cut to 300 characters on the laptop. `lastActivityAt` is the latest of the
+  session's `time.updated`, `busy` and `idle` and that message's times, all epoch milliseconds.
+- `POST /api/session/<id>/prompt` admits a prompt for a running session too: it waits in `GET /api/session/<id>/inbox`
+  (`user`, `synthetic`, `compaction` and `move` items, in enqueue order) until the run takes it, as a steer by default.
+  `boxd_submit` reads `/api/session/active` first and says `queued`; `boxd_job` counts the inbox's `user` items as
+  `pending`. An
   export carries both, so a harvest reads the outcome from the transcript and `boxd_job` from the live session: no model
   call either way. `src/outcome.ts` maps them to `completed`, `failed` and `aborted`.
 - `POST /api/session` creates a session, `POST /api/session/<id>/prompt` admits one, and

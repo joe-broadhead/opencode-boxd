@@ -151,8 +151,15 @@ def action_prompt(request):
     text = request.get("text")
     if not isinstance(text, str) or not text:
         fail("empty prompt")
-    http("POST", base_url(request) + f"/api/session/{sid}/prompt", {"text": text})
-    emit({"admitted": sid})
+    base = base_url(request)
+    # A prompt for a running session waits in its inbox until that run takes it: say so, so the caller knows. That is a
+    # report, not a gate: a server that cannot say which sessions run still takes the prompt.
+    try:
+        running = sid in (unwrap(http("GET", base + "/api/session/active")) or {})
+    except (GuestError, ValueError):
+        running = False
+    http("POST", base + f"/api/session/{sid}/prompt", {"text": text})
+    emit({"admitted": sid, "queued": running})
 
 
 def action_export(request):
@@ -194,7 +201,7 @@ def action_phase(request):
         return
     active = unwrap(http("GET", base + "/api/session/active")) or {}
     if sid in active:
-        emit({"phase": "busy"})
+        emit({"phase": "busy", **activity(base, sid, info)})
         return
     # A busy stamp with no run in the server is a run the server died in: it never reached an idle turn, so the session
     # is not busy, and its last run was interrupted.
@@ -202,7 +209,7 @@ def action_phase(request):
     busy = time.get("busy")
     idle = time.get("idle")
     if isinstance(busy, (int, float)) and (not isinstance(idle, (int, float)) or busy > idle):
-        emit({"phase": "idle", "outcome": "interrupted", "error": None})
+        emit({"phase": "idle", "outcome": "interrupted", "error": None, **activity(base, sid, info)})
         return
     # The last idle turn carries the outcome and, when a run failed, the error an agent must hear about. The server lists
     # messages newest first, so the one idle message asked for is the last run's.
@@ -221,13 +228,45 @@ def action_phase(request):
     except GuestError:
         # An outcome is a report, not a gate: a server that cannot list messages still answers the phase.
         pass
-    emit({"phase": "idle", "outcome": outcome, "error": error})
+    emit({"phase": "idle", "outcome": outcome, "error": error, **activity(base, sid, info)})
+
+
+TEXT_LIMIT = 2000
+
+
+def activity(base, sid, info):
+    """When the session last did something, the text of its newest assistant message, and the prompts in its inbox.
+
+    A report, not a gate: a read the server refuses leaves its field out. The laptop redacts and cuts the text."""
+    stamps = [info.get("time", {}).get(key) for key in ("updated", "busy", "idle")] if isinstance(info.get("time"), dict) else []
+    text = None
+    try:
+        message = newest(base, sid, "assistant")
+    except GuestError:
+        message = None
+    if isinstance(message, dict):
+        time = message.get("time") if isinstance(message.get("time"), dict) else {}
+        stamps += [time.get("completed"), time.get("created")]
+        content = message.get("content") if isinstance(message.get("content"), list) else []
+        parts = [part["text"] for part in content if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str)]
+        text = " ".join(parts).strip()[:TEXT_LIMIT] or None
+    pending = None
+    try:
+        inbox = unwrap(http("GET", base + f"/api/session/{sid}/inbox")) or []
+        pending = sum(1 for item in inbox if isinstance(item, dict) and item.get("type") == "user") if isinstance(inbox, list) else None
+    except GuestError:
+        pass
+    numbers = [stamp for stamp in stamps if isinstance(stamp, (int, float)) and not isinstance(stamp, bool)]
+    return {"activityAt": max(numbers) if numbers else None, "lastText": text, "pending": pending}
 
 
 def newest(base, sid, kind):
-    """The session's newest message of one type, or None: one message, not a page of the transcript."""
+    """The session's newest message of one type, or None: one message, not a page of the transcript.
+
+    A server that ignores the type filter would hand back another kind, which is no answer: it is checked here."""
     messages = unwrap(http("GET", base + f"/api/session/{sid}/message?type={kind}&order=desc&limit=1")) or []
-    return messages[0] if isinstance(messages, list) and messages else None
+    message = messages[0] if isinstance(messages, list) and messages else None
+    return message if isinstance(message, dict) and message.get("type") == kind else None
 
 
 UNTRACKED_LIMIT = 100

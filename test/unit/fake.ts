@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createFleet, type Deps } from "../../src/fleet.js"
 import { Ledger } from "../../src/ledger.js"
-import type { BoxdPort, GitState, GuestPort, MachineInfo, MachineStatus, Prover } from "../../src/ports.js"
+import type { BoxdPort, GitState, GuestActivity, GuestPort, MachineInfo, MachineStatus, Prover } from "../../src/ports.js"
 import type { Transfer } from "../../src/transfer.js"
 import { boxdError } from "../../src/errors.js"
 
@@ -146,6 +146,10 @@ export class FakeGuest implements GuestPort {
   phaseById = new Map<string, "busy" | "idle" | "missing">()
   /** What the last run of a session did, as the guest would report it. */
   runById = new Map<string, { outcome: "completed" | "failed" | "aborted" | null; error?: string }>()
+  /** What a session last did, as the guest would report it with its phase. */
+  activityById = new Map<string, GuestActivity>()
+  /** Whether the next prompt lands while the session runs, so it waits in the inbox. */
+  queued = false
   /** The export an `exportSession` call returns for a session, when a test wants a specific one. */
   exportOverride = new Map<string, unknown>()
   gitState: GitState = { known: true, remote: null, branch: null, sha: null, dirty: false, untracked: [], ignored: [], untrackedFiles: {} }
@@ -179,10 +183,11 @@ export class FakeGuest implements GuestPort {
   }
   async prompt(_machine: string, sessionID: string, text: string) {
     this.prompts.push(`${sessionID}:${text}`)
+    return { queued: this.queued }
   }
   async phase(_machine: string, sessionID: string) {
     const phase = this.phaseById.get(sessionID) ?? "missing"
-    return { phase, run: this.runById.get(sessionID) ?? { outcome: null } }
+    return { phase, run: this.runById.get(sessionID) ?? { outcome: null }, activity: this.activityById.get(sessionID) ?? {} }
   }
   async exportSession(_machine: string, sessionID: string) {
     return this.exportOverride.get(sessionID) ?? this.exports.get(sessionID)

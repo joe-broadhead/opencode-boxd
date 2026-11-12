@@ -122,6 +122,24 @@ describe("a failed run is reported, never hidden", () => {
     expect(String((await w.fleet.job({ workId: "review-api" })).next)).toContain("boxd_harvest")
   })
 
+  test("boxd_job carries what the session last did, and a submit says when its prompt waits", async () => {
+    const w = await world()
+    await w.fleet.ensure({ workId: "review-api" })
+    await w.fleet.submit({ workId: "review-api", text: "Open the pull request." })
+    w.guest.activityById.set("ses_root_review-api", { lastActivityAt: "2026-11-11T09:30:00.000Z", lastText: "Opening the pull request.", pending: 0 })
+    expect(await w.fleet.job({ workId: "review-api" })).toMatchObject({ state: "busy", lastActivityAt: "2026-11-11T09:30:00.000Z", lastText: "Opening the pull request.", pending: 0 })
+
+    w.guest.queued = true
+    const queued = await w.fleet.submit({ workId: "review-api", text: "Then tag it." })
+    expect(queued).toMatchObject({ state: "admitted", queued: true })
+    expect(String(queued.next)).toContain("waits in its inbox")
+
+    // A guest that reported nothing about its activity adds no field.
+    w.guest.activityById.delete("ses_root_review-api")
+    const plain = await w.fleet.job({ workId: "review-api" })
+    for (const field of ["lastActivityAt", "lastText", "pending"]) expect(plain).not.toHaveProperty(field)
+  })
+
   test("status names the failed work, with the error and the next step", async () => {
     const { w } = await ran({ outcome: "failed", error: AUTH_ERROR })
     const status = await w.fleet.status()

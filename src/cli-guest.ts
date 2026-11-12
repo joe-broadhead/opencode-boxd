@@ -1,11 +1,11 @@
 import { basename } from "node:path"
 import { boxdError, BoxdError } from "./errors.js"
 import { copyFromGuestArgs, copyToGuestArgs, execArgs, guestRequest } from "./argv.js"
-import type { GuestPort } from "./ports.js"
+import type { GuestActivity, GuestPort } from "./ports.js"
 import { readGuestHelper } from "./cli-boxd.js"
 import { duration, run, runBuffer } from "./run.js"
 import { errorLine, mapOutcome } from "./outcome.js"
-import { shortReason } from "./redact.js"
+import { excerpt, shortReason } from "./redact.js"
 
 const HELPER_DIRECTORY = "/tmp/opencode-boxd"
 const HELPER = `${HELPER_DIRECTORY}/guest.py`
@@ -77,14 +77,15 @@ export function cliGuest(bin = "boxd", timeoutMs = 30_000): GuestPort {
       return { id: String(parsed.id) }
     },
     prompt: async (machine, sessionID, text) => {
-      await call(machine, "prompt", { sessionID, text })
+      const parsed = await call(machine, "prompt", { sessionID, text })
+      return { queued: parsed.queued === true }
     },
     phase: async (machine, sessionID) => {
       const parsed = await call(machine, "phase", { sessionID })
       const phase = parsed.phase === "busy" || parsed.phase === "idle" || parsed.phase === "missing" ? parsed.phase : "missing"
       const outcome = mapOutcome(parsed.outcome)
       const error = errorLine(parsed.error)
-      return { phase, run: { outcome, ...(error ? { error } : {}) } }
+      return { phase, run: { outcome, ...(error ? { error } : {}) }, activity: activityOf(parsed) }
     },
     exportSession: async (machine, sessionID) => {
       const parsed = await call(machine, "export", { sessionID })
@@ -231,6 +232,20 @@ function parseLine(stdout: string, stderr: string): Record<string, unknown> {
   }
   return JSON.parse(line) as Record<string, unknown>
 }
+
+/** The last thing a session said it did, as much as the guest reported: its words are redacted and cut to 300. */
+function activityOf(parsed: Record<string, unknown>): GuestActivity {
+  const at = typeof parsed.activityAt === "number" && Number.isFinite(parsed.activityAt) && parsed.activityAt > 0 ? new Date(parsed.activityAt) : undefined
+  const text = typeof parsed.lastText === "string" ? excerpt(parsed.lastText, LAST_TEXT_LIMIT) : undefined
+  const pending = typeof parsed.pending === "number" && Number.isInteger(parsed.pending) && parsed.pending >= 0 ? parsed.pending : undefined
+  return {
+    ...(at && !Number.isNaN(at.getTime()) ? { lastActivityAt: at.toISOString() } : {}),
+    ...(text ? { lastText: text } : {}),
+    ...(pending !== undefined ? { pending } : {}),
+  }
+}
+
+const LAST_TEXT_LIMIT = 300
 
 function stringOrNull(value: unknown): string | null {
   return typeof value === "string" && value ? value : null

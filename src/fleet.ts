@@ -272,14 +272,17 @@ export function createFleet(deps: Deps) {
       // Stamped before the prompt: a crash between the two leaves the proof stale, never falsely fresh.
       const at = deps.now()
       await deps.ledger.mutate(work.workId, (current) => ({ ...(current ?? work), lastSubmitAt: at }))
-      await deps.guest.prompt(work.machine, sessionId, input.text)
+      const { queued } = await deps.guest.prompt(work.machine, sessionId, input.text)
       return {
         workId: work.workId,
         machine: work.machine,
         sessionId,
         state: "admitted",
+        ...(queued ? { queued: true } : {}),
         ...(uploaded.length ? { files: uploaded.map((file) => ({ path: file.path, bytes: file.bytes, sha256: file.sha256 })) } : {}),
-        next: "Call boxd_job in a later turn. This call did not wait for the model.",
+        next: queued
+          ? "The session was running, so this prompt waits in its inbox until that run takes it. Call boxd_job in a later turn: pending says how many wait."
+          : "Call boxd_job in a later turn. This call did not wait for the model.",
       }
     },
 
@@ -314,7 +317,7 @@ export function createFleet(deps: Deps) {
         return { workId: work.workId, state: "empty", next: "Call boxd_submit." }
       }
       await ready(work, { wake: false, arm: false })
-      const { phase, run } = await deps.guest.phase(work.machine, work.rootSessionId)
+      const { phase, run, activity } = await deps.guest.phase(work.machine, work.rootSessionId)
       return {
         workId: work.workId,
         sessionId: work.rootSessionId,
@@ -323,6 +326,8 @@ export function createFleet(deps: Deps) {
         // The last run's outcome, so an idle session that failed is never read as a finished job.
         outcome: run.outcome,
         ...(run.outcome === "failed" ? { error: run.error, warning: failureCode(run) } : {}),
+        // What the session last did, in its own words: a completed run can still report that its task did not happen.
+        ...activity,
         next: jobNext(work.workId, phase, run),
       }
     },

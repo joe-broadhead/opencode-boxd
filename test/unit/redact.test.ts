@@ -1,7 +1,7 @@
 // Credentials and paths never reach what status prints. Every shape is checked on the status model, /boxd-status, the
 // dialog, and the failed-ledger reason, which is the only text status takes from outside.
 import { describe, expect, test } from "bun:test"
-import { reasonOf, shortReason, oneLine, cut } from "../../src/redact.js"
+import { excerpt, reasonOf, shortReason, oneLine, cut } from "../../src/redact.js"
 import { buildStatus, formatStatus } from "../../src/status.js"
 import { defaultRules } from "../../src/permissions.js"
 import { TOOLS } from "../../src/tools.js"
@@ -19,6 +19,13 @@ describe("redaction", () => {
 
   test("keeps a URL's scheme, host and path, and drops its credentials and query", () => {
     expect(shortReason("GET https://user:pass@boxd.sh/machines/oc-1?token=abc#frag failed")).toBe("GET https://boxd.sh/machines/oc-1 failed")
+  })
+
+  test("a guest's words are redacted the same way, cut to their own limit, and keep their closing punctuation", () => {
+    for (const secret of SECRETS) expect(excerpt(`Pushed with Authorization: Bearer ${secret}\nand api_key=${secret}.`, 300)).not.toContain(secret)
+    expect(excerpt("Done.\nThe pull request is open.", 300)).toBe("Done. The pull request is open.")
+    expect(Array.from(excerpt("word ".repeat(100), 300)!)).toHaveLength(300)
+    expect(excerpt(" \n ", 300)).toBeUndefined()
   })
 
   test("one line, no controls, no bidi, at most 160 characters", () => {

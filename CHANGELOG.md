@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its one next step is to tell the user; one with nothing on the OpenCode port answers `GUEST_SERVER_DOWN`, which the
   next `boxd_job` fixes. A machine that looks well keeps `TIMEOUT`, with the facts, and a probe that does not answer,
   or answers with a line that is not JSON, keeps the plain timeout.
+- `boxd_job` says what the session last did: `lastText`, its newest assistant text, redacted and cut to 300
+  characters; `lastActivityAt`; and `pending`, the prompts waiting in its inbox. A run that completed but says its
+  task did not happen, such as a push refused with 401, no longer reads like a finished one.
+- `boxd_submit` answers `queued: true` when the session was still running, so the prompt waits in its inbox for that
+  run. The read is a report, not a gate: a server that cannot say which sessions run still takes the prompt. A message
+  of another kind than the one asked for is never read as the assistant's last words or a run's outcome.
 
 ### Fixed
 

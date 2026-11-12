@@ -138,6 +138,9 @@ permissions, followed by your top-level rules for boxd tools.
   `GUEST_RUN_FAILED` or `GUEST_AUTH_FAILED` as a warning, and status shows each work's last outcome. The error is `<type>: <first line>`, passed
   through redaction; a provider's response body is never read. It comes from the guest or the imported transcript, never
   from a model call.
+- **A job says what the session last did.** On a running machine `boxd_job` adds `lastText` (the newest assistant text,
+  redacted and cut to 300 characters), `lastActivityAt` and `pending` (prompts waiting in the session's inbox). Each is
+  read from the guest's own session with no model call, and left out when the guest does not answer it.
 - **Drop only destroys what the laptop can account for.** It refuses a non-git directory, untracked or ignored paths, and
   a dirty tree with no stored patch. Tracked changes are stored as `git diff HEAD`; untracked contents are stored beside
   it when the guest can read them, which is not the same as a faithful copy, so a drop still refuses.

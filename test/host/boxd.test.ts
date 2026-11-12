@@ -539,3 +539,70 @@ describe("a machine whose /tmp was cleared", () => {
     }
   })
 })
+
+describe("what a guest session last did", () => {
+  test("boxd_job carries the session's last words, redacted, when it last changed, and the prompts that wait", async () => {
+    const host = await startHost()
+    try {
+      const build = await session(host)
+      await attempt(host, build, "build", "boxd_ensure", "always", { workId: "review-api", directory: host.location.directory })
+      const first = await attempt(host, build, "build", "boxd_submit", "always", { workId: "review-api", text: "Open the pull request." })
+      expect(first.output).not.toHaveProperty("queued")
+
+      const at = Date.parse("2026-11-11T09:30:00.000Z")
+      host.guest.say("ses_guest_root", `I could not push: github.com answered 401 for token=ghp_${"a".repeat(36)}. ${"More detail. ".repeat(40)}`, at)
+
+      // A second prompt for a running session waits in its inbox, and the submit says so.
+      const second = await attempt(host, build, "build", "boxd_submit", "always", { workId: "review-api", text: "Then tag it." })
+      expect(second.output).toMatchObject({ state: "admitted", queued: true })
+      expect(String((second.output as { next?: string }).next)).toContain("waits in its inbox")
+
+      const busy = (await attempt(host, build, "build", "boxd_job", "reject", { workId: "review-api" })).output as Record<string, unknown>
+      expect(busy).toMatchObject({ state: "busy", pending: 1, lastActivityAt: "2026-11-11T09:30:00.000Z" })
+      const text = String(busy.lastText)
+      expect(text).toStartWith("I could not push: github.com answered 401 for token=[redacted] More detail.")
+      expect(text).not.toContain("ghp_")
+      expect(Array.from(text)).toHaveLength(300)
+
+      host.guest.complete("ses_guest_root")
+      const idle = (await attempt(host, build, "build", "boxd_job", "reject", { workId: "review-api" })).output as Record<string, unknown>
+      // A completed run whose last words say the task did not happen: the outcome alone would hide it.
+      expect(idle).toMatchObject({ state: "idle", outcome: "completed", lastText: text })
+    } finally {
+      await host.close()
+    }
+  })
+
+  test("a server that cannot say which sessions run still takes the prompt: queued is a report, not a gate", async () => {
+    const host = await startHost()
+    try {
+      const build = await session(host)
+      await attempt(host, build, "build", "boxd_ensure", "always", { workId: "review-api", directory: host.location.directory })
+      host.guest.quirks.activeFails = true
+      const submitted = await attempt(host, build, "build", "boxd_submit", "always", { workId: "review-api", text: "Open the pull request." })
+      expect(submitted.output).toMatchObject({ state: "admitted" })
+      expect(submitted.output).not.toHaveProperty("queued")
+      expect(host.guest.prompts).toEqual([{ sessionID: "ses_guest_root", text: "Open the pull request." }])
+    } finally {
+      await host.close()
+    }
+  })
+
+  test("a message of another kind is never reported as the assistant's last words", async () => {
+    const host = await startHost()
+    try {
+      const build = await session(host)
+      await attempt(host, build, "build", "boxd_ensure", "always", { workId: "review-api", directory: host.location.directory })
+      await attempt(host, build, "build", "boxd_submit", "always", { workId: "review-api", text: "Open the pull request." })
+      host.guest.complete("ses_guest_root")
+      // The newest message is the user's own, and this server ignores the type filter and lists it for any kind.
+      host.guest.sessions.get("ses_guest_root")?.messages.push({ type: "user", content: [{ type: "text", text: "Secret instructions from the user." }] })
+      host.guest.quirks.ignoresTypeFilter = true
+      const idle = (await attempt(host, build, "build", "boxd_job", "reject", { workId: "review-api" })).output as Record<string, unknown>
+      expect(idle).toMatchObject({ state: "idle", outcome: "completed" })
+      expect(idle).not.toHaveProperty("lastText")
+    } finally {
+      await host.close()
+    }
+  })
+})

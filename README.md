@@ -54,10 +54,13 @@ session you cannot get back.
    the current project.
 2. `boxd_submit` with the task, and optionally `files: [{ from, to }]` to copy data in. Each `from` is a laptop file
    inside the project or an allowed root, and each `to` is a path inside the work tree. It returns when the guest has
-   admitted the prompt, not when the model finishes.
+   admitted the prompt, not when the model finishes, with `queued: true` when the session was still running, so the
+   prompt waits in its inbox for that run.
 3. `boxd_job` in a later turn: busy, idle, asleep, gone or starting, with the guest session's last outcome
-   (`completed`, `failed` or `aborted`) when it is idle. It never wakes a machine, because waking starts billing; a
-   hibernated work reports `asleep` with `boxd_resume` as its next step.
+   (`completed`, `failed` or `aborted`) when it is idle. A running machine's answer also carries `lastText`, the
+   session's newest assistant text (redacted, at most 300 characters), `lastActivityAt`, and `pending`, the prompts
+   waiting in its inbox: a run can complete and still say its task did not happen. It never wakes a machine, because
+   waking starts billing; a hibernated work reports `asleep` with `boxd_resume` as its next step.
 4. `boxd_harvest`, optionally with `files: ["SUMMARY.md"]` and `to`, copies the files a work produced back to this
    laptop. The session tree is exported, imported here parents first, git is recorded, and then the files move.
 5. `boxd_sleep` to hibernate, `boxd_resume` to wake or rebuild, `boxd_image` to save a snapshot, `boxd_drop` to destroy.
