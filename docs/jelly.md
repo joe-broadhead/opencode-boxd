@@ -10,7 +10,10 @@ what a Jelly may call.
 - **`skills`** — `boxd`.
 - **`signIns`** — empty. The plugin has no sign-in of its own: it runs your `boxd` CLI, which is already signed in.
 - **`icon`** — `assets/icon.svg`, this family's own mark, not boxd's logo.
-- **`contributes`** — empty: no home feed, widget, work kind or setting.
+- **`contributes`** — one setting, `access`, the option of the same name, as a choice of three: **Allowed** (`all`, the
+  default), **Ask before changes** (`ask-changes`) and **Read only** (`read-only`), with Jelly's own line for each.
+  Jelly draws it as a choice and saves only one of the three; a Jelly that does not know declared choices yet refuses
+  the whole declaration. No home feed, widget or work kind.
 
 One rule stays for good: a tool boxd adds later is not asked about in Jelly, a write included. It is not in `jelly.tools` until it is classified in
 `src/tools.ts`, and status names it as unknown until then.

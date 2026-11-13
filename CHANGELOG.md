@@ -3,6 +3,13 @@
 All notable changes to this project are documented here. The format is [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- The `jelly` settings declare their choices: `access` is drawn as Allowed, Ask before changes or Read only, with
+  Jelly's own line for each (needs a jelly that includes app#1301).
+
 ## [0.0.1] - 2026-11-12
 
 ### Added

@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import { readdirSync, readFileSync } from "node:fs"
 import { DISPLAY_NAME, NAMESPACE } from "../../src/constants.js"
-import { defaultRules, evaluate } from "../../src/permissions.js"
+import { parseOptions } from "../../src/options.js"
+import { ACCESS_VALUES, defaultRules, evaluate } from "../../src/permissions.js"
 import { TOOLS } from "../../src/tools.js"
 import { SKILL_NAMES } from "../../src/skills.js"
+import { ACCESS_CHOICES, closedSet, type Setting, settingsProblems, settingValueIssue } from "../support/jelly-settings.js"
 
 /**
  * The `jelly` section of package.json, which Jelly reads without loading the plugin. Jelly's agents have no base allow
@@ -22,10 +24,11 @@ const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.ur
     rpc: unknown[]
     views: unknown[]
     signIns: unknown[]
-    contributes: unknown
+    contributes: { homeFeeds: unknown[]; homeWidgets: unknown[]; workKinds: unknown[]; settings: Setting[] }
   }
 }
 const { jelly } = pkg
+const { settings } = jelly.contributes
 const byPermission = new Map(jelly.tools.map((tool) => [tool.permission, tool]))
 
 describe("the jelly declaration", () => {
@@ -49,15 +52,39 @@ describe("the jelly declaration", () => {
 
   test("uses only the keys Jelly reads: its contracts strip any other", () => {
     expect(Object.keys(jelly).sort()).toEqual(["contributes", "icon", "rpc", "signIns", "skills", "summary", "title", "tools", "views"])
-    // The one setting is the family's access option, with the default the plugin ships with.
+    // The one setting is the family's access option, with the default the plugin ships and Jelly's own words for its
+    // three values.
     expect(jelly.contributes).toEqual({
       homeFeeds: [],
       homeWidgets: [],
       workKinds: [],
-      settings: [{ key: "access", label: "Access", type: "string", default: "all", description: "all, ask-changes or read-only. Generates default rules for agents with a base allow rule." }],
+      settings: [
+        {
+          key: "access",
+          label: "Access",
+          type: "string",
+          description: "How much the plugin's tools may do. Generates default rules for agents with a base allow rule.",
+          choices: ACCESS_CHOICES,
+          default: "all",
+        },
+      ],
     })
     expect(jelly.rpc).toEqual([])
     expect(jelly.views).toEqual([])
+  })
+
+  test("the settings follow Jelly's rules for a declared setting", () => {
+    expect(settingsProblems(settings)).toEqual([])
+  })
+
+  test("the options parser takes every declared access choice, its default included, and refuses a value outside them", () => {
+    const access = settings.find((setting) => setting.key === "access")!
+    const values = (closedSet(access) ?? []).map((choice) => choice.value)
+    expect(values).toEqual([...ACCESS_VALUES])
+    for (const value of values) expect<string>(parseOptions({ access: value }).access).toBe(value)
+    expect<string>(parseOptions({}).access).toBe(access.default as string)
+    expect(settingValueIssue(access, "write")).not.toBeNull()
+    expect(() => parseOptions({ access: "write" })).toThrow("OPTIONS_INVALID")
   })
 
   test("names every skill the package ships, no sign-in, and the family's icon path", () => {

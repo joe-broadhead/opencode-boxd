@@ -141,8 +141,25 @@
           "key": "access",
           "label": "Access",
           "type": "string",
-          "default": "all",
-          "description": "all, ask-changes or read-only. Generates default rules for agents with a base allow rule."
+          "description": "How much the plugin's tools may do. Generates default rules for agents with a base allow rule.",
+          "choices": [
+            {
+              "value": "all",
+              "label": "Allowed",
+              "description": "Every tool runs without asking, reads and changes alike."
+            },
+            {
+              "value": "ask-changes",
+              "label": "Ask before changes",
+              "description": "Reads run without asking. Each change asks you first."
+            },
+            {
+              "value": "read-only",
+              "label": "Read only",
+              "description": "Reads run. Changes never run."
+            }
+          ],
+          "default": "all"
         }
       ]
     }
