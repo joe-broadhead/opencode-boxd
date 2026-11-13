@@ -5,7 +5,7 @@ import { parseOptions } from "../../src/options.js"
 import { ACCESS_VALUES, defaultRules, evaluate } from "../../src/permissions.js"
 import { TOOLS } from "../../src/tools.js"
 import { SKILL_NAMES } from "../../src/skills.js"
-import { ACCESS_CHOICES, closedSet, type Setting, settingsProblems, settingValueIssue } from "../support/jelly-settings.js"
+import { ACCESS_CHOICES, settingChoices, type PluginSetting, settingsProblems, settingValueIssue } from "../support/jelly-settings.js"
 
 /**
  * The `jelly` section of package.json, which Jelly reads without loading the plugin. Jelly's agents have no base allow
@@ -24,7 +24,7 @@ const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.ur
     rpc: unknown[]
     views: unknown[]
     signIns: unknown[]
-    contributes: { homeFeeds: unknown[]; homeWidgets: unknown[]; workKinds: unknown[]; settings: Setting[] }
+    contributes: { homeFeeds: unknown[]; homeWidgets: unknown[]; workKinds: unknown[]; settings: PluginSetting[] }
   }
 }
 const { jelly } = pkg
@@ -79,7 +79,7 @@ describe("the jelly declaration", () => {
 
   test("the options parser takes every declared access choice, its default included, and refuses a value outside them", () => {
     const access = settings.find((setting) => setting.key === "access")!
-    const values = (closedSet(access) ?? []).map((choice) => choice.value)
+    const values = (settingChoices(access) ?? []).map((choice) => choice.value)
     expect(values).toEqual([...ACCESS_VALUES])
     for (const value of values) expect<string>(parseOptions({ access: value }).access).toBe(value)
     expect<string>(parseOptions({}).access).toBe(access.default as string)

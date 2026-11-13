@@ -1,32 +1,42 @@
-// The tools RPC module is shared by several plugins: identical outside its PLUGIN-SPECIFIC block. This fails when this
-// repository's copy drifted from the pin every plugin carries, so a one-plugin edit cannot break the hand-over.
-import { readFileSync } from "node:fs"
+// Fails when a shared module's copy in this plugin differs from the one every plugin carries.
+//   node scripts/check-copies.mjs          check the copies this plugin has
+//   node scripts/check-copies.mjs --print  print each copy's hash, after a change made in every plugin at once
+// Each plugin keeps its own copy, because each bundle and each test suite stands alone. The hashes below name the one
+// version all plugins carry: the tools RPC outside its PLUGIN-SPECIFIC block, and Jelly's setting rules whole.
 import { createHash } from "node:crypto"
-import { fileURLToPath } from "node:url"
+import { existsSync, readFileSync } from "node:fs"
 
-/** The v2 shared-part hash, as hey-jelly computes it. */
-const PIN = "15d82caa53aaae7ad9efb88dddb97056d3895c4dbf49b8efbb85b743871b2a6d"
-const START = "// >>> PLUGIN-SPECIFIC >>>"
+const BEGIN = "// >>> PLUGIN-SPECIFIC >>>"
 const END = "// <<< PLUGIN-SPECIFIC <<<"
 
-/** The module minus its plugin block: what every plugin shares, byte for byte. */
-export function sharedPart(text) {
-  const start = text.indexOf(START)
+const COPIES = [
+  { path: "src/host/tools-rpc.ts", optional: false, sha256: "15d82caa53aaae7ad9efb88dddb97056d3895c4dbf49b8efbb85b743871b2a6d", part: sharedPart },
+  // Jelly's setting rules, restated without zod (the file's header says what it restates and how to update it).
+  { path: "test/support/jelly-settings.ts", optional: false, sha256: "966aeac7eddce490da51e8e46780f1fbcfaf9b3e892bd62f2c3952c2a6111383", part: (text) => text },
+]
+
+function sharedPart(text, path) {
+  const begin = text.indexOf(BEGIN)
   const end = text.indexOf(END)
-  if (start === -1 || end === -1) throw new Error("the tools RPC module has no PLUGIN-SPECIFIC block")
-  return `${text.slice(0, start)}${text.slice(end + END.length)}`
+  if (begin === -1 || end === -1 || end < begin) throw new Error(`${path}: the PLUGIN-SPECIFIC markers are missing or out of order`)
+  return text.slice(0, begin) + text.slice(end + END.length)
 }
 
-const files = process.argv.slice(2)
-if (files.length === 0) files.push(fileURLToPath(new URL("../src/host/tools-rpc.ts", import.meta.url)))
-let failed = false
-for (const file of files) {
-  const hash = createHash("sha256").update(sharedPart(readFileSync(file, "utf8"))).digest("hex")
-  if (hash === PIN) {
-    console.log(`same: ${file}`)
-  } else {
-    console.error(`different: ${file} has shared-part hash ${hash}, the pin is ${PIN}`)
-    failed = true
+const print = process.argv.includes("--print")
+let failed = 0
+for (const copy of COPIES) {
+  if (!existsSync(copy.path)) {
+    if (copy.optional) continue
+    console.error(`MISSING: ${copy.path}`)
+    failed++
+    continue
+  }
+  const hash = createHash("sha256").update(copy.part(readFileSync(copy.path, "utf8").replaceAll("\r\n", "\n"), copy.path)).digest("hex")
+  if (print) console.log(`${copy.path}: ${hash}`)
+  else if (hash === copy.sha256) console.log(`same: ${copy.path}`)
+  else {
+    console.error(`DRIFT: ${copy.path} differs from the copy every plugin carries. Change it in every plugin at once, then update its hash here.`)
+    failed++
   }
 }
-process.exit(failed ? 1 : 0)
+process.exit(failed === 0 ? 0 : 1)
