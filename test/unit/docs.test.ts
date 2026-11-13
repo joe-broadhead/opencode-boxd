@@ -79,7 +79,7 @@ describe("the README", () => {
   })
 
   test("installs from the GitHub release tag, not from a checkout or the registry", () => {
-    expect(README).toContain("opencode plugin add github:joe-broadhead/opencode-boxd#v0.0.1")
+    expect(README).toContain("opencode plugin add github:joe-broadhead/opencode-boxd#v0.0.2")
     expect(README).not.toMatch(/plugins.*\.\/opencode-boxd/)
     expect(README).not.toMatch(/npm run build/)
   })
