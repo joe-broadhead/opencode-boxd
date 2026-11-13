@@ -18,17 +18,17 @@ Unofficial; not affiliated with boxd.
 ## Install
 
 ```sh
-opencode plugin add github:joe-broadhead/opencode-boxd#v0.0.1
+opencode plugin add github:joe-broadhead/opencode-boxd#v0.0.2
 ```
 
 Run `opencode reload`, or restart OpenCode, then run `/boxd-status`.
 
-Each release has its own tag, and a Git install does not update by itself. To move to a newer release, remove the old entry with `opencode plugin remove github:joe-broadhead/opencode-boxd#v0.0.0`, then add the new tag with `opencode plugin add github:joe-broadhead/opencode-boxd#v<version>`.
+Each release has its own tag, and a Git install does not update by itself. To move to a newer release, remove the old entry with `opencode plugin remove github:joe-broadhead/opencode-boxd#v0.0.1`, then add the new tag with `opencode plugin add github:joe-broadhead/opencode-boxd#v<version>`.
 
 Or add the plugin to `opencode.json` instead, with the same spec:
 
 ```json
-{ "plugins": [{ "package": "github:joe-broadhead/opencode-boxd#v0.0.1" }] }
+{ "plugins": [{ "package": "github:joe-broadhead/opencode-boxd#v0.0.2" }] }
 ```
 
 The install takes the GitHub release tag. Its commit carries the built `dist/`, so the install runs no build.
@@ -162,7 +162,7 @@ The snapshot is the one policy worth setting centrally: every member's machines 
 // /Library/Application Support/opencode/opencode.json on macOS
 {
   "plugins": [{
-    "package": "github:joe-broadhead/opencode-boxd#v0.0.1",
+    "package": "github:joe-broadhead/opencode-boxd#v0.0.2",
     "options": { "snapshot": "opencode-golden" }
   }]
 }
@@ -241,12 +241,14 @@ agents without the default rules, the OpenCode version and one next step.
 - **Guest credentials are boxd's too.** A guest reads its model key and any push token from `boxd env` at boot; the
   plugin never reads or renews them. A token that expires, such as a one-hour GitHub App token, stops every guest that
   uses it unless something renews it, and a guest session cannot finish an interactive sign-in by itself.
+- In Jelly, the `access` setting is drawn as a choice of three, which needs a Jelly that reads declared choices: an
+  older Jelly refuses the plugin's whole declaration.
 - Updates are not automatic for a Git install, and `opencode plugin update` and `opencode plugin check` do not work on one: to move to a newer release, remove the old entry and add the new tag.
 
 ## Uninstall
 
 ```sh
-opencode plugin remove github:joe-broadhead/opencode-boxd#v0.0.1
+opencode plugin remove github:joe-broadhead/opencode-boxd#v0.0.2
 ```
 
 The ledger is yours to keep or delete. Machines are boxd's: `boxd machine remove oc-<work id> -y` destroys one.
