@@ -206,8 +206,11 @@ describe("the docs set", () => {
     }
   })
 
-  test("jelly says a later tool is not asked about in Jelly", () => {
-    expect(read("docs/jelly.md")).toContain("a tool boxd adds later is not asked about in Jelly, a write included")
+  test("jelly says every registered tool is declared, and what each access value does in Jelly", () => {
+    const jelly = read("docs/jelly.md")
+    expect(jelly).toContain("Every tool the plugin registers is declared")
+    expect(jelly).toContain("Jelly applies the `access` setting itself")
+    expect(jelly).not.toContain("a declared `allow` changes nothing in Jelly")
   })
 
   test("the AGENTS file states the rules the checks enforce", () => {

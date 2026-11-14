@@ -5,11 +5,12 @@ import { parseOptions } from "../../src/options.js"
 import { ACCESS_VALUES, defaultRules, evaluate } from "../../src/permissions.js"
 import { TOOLS } from "../../src/tools.js"
 import { SKILL_NAMES } from "../../src/skills.js"
+import { declarationProblems, docProblems } from "../support/jelly-kit.js"
 import { ACCESS_CHOICES, settingChoices, type PluginSetting, settingsProblems, settingValueIssue } from "../support/jelly-settings.js"
 
 /**
- * The `jelly` section of package.json, which Jelly reads without loading the plugin. Jelly's agents have no base allow
- * rule, so this plugin's own rules never reach them: Jelly writes each declared "ask" as that tool's default.
+ * The `jelly` section of package.json, which Jelly reads without loading the plugin. Jelly applies the declared
+ * `access` setting from each tool's `readOnly`, so the declaration must name every tool with its true class.
  */
 type Tool = { name: string; permission: string; effect: "allow" | "ask" | "deny"; readOnly: boolean }
 const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as {
@@ -31,7 +32,19 @@ const { jelly } = pkg
 const { settings } = jelly.contributes
 const byPermission = new Map(jelly.tools.map((tool) => [tool.permission, tool]))
 
+const ROOT = new URL("../../", import.meta.url)
+
 describe("the jelly declaration", () => {
+  test("follows the plugin authors' standard, with the effects the plugin's own default rules give", () => {
+    const rules = [{ action: "*", resource: "*", effect: "allow" as const }, ...defaultRules()]
+    const registered = TOOLS.map((tool) => tool.id)
+    expect(declarationProblems(ROOT, { effectOf: (permission) => evaluate(rules, permission), registered })).toEqual([])
+  })
+
+  test("docs/jelly.md counts the declared tools and names the skill", () => {
+    expect(docProblems(ROOT)).toEqual([])
+  })
+
   test("declares every known tool once, with the effect the default rules give it", () => {
     for (const tool of TOOLS) {
       expect(byPermission.get(tool.id)).toMatchObject({ effect: "allow", readOnly: tool.class === "read" })

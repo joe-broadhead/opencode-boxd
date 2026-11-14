@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `docs/jelly.md` says what Jelly does with the declaration: Jelly applies the `access` setting itself from each tool's
+  `readOnly` (the two reads run at every value; the seven machine changes ask at Ask before changes and are denied at
+  Read only), in place of the sentence that a declared `allow` changes nothing in Jelly. It counts the declared tools
+  and says where the boxd CLI's sign-in shows. The declaration is unchanged.
+- The jelly test runs the family's shared declaration kit (`test/support/jelly-kit.ts`, pinned by
+  `scripts/check-copies.mjs`).
 - The icon is now boxd's own mark, boxd.sh's `favicon.svg`, unmodified, on a rounded holding tile in boxd.sh's page colour (#0a0c12), in place of the family's drawn mark; `opencode.vendor.mark` is `true`.
 
 ## [0.0.2] - 2026-11-13
