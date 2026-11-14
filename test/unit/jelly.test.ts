@@ -14,7 +14,7 @@ import { ACCESS_CHOICES, settingChoices, type PluginSetting, settingsProblems, s
 type Tool = { name: string; permission: string; effect: "allow" | "ask" | "deny"; readOnly: boolean }
 const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as {
   files: string[]
-  opencode: { vendor?: { id: string; name: string; domain: string }; icons: Array<{ src: string }> }
+  opencode: { vendor?: { id: string; name: string; domain: string; mark?: boolean }; icons: Array<{ src: string }> }
   jelly: {
     title: string
     summary: string
@@ -98,7 +98,7 @@ describe("the jelly declaration", () => {
   })
 
   test("declares the vendor, and the summary states no policy", () => {
-    expect(pkg.opencode.vendor).toEqual({ id: "boxd", name: "boxd", domain: "boxd.sh" })
+    expect(pkg.opencode.vendor).toEqual({ id: "boxd", name: "boxd", domain: "boxd.sh", mark: true })
     expect(jelly.summary).toBe("Run an OpenCode session on a private boxd machine and keep the transcript on your laptop.")
     expect(jelly.summary.length).toBeLessThanOrEqual(160)
   })

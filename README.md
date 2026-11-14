@@ -4,6 +4,8 @@ Runs an OpenCode session on a private [boxd](https://boxd.sh) machine and keeps 
 
 Unofficial; not affiliated with boxd.
 
+boxd is a trademark of Azin Tech Operating Company B.V.; this unofficial plugin is not endorsed by them.
+
 ## Requirements
 
 - OpenCode `>=2.2.3 <2.3.0`, tested on 2.2.3, 2.2.4, 2.2.5 and 2.2.6.
