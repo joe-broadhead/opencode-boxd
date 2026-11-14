@@ -313,6 +313,35 @@ describe("a create needs its golden image (SNAPSHOT_MISSING)", () => {
     }
     expect((await unreadable.fleet.status()).snapshotPresent).toBeNull()
   })
+
+  test("status says whether the boxd CLI answered its machine listing, with the CLI's reason when it did not", async () => {
+    const signedIn = await world()
+    expect((await signedIn.fleet.status()).cli).toEqual({ signedIn: true })
+    const signedOut = await world()
+    signedOut.boxd.list = async () => {
+      throw new BoxdError("BOXD_FAILED", "boxd list failed (error: not logged in).")
+    }
+    const cli = (await signedOut.fleet.status()).cli
+    expect(cli.signedIn).toBe(false)
+    expect(cli.signedIn === false && cli.reason).toContain("not logged in")
+  })
+
+  test("the CLI's reason in boxd_status is redacted: no token, email or home folder reaches the tool's output", async () => {
+    const w = await world()
+    const home = ["", "Users", "alice", ".config", "boxd", "auth.json"].join("/")
+    const linux = ["", "home", "alice", ".config", "boxd"].join("/")
+    const token = `ghp_${"A1b2C3d4".repeat(5)}`
+    w.boxd.list = async () => {
+      throw new BoxdError("BOXD_FAILED", `boxd list failed (error: session for alice@example.com expired; token=${token}; read ${home} and ${linux}).`)
+    }
+    const status = await w.fleet.status()
+    const text = JSON.stringify(status)
+    expect(status.cli.signedIn).toBe(false)
+    for (const secret of ["alice", "example.com", token, "A1b2C3d4", home, linux]) expect(text).not.toContain(secret)
+    expect(text).toContain("[email]")
+    expect(text).toContain("~/.config/boxd")
+    expect(status.cli.signedIn === false && status.cli.reason.length).toBeLessThanOrEqual(160)
+  })
 })
 
 describe("the rest of the review", () => {

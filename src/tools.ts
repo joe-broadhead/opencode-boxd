@@ -137,7 +137,7 @@ export const TOOLS: readonly ToolSpec[] = [
     name: "harvest",
     id: "boxd_harvest",
     class: "export",
-    description: "Export the session tree, import it on this laptop, and record git; copy back any files the work produced. Refuses while the session is busy.",
+    description: "Export the session tree, import it on this laptop, and record git; copy back any files the work produced. A work with no prompt yet has no transcript, and only git is recorded. Refuses while the session is busy.",
     input: object({ workId: WORK, localDirectory: LOCAL, files: FILES_OUT, to: LOCAL }, ["workId"]),
     run: (fleet, input) =>
       fleet.harvest({

@@ -11,7 +11,7 @@ const facts = (overrides: Partial<StatusFacts> = {}): StatusFacts => ({
   host,
   snapshot: "opencode-golden",
   guestVersion: "2.2.6",
-  ledger: { snapshot: "opencode-golden", works: [], orphans: [], snapshotPresent: true },
+  ledger: { snapshot: "opencode-golden", works: [], orphans: [], snapshotPresent: true, cli: { signedIn: true } },
   tools: TOOLS.map((tool) => tool.id),
   agents: [{ id: "build", permissions: [{ action: "*", resource: "*", effect: "allow" }, ...defaultRules()] }],
   problems: [],
@@ -25,14 +25,14 @@ describe("the status model", () => {
   })
 
   test("names the golden-image doc, before anything else, when the snapshot is missing", () => {
-    const status = buildStatus(facts({ ledger: { snapshot: "opencode-golden", works: [], orphans: [], snapshotPresent: false } }))
+    const status = buildStatus(facts({ ledger: { snapshot: "opencode-golden", works: [], orphans: [], snapshotPresent: false, cli: { signedIn: true } } }))
     expect(status.snapshotPresent).toBe(false)
     expect(status.nextStep).toContain("docs/golden-image.md")
     expect(formatStatus(status)).toContain("- Snapshot: opencode-golden (not in this boxd account)")
   })
 
   test("an unreadable snapshot list is reported as unchecked, with no next step", () => {
-    const status = buildStatus(facts({ ledger: { snapshot: "opencode-golden", works: [], orphans: [], snapshotPresent: null } }))
+    const status = buildStatus(facts({ ledger: { snapshot: "opencode-golden", works: [], orphans: [], snapshotPresent: null, cli: { signedIn: true } } }))
     expect(status.snapshotPresent).toBeNull()
     expect(formatStatus(status)).toContain("(not checked")
     expect(status.nextStep).toBe("Nothing to do.")
@@ -52,6 +52,7 @@ describe("the status model", () => {
           snapshot: "opencode-golden",
           orphans: [],
           snapshotPresent: true,
+          cli: { signedIn: true },
           works: [
             { workId: "review-api", machine: "oc-review-api", sessionId: "ses_1", proof: "fresh", dirty: false, machineStatus: "running", warnings: [], outcome: "completed" },
             { workId: "docs", machine: "oc-docs", sessionId: null, proof: "missing", dirty: false, machineStatus: "hibernated", warnings: [], outcome: null },
@@ -89,10 +90,21 @@ describe("the status model", () => {
       .split("\n")
       .filter((line) => line.startsWith("- "))
       .map((line) => line.slice(2, line.indexOf(":", 3) === -1 ? undefined : line.indexOf(":", 3)))
-    expect(labels).toEqual(["Connection", "Account", "Access", "Snapshot", "Guest", "Works", "Tools", "Agents without default rules", "OpenCode", "Next step"])
+    expect(labels).toEqual(["boxd CLI", "Connection", "Access", "Snapshot", "Guest", "Works", "Tools", "Agents without default rules", "OpenCode", "Next step"])
     expect(text.match(/- Next step:/g)).toHaveLength(1)
     expect(text).toContain("- Snapshot: opencode-golden")
     expect(text).toContain("the 7 machine changes")
+  })
+
+  test("the boxd CLI row comes first: signed in when the CLI answered, and the sign-in is the first next step when not", () => {
+    expect(formatStatus(buildStatus(facts()))).toContain("- boxd CLI: signed in")
+    const signedOut = buildStatus(facts({ ledger: { snapshot: "opencode-golden", works: [], orphans: [], snapshotPresent: null, cli: { signedIn: false, reason: "BOXD_FAILED: boxd list failed (error: not logged in). Next step: x" } } }))
+    expect(signedOut.signedIn).toBe(false)
+    expect(signedOut.signInError).toContain("not logged in")
+    expect(signedOut.nextStep).toContain("boxd auth login")
+    expect(formatStatus(signedOut)).toContain("- boxd CLI: not signed in, or not reachable (")
+    const unread = buildStatus(facts({ ledger: undefined, ledgerError: "EACCES" }))
+    expect(unread.signedIn).toBeNull()
   })
 
   test("the Access row is derived from the tool classes", () => {
@@ -113,7 +125,7 @@ describe("reading the facts", () => {
       host,
       snapshot: "opencode-golden",
       guestVersion: "2.2.6",
-      ledger: async () => ({ snapshot: "opencode-golden", works: [], orphans: [], snapshotPresent: true }),
+      ledger: async () => ({ snapshot: "opencode-golden", works: [], orphans: [], snapshotPresent: true, cli: { signedIn: true } }),
     })
     expect(status.tools).toBe(1)
     expect(status.unknownCount).toBe(0)

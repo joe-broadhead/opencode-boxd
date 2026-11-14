@@ -3,10 +3,33 @@
 All notable changes to this project are documented here. The format is [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.0.3] - 2026-11-14
+
+### Fixed
+
+- A work that never had a prompt can be harvested and dropped (#2). `boxd_harvest` no longer refuses it with `NOT_OURS`
+  and a next step that pointed back at `boxd_ensure`: it imports no transcript, records the guest's git state and marks
+  the proof fresh, so `boxd_drop` applies its usual guard, and a clean tree drops while a tree with untracked, ignored
+  or uncommitted files still refuses.
+
+### Added
+
+- Status shows the boxd CLI's sign-in as its first row, **boxd CLI**: signed in when the CLI answered the machine listing
+  status already makes, or not signed in or not reachable with the CLI's reason, and then the next step is
+  `boxd auth login`. `boxd_status` returns it as `cli`, and the status RPC as `signedIn` and `signInError`. The Account
+  row is gone; its sentence is part of the new row.
+- A status reason is redacted for email addresses and the user name in a home folder too, beside the token shapes. The
+  boxd CLI's reason in `boxd_status` goes through the same redaction and is cut to 160 characters.
 
 ### Changed
 
+- `package.json` is `"private": true`, so nothing can be published to npm; installs from the GitHub tag are unaffected.
+- `docs/jelly.md` says what Jelly does with the declaration: Jelly applies the `access` setting itself from each tool's
+  `readOnly` (the two reads run at every value; the seven machine changes ask at Ask before changes and are denied at
+  Read only), in place of the sentence that a declared `allow` changes nothing in Jelly. It counts the declared tools
+  and says where the boxd CLI's sign-in shows. The declaration is unchanged.
+- The jelly test runs the family's shared declaration kit (`test/support/jelly-kit.ts`, pinned by
+  `scripts/check-copies.mjs`).
 - The icon is now boxd's own mark, boxd.sh's `favicon.svg`, unmodified, on a rounded holding tile in boxd.sh's page colour (#0a0c12), in place of the family's drawn mark; `opencode.vendor.mark` is `true`.
 
 ## [0.0.2] - 2026-11-13

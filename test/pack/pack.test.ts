@@ -194,8 +194,11 @@ describe.each(TESTED_HOSTS)("installed alone, in stock OpenCode %s", (version) =
         unknownCount: 0,
         unguardedAgents: [],
         problems: [],
-        nextStep: "Nothing to do.",
+        // The pack test installs no boxd CLI, so status reports it first, with the sign-in as the next step.
+        signedIn: false,
+        nextStep: "Run boxd auth login in a terminal, check that the laptop's boxd CLI is on OpenCode's PATH, then run /boxd-status again.",
       })
+      expect(String(output.signInError)).toStartWith("BOXD_MISSING: ")
       expect(StatusRpc.methods.status.output.required).toContain("nextStep")
 
       const { data: agents } = await host.api<{ data: { id: string }[] }>("GET", "/api/agent")

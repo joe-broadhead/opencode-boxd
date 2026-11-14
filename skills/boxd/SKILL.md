@@ -58,7 +58,8 @@ task, even when the transcript arrived; say what the error says, and fix a crede
 ## Do not
 
 - Do not call `boxd_image` or `boxd_drop` until `boxd_harvest` has returned `proven` since the last `boxd_submit`.
-  Both refuse, with `NOT_PROVEN`. `boxd_sleep` is always safe: it keeps the disk.
+  Both refuse, with `NOT_PROVEN`. `boxd_sleep` is always safe: it keeps the disk. A work that never had a prompt is
+  harvested too: there is no transcript, and the harvest records the guest's git state, so a clean tree then drops.
 - Do not destroy a machine to restart a session. `boxd_resume` wakes it, or rebuilds it from the golden snapshot and
   the proven transcript.
 - Do not copy `opencode.db`, and do not treat a snapshot as a transcript.

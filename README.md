@@ -20,17 +20,17 @@ boxd is a trademark of Azin Tech Operating Company B.V.; this unofficial plugin 
 ## Install
 
 ```sh
-opencode plugin add github:joe-broadhead/opencode-boxd#v0.0.2
+opencode plugin add github:joe-broadhead/opencode-boxd#v0.0.3
 ```
 
 Run `opencode reload`, or restart OpenCode, then run `/boxd-status`.
 
-Each release has its own tag, and a Git install does not update by itself. To move to a newer release, remove the old entry with `opencode plugin remove github:joe-broadhead/opencode-boxd#v0.0.1`, then add the new tag with `opencode plugin add github:joe-broadhead/opencode-boxd#v<version>`.
+Each release has its own tag, and a Git install does not update by itself. To move to a newer release, remove the old entry with `opencode plugin remove github:joe-broadhead/opencode-boxd#v0.0.2`, then add the new tag with `opencode plugin add github:joe-broadhead/opencode-boxd#v<version>`.
 
 Or add the plugin to `opencode.json` instead, with the same spec:
 
 ```json
-{ "plugins": [{ "package": "github:joe-broadhead/opencode-boxd#v0.0.2" }] }
+{ "plugins": [{ "package": "github:joe-broadhead/opencode-boxd#v0.0.3" }] }
 ```
 
 The install takes the GitHub release tag. Its commit carries the built `dist/`, so the install runs no build.
@@ -45,6 +45,10 @@ The plugin never reads your boxd account or credentials; it runs your own `boxd`
 ```sh
 boxd auth login
 ```
+
+`/boxd-status` shows the sign-in as its first row, **boxd CLI**: `signed in` when the CLI answered its machine listing,
+or `not signed in, or not reachable` with the CLI's own reason, and then the next step is `boxd auth login`. A network
+failure looks the same from here, so the row keeps the reason.
 
 Nothing else is stored: the plugin keeps a ledger under `~/.local/share/opencode-boxd/works/`, and the machine holds no
 session you cannot get back.
@@ -77,7 +81,9 @@ Every tool is allowed by default, reads and machine changes alike, so `ensure`, 
 decides whether a change runs, asks or is denied.
 
 `boxd_image` and `boxd_drop` refuse until a harvest has proven the import on this laptop since the last prompt, and
-`boxd_drop` also refuses a machine that is not the one the ledger records for that work id.
+`boxd_drop` also refuses a machine that is not the one the ledger records for that work id. A work that never had a
+prompt is harvested the same way: there is no transcript to import, and the harvest records the guest's git state, so a
+clean tree then drops.
 
 `boxd_drop` destroys nothing that the laptop cannot account for. It refuses when:
 
@@ -164,7 +170,7 @@ The snapshot is the one policy worth setting centrally: every member's machines 
 // /Library/Application Support/opencode/opencode.json on macOS
 {
   "plugins": [{
-    "package": "github:joe-broadhead/opencode-boxd#v0.0.2",
+    "package": "github:joe-broadhead/opencode-boxd#v0.0.3",
     "options": { "snapshot": "opencode-golden" }
   }]
 }
@@ -216,8 +222,8 @@ one next step).
 | `GIT_UNKNOWN` | Commit the work in a git repository on the machine, harvest again, then drop. Or hibernate, which keeps the disk. |
 | `CREATE_UNCERTAIN` | Run `boxd_status`: if the machine appears there, call `boxd_ensure` to adopt it; if not, ensure again. |
 
-The `/boxd` dialog and `/boxd-status` show the same status: connection, account, access, snapshot, guest, works, tools,
-agents without the default rules, the OpenCode version and one next step.
+The `/boxd` dialog and `/boxd-status` show the same status: the boxd CLI's sign-in, connection, access, snapshot, guest,
+works, tools, agents without the default rules, the OpenCode version and one next step.
 
 ## Known limits
 
@@ -250,7 +256,7 @@ agents without the default rules, the OpenCode version and one next step.
 ## Uninstall
 
 ```sh
-opencode plugin remove github:joe-broadhead/opencode-boxd#v0.0.2
+opencode plugin remove github:joe-broadhead/opencode-boxd#v0.0.3
 ```
 
 The ledger is yours to keep or delete. Machines are boxd's: `boxd machine remove oc-<work id> -y` destroys one.

@@ -163,7 +163,8 @@ The golden image is built from a stock machine. It carries OpenCode 2.2.5 and ho
 - The stock boxd image (2 vCPU / 8 GiB, `source: "standalone"`) carries `python3` 3.12.3, `git` 2.43.0, Node 24, the
   in-VM `boxd` CLI at `/usr/local/bin/boxd`, and **OpenCode 1.19.5** at `/usr/local/bin/opencode` →
   `/home/boxd/.opencode/bin/opencode`. There is no stock snapshot to name: a stock machine is created with no
-  `--from-snapshot`.
+  `--from-snapshot`. A fresh stock machine made on 14 November 2026 still reported `opencode --version` 1.19.5, so a
+  machine whose OpenCode is 2.x got it from a later install, not from the image.
 - `opencode upgrade 2.2.5` from 1.x refuses: "OpenCode 2.2.5 is OpenCode 2. Upgrade with `opencode upgrade --major`".
   `opencode upgrade --major` installs the latest 2.x (2.2.6); a following `opencode upgrade 2.2.5` pins 2.2.5. Both
   steps take about 4 s.

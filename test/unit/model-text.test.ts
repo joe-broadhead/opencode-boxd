@@ -40,6 +40,7 @@ const defaultStatus = (): Status =>
     host: { version: "2.2.6", range: ">=2.2.3 <2.3.0", tested: true },
     snapshot: "opencode-golden",
     snapshotPresent: true,
+    signedIn: true,
     guestVersion: "2.2.6",
     works: [],
     openWorks: 0,
