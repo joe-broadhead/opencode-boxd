@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- The icon is now boxd's own mark, boxd.sh's `favicon.svg`, unmodified, in place of the family's drawn mark; `opencode.vendor.mark` is `true`.
+- The icon is now boxd's own mark, boxd.sh's `favicon.svg`, unmodified, on a rounded holding tile in boxd.sh's page colour (#0a0c12), in place of the family's drawn mark; `opencode.vendor.mark` is `true`.
 
 ## [0.0.2] - 2026-11-13
 

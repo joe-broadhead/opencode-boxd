@@ -9,7 +9,7 @@ what a Jelly may call.
   the two reads and the seven machine changes alike.
 - **`skills`** — `boxd`.
 - **`signIns`** — empty. The plugin has no sign-in of its own: it runs your `boxd` CLI, which is already signed in.
-- **`icon`** — `assets/icon.svg`, boxd's own mark: boxd.sh's `favicon.svg`, unchanged (`opencode.vendor.mark` is `true`).
+- **`icon`** — `assets/icon.svg`, boxd's own mark: boxd.sh's `favicon.svg`, unchanged, on a rounded tile in boxd.sh's page colour #0a0c12 (`opencode.vendor.mark` is `true`).
 - **`contributes`** — one setting, `access`, the option of the same name, as a choice of three: **Allowed** (`all`, the
   default), **Ask before changes** (`ask-changes`) and **Read only** (`read-only`), with Jelly's own line for each.
   Jelly draws it as a choice and saves only one of the three; a Jelly that does not know declared choices yet refuses
