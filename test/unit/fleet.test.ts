@@ -144,6 +144,27 @@ describe("the control plane", () => {
     await refusal(fleet.drop({ workId: "review-api" }), "NOT_PROVEN")
   })
 
+  test("a work that never had a prompt is harvested without a transcript, and then drops on a clean tree", async () => {
+    const { fleet, boxd, prover, ledger } = await world()
+    await fleet.ensure({ workId: "review-api", repo: "https://github.com/joe-broadhead/example" })
+    await refusal(fleet.drop({ workId: "review-api" }), "NOT_PROVEN")
+    const proven = await fleet.harvest({ workId: "review-api", localDirectory: await local() })
+    expect(proven).toMatchObject({ state: "proven", sessions: [] })
+    expect(proven.next).toContain("no session")
+    expect(prover.calls).toEqual([])
+    expect(proofState((await ledger.load("review-api"))!)).toBe("fresh")
+    await expect(fleet.drop({ workId: "review-api" })).resolves.toMatchObject({ state: "dropped" })
+    expect(boxd.calls).toContain("remove oc-review-api")
+  })
+
+  test("a work with no prompt still refuses the drop when the guest created files", async () => {
+    const { fleet, guest } = await world()
+    await fleet.ensure({ workId: "review-api" })
+    guest.gitState = { known: true, remote: null, branch: null, sha: null, dirty: false, untracked: ["notes.txt"], ignored: [], untrackedFiles: {} }
+    await fleet.harvest({ workId: "review-api", localDirectory: await local() })
+    await refusal(fleet.drop({ workId: "review-api" }), "UNTRACKED")
+  })
+
   test("keeps the guest session id when the admit fails", async () => {
     const { fleet, guest, ledger } = await world()
     await fleet.ensure({ workId: "review-api" })

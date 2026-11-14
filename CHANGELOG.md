@@ -5,6 +5,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A work that never had a prompt can be harvested and dropped (#2). `boxd_harvest` no longer refuses it with `NOT_OURS`
+  and a next step that pointed back at `boxd_ensure`: it imports no transcript, records the guest's git state and marks
+  the proof fresh, so `boxd_drop` applies its usual guard, and a clean tree drops while a tree with untracked, ignored
+  or uncommitted files still refuses.
+
 ### Changed
 
 - The icon is now boxd's own mark, boxd.sh's `favicon.svg`, unmodified, on a rounded holding tile in boxd.sh's page colour (#0a0c12), in place of the family's drawn mark; `opencode.vendor.mark` is `true`.

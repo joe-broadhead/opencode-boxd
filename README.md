@@ -77,7 +77,9 @@ Every tool is allowed by default, reads and machine changes alike, so `ensure`, 
 decides whether a change runs, asks or is denied.
 
 `boxd_image` and `boxd_drop` refuse until a harvest has proven the import on this laptop since the last prompt, and
-`boxd_drop` also refuses a machine that is not the one the ledger records for that work id.
+`boxd_drop` also refuses a machine that is not the one the ledger records for that work id. A work that never had a
+prompt is harvested the same way: there is no transcript to import, and the harvest records the guest's git state, so a
+clean tree then drops.
 
 `boxd_drop` destroys nothing that the laptop cannot account for. It refuses when:
 

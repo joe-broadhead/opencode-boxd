@@ -152,6 +152,25 @@ export function createFleet(deps: Deps) {
     return machine
   }
 
+  /** The harvest of a work with no session: no transcript, the guest's git state, and the files asked for. */
+  async function harvestEmpty(work: Work, wanted: readonly string[], toDirectory: string): Promise<FleetResult> {
+    const git = await harvestGit(deps, work)
+    const proof = { harvestedAt: deps.now(), guestVersion: deps.hostVersion ?? "unknown", sessions: [], sha256: {} }
+    await deps.ledger.mutate(work.workId, (current) => ({ ...(current ?? work), proof, git, warnings: [] }))
+    const moved = await downloadAll(deps, work, wanted, toDirectory)
+    if (moved.length) {
+      await deps.ledger.mutate(work.workId, (current) => ({ ...(current ?? work), downloads: mergeFiles(current?.downloads, moved) }))
+    }
+    return {
+      workId: work.workId,
+      state: "proven",
+      sessions: [],
+      ...(moved.length ? { files: moved.map((file) => ({ path: file.path, bytes: file.bytes, sha256: file.sha256 })) } : {}),
+      git: { known: git.known, remote: git.remote, sha: git.sha, dirty: git.dirty, patchStored: git.patchStored, untracked: git.untracked, ignored: git.ignored },
+      next: `This work has no session, so there was no transcript to import. ${dropAdvice(git, proofState(await loadOwned(work.workId)))}`,
+    }
+  }
+
   /** The plugin woke or recreated the machine, so a sleep it recorded no longer says why the machine is down. */
   async function woke(workId: string): Promise<void> {
     if (!(await deps.ledger.load(workId))?.sleptAt) return
@@ -362,8 +381,10 @@ export function createFleet(deps: Deps) {
       // The files a work produced, read before the transcript moves: a refused path fails the call whole.
       const wanted = (input.files ?? []).map((path) => assertWorkPath(path))
       const toDirectory = input.to ? await resolveWorkDirectory(deps, input.to, roots, true) : localDirectory
-      if (!work.rootSessionId) throw boxdError("NOT_OURS", "This work has no session. Call boxd_submit first.")
       await ready(work, { wake: true })
+      // A work that never had a prompt has no transcript to import, but its tree is still accounted for: the proof
+      // records no session and the guest's git state, so drop applies its usual guard instead of refusing for good.
+      if (!work.rootSessionId) return harvestEmpty(work, wanted, toDirectory)
       const { phase, run: live } = await deps.guest.phase(work.machine, work.rootSessionId)
       if (phase === "busy") throw boxdError("SESSION_BUSY", "The session is still running.")
       const listed = await deps.guest.listSessions(work.machine)
@@ -512,7 +533,8 @@ export function createFleet(deps: Deps) {
         ...(current ?? work),
         ...(root ? { rootSessionId: root } : {}),
         proof: undefined,
-        lastSubmitAt: deps.now(),
+        // Only a restored transcript is a prompt to harvest again; a work with no session has none.
+        ...(transfers.length ? { lastSubmitAt: deps.now() } : {}),
         warnings: [],
       }))
       return {
@@ -521,7 +543,7 @@ export function createFleet(deps: Deps) {
         sessionId: root ?? null,
         state: "ready",
         resumed: "import",
-        next: "The transcript is back. Harvest again before sleep, image or drop, because the old proof was for the previous machine.",
+        next: `${transfers.length ? "The transcript is back." : "This work has no session, so there was no transcript to restore."} Harvest again before sleep, image or drop, because the old proof was for the previous machine.`,
       }
     },
 
