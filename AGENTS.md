@@ -52,8 +52,9 @@ checks and the release steps.
   `TESTED_HOSTS`), `pack` (every `OPENCODE_BIN_*`), `forbidden`, `whitelist` and `actionlint`.
 - **The `jelly` section** declares every tool, the skill, a one-line `summary` and the icon, with only the keys Jelly
   reads. `test/unit/jelly.test.ts` keeps it in step with the tool table and the default rules.
-- **The icon** is this family's own mark from the family icon kit, not boxd's logo or colour. `opencode.vendor` names
-  boxd's domain so a display app may fetch boxd's own logo from boxd; the package carries no vendor mark.
+- **The icon** is boxd's own mark, https://boxd.sh/favicon.svg with only `width` and `height` dropped, and the PNGs
+  rendered from it. `opencode.vendor.mark` is `true`, so the README carries the trademark line. Do not recolour,
+  redraw or combine it.
 - **Tests.** Unit tests use narrow fakes. Host tests use the public `@opencode/sdk` with a fake boxd CLI and a fake
   guest, in an isolated temp root. Never run the real boxd CLI, create a machine, or read the owner's credentials from a
   check.

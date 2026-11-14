@@ -63,7 +63,8 @@
     "vendor": {
       "id": "boxd",
       "name": "boxd",
-      "domain": "boxd.sh"
+      "domain": "boxd.sh",
+      "mark": true
     }
   },
   "jelly": {
