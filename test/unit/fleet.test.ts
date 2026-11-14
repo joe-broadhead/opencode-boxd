@@ -147,9 +147,15 @@ describe("the control plane", () => {
   test("a work that never had a prompt is harvested without a transcript, and then drops on a clean tree", async () => {
     const { fleet, boxd, prover, ledger } = await world()
     await fleet.ensure({ workId: "review-api", repo: "https://github.com/joe-broadhead/example" })
+    await expect(fleet.job({ workId: "review-api" })).resolves.toMatchObject({ state: "empty" })
     await refusal(fleet.drop({ workId: "review-api" }), "NOT_PROVEN")
+    // Asleep: the harvest wakes the machine and says so, as for any work.
+    await fleet.sleep({ workId: "review-api" })
+    await refusal(fleet.harvest({ workId: "review-api", localDirectory: await local() }), "MACHINE_STARTING")
+    boxd.seed("oc-review-api", "running")
     const proven = await fleet.harvest({ workId: "review-api", localDirectory: await local() })
-    expect(proven).toMatchObject({ state: "proven", sessions: [] })
+    expect(proven).toMatchObject({ state: "proven", sessions: [], git: { known: true, dirty: false } })
+    expect(proven).not.toHaveProperty("outcome")
     expect(proven.next).toContain("no session")
     expect(prover.calls).toEqual([])
     expect(proofState((await ledger.load("review-api"))!)).toBe("fresh")
