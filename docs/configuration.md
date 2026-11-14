@@ -121,7 +121,9 @@ permissions, followed by your top-level rules for boxd tools.
   create reports its own error.
 - **Status reads, never wakes.** `boxd_status` runs one read-only `machine get` per open work and one `machine list`;
   `/boxd-status`, the `/boxd` dialog and the status RPC read the same. No read wakes a machine, because waking starts
-  billing. The plugin never reads your boxd account or credentials.
+  billing. The plugin never reads your boxd account or credentials: the `machine list` answer is how status says the
+  boxd CLI is signed in (`cli.signedIn`), and a failed one keeps the CLI's reason, because a network failure fails the
+  same way.
 - **A read never wakes.** `boxd_job` reports `asleep` for a hibernated machine and names `boxd_resume` as the next step.
   `asleepBy` is `boxd_sleep` (with `sleptAt`) when the plugin hibernated it and has not woken it since, and
   `idle_or_cli` otherwise: the 30-minute idle bound, or the boxd CLI. boxd does not say when a machine hibernated by

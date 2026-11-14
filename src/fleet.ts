@@ -59,6 +59,11 @@ export interface FleetStatus {
   readonly works: readonly WorkSummary[]
   /** `oc-*` machines the account has that no open work records: a create that timed out, most likely. */
   readonly orphans: readonly string[]
+  /**
+   * Whether the boxd CLI answered the machine listing status already makes: it does only when it is signed in. A
+   * failure keeps the CLI's own reason, because a network failure fails the same way.
+   */
+  readonly cli: { readonly signedIn: true } | { readonly signedIn: false; readonly reason: string }
 }
 
 type Awake = "hold" | "sleep"
@@ -208,7 +213,11 @@ export function createFleet(deps: Deps) {
     /** The ledger and each work's machine when the CLI answers. Never starts, wakes or runs a session. */
     async status(): Promise<FleetStatus> {
       const works = await deps.ledger.list()
-      const listed = await deps.boxd.list().catch(() => undefined)
+      const listing = await deps.boxd.list().then(
+        (machines) => ({ machines }),
+        (error: unknown) => ({ error: error instanceof Error ? error.message : String(error) }),
+      )
+      const listed = "machines" in listing ? listing.machines : undefined
       const names = await snapshotNames(false)
       const known = new Set(works.map((work) => work.machine))
       return {
@@ -232,6 +241,7 @@ export function createFleet(deps: Deps) {
           }),
         ),
         orphans: (listed ?? []).map((machine) => machine.name).filter((name) => name.startsWith("oc-") && !known.has(name)).sort(),
+        cli: "machines" in listing ? { signedIn: true } : { signedIn: false, reason: listing.error },
       }
     },
 

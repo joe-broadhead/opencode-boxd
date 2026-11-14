@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the proof fresh, so `boxd_drop` applies its usual guard, and a clean tree drops while a tree with untracked, ignored
   or uncommitted files still refuses.
 
+### Added
+
+- Status shows the boxd CLI's sign-in as its first row, **boxd CLI**: signed in when the CLI answered the machine listing
+  status already makes, or not signed in or not reachable with the CLI's reason, and then the next step is
+  `boxd auth login`. `boxd_status` returns it as `cli`, and the status RPC as `signedIn` and `signInError`. The Account
+  row is gone; its sentence is part of the new row.
+
 ### Changed
 
 - The icon is now boxd's own mark, boxd.sh's `favicon.svg`, unmodified, on a rounded holding tile in boxd.sh's page colour (#0a0c12), in place of the family's drawn mark; `opencode.vendor.mark` is `true`.

@@ -313,6 +313,18 @@ describe("a create needs its golden image (SNAPSHOT_MISSING)", () => {
     }
     expect((await unreadable.fleet.status()).snapshotPresent).toBeNull()
   })
+
+  test("status says whether the boxd CLI answered its machine listing, with the CLI's reason when it did not", async () => {
+    const signedIn = await world()
+    expect((await signedIn.fleet.status()).cli).toEqual({ signedIn: true })
+    const signedOut = await world()
+    signedOut.boxd.list = async () => {
+      throw new BoxdError("BOXD_FAILED", "boxd list failed (error: not logged in).")
+    }
+    const cli = (await signedOut.fleet.status()).cli
+    expect(cli.signedIn).toBe(false)
+    expect(cli.signedIn === false && cli.reason).toContain("not logged in")
+  })
 })
 
 describe("the rest of the review", () => {

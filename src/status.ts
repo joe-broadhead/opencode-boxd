@@ -43,6 +43,10 @@ export interface Status {
   readonly snapshot: string
   /** Whether the golden snapshot exists in the account; null when the listing could not be read. */
   readonly snapshotPresent: boolean | null
+  /** Whether the boxd CLI answered as signed in; null when status could not ask it. */
+  readonly signedIn: boolean | null
+  /** Why the boxd CLI did not answer, on one line of at most 160 characters. */
+  readonly signInError?: string
   /** The OpenCode version the machine must run: this laptop's own. */
   readonly guestVersion: string | null
   /** Every open work, with its proof state and the machine's state when boxd answered. */
@@ -81,6 +85,7 @@ const AGENTS_NEXT_STEP =
   "Put the default rules shown by /boxd-status first in each listed agent's own permissions, in opencode.json or the agent's Markdown file, followed by your top-level rules for boxd tools."
 
 const NOTHING_TO_DO = "Nothing to do."
+const SIGN_IN_NEXT_STEP = "Run boxd auth login in a terminal, check that the laptop's boxd CLI is on OpenCode's PATH, then run /boxd-status again."
 const LISTED_UNKNOWN = 20
 // A tool name comes from the host; list only plain names.
 const SAFE_NAME = /^[a-z][a-z0-9_]{0,63}$/
@@ -104,6 +109,8 @@ export function buildStatus(facts: StatusFacts): Status {
     host: facts.host,
     snapshot: facts.snapshot,
     snapshotPresent: facts.ledger?.snapshotPresent ?? null,
+    signedIn: facts.ledger ? facts.ledger.cli.signedIn : null,
+    ...(facts.ledger && !facts.ledger.cli.signedIn ? { signInError: cut(shortReason(facts.ledger.cli.reason) ?? "no reason given", STATUS_LIMIT) } : {}),
     guestVersion: facts.guestVersion,
     works,
     openWorks: works.length,
@@ -122,6 +129,8 @@ export function buildStatus(facts: StatusFacts): Status {
 
 function nextStepOf(status: Omit<Status, "nextStep">): string {
   if (status.state === "failed") return "Restart OpenCode, then run /boxd-status again."
+  // Every tool runs the boxd CLI, so a CLI that cannot answer comes before every other setup fix.
+  if (status.signedIn === false) return SIGN_IN_NEXT_STEP
   // Without its golden image no machine can be created or rebuilt, so this comes before every other setup fix.
   if (status.snapshotPresent === false) {
     return `Create the golden image named "${status.snapshot}" as docs/golden-image.md describes, then set the snapshot option to it.`
@@ -193,6 +202,14 @@ function asleepText(work: WorkSummary): string {
   return ""
 }
 
+/** The boxd CLI row: the sign-in is the CLI's own, so status reports whether the CLI answered its machine listing. */
+function cliText({ signedIn, signInError }: Status) {
+  const never = "the plugin never reads your boxd account or credentials"
+  if (signedIn === true) return `signed in (it answered the machine listing; ${never})`
+  if (signedIn === false) return `not signed in, or not reachable (${signInError ?? "no reason given"}; ${never})`
+  return `not checked (${never})`
+}
+
 /** The Snapshot row: the configured image, and whether this account actually has it. */
 function snapshotText({ snapshot, snapshotPresent }: Status) {
   if (snapshotPresent === false) return `${snapshot} (not in this boxd account)`
@@ -233,8 +250,8 @@ export function formatStatus(status: Status) {
       : `connected (the ledger is readable; ${status.openWorks} open ${status.openWorks === 1 ? "work" : "works"})`
   return [
     `${DISPLAY_NAME} status`,
+    `- boxd CLI: ${cliText(status)}`,
     `- Connection: ${connection}`,
-    `- Account: not read: the plugin never reads your boxd account or credentials, and boxd_status runs one read-only machine get per open work`,
     `- Access: ${accessText(status)}`,
     `- Snapshot: ${snapshotText(status)}`,
     `- Guest: must be OpenCode ${status.guestVersion ?? "unknown"}, this laptop's version; a job or a harvest checks it`,
@@ -294,7 +311,7 @@ export const StatusRpc = {
       input: { type: "object" },
       output: {
         type: "object",
-        required: ["version", "state", "access", "host", "snapshot", "snapshotPresent", "guestVersion", "works", "openWorks", "unharvested", "orphans", "warned", "failedRuns", "tools", "unknownCount", "unknownTools", "unguardedAgents", "problems", "nextStep"],
+        required: ["version", "state", "access", "host", "snapshot", "snapshotPresent", "signedIn", "guestVersion", "works", "openWorks", "unharvested", "orphans", "warned", "failedRuns", "tools", "unknownCount", "unknownTools", "unguardedAgents", "problems", "nextStep"],
         properties: {
           version: { type: "string" },
           state: { enum: ["connected", "failed"] },
@@ -307,6 +324,8 @@ export const StatusRpc = {
           },
           snapshot: { type: "string" },
           snapshotPresent: { type: ["boolean", "null"] },
+          signedIn: { type: ["boolean", "null"] },
+          signInError: { type: "string" },
           guestVersion: nullableString,
           works: {
             type: "array",

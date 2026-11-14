@@ -46,6 +46,10 @@ The plugin never reads your boxd account or credentials; it runs your own `boxd`
 boxd auth login
 ```
 
+`/boxd-status` shows the sign-in as its first row, **boxd CLI**: `signed in` when the CLI answered its machine listing,
+or `not signed in, or not reachable` with the CLI's own reason, and then the next step is `boxd auth login`. A network
+failure looks the same from here, so the row keeps the reason.
+
 Nothing else is stored: the plugin keeps a ledger under `~/.local/share/opencode-boxd/works/`, and the machine holds no
 session you cannot get back.
 
@@ -218,8 +222,8 @@ one next step).
 | `GIT_UNKNOWN` | Commit the work in a git repository on the machine, harvest again, then drop. Or hibernate, which keeps the disk. |
 | `CREATE_UNCERTAIN` | Run `boxd_status`: if the machine appears there, call `boxd_ensure` to adopt it; if not, ensure again. |
 
-The `/boxd` dialog and `/boxd-status` show the same status: connection, account, access, snapshot, guest, works, tools,
-agents without the default rules, the OpenCode version and one next step.
+The `/boxd` dialog and `/boxd-status` show the same status: the boxd CLI's sign-in, connection, access, snapshot, guest,
+works, tools, agents without the default rules, the OpenCode version and one next step.
 
 ## Known limits
 
