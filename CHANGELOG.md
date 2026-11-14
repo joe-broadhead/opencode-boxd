@@ -3,7 +3,7 @@
 All notable changes to this project are documented here. The format is [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.0.3] - 2026-11-14
 
 ### Fixed
 
@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `package.json` is `"private": true`, so nothing can be published to npm; installs from the GitHub tag are unaffected.
 - `docs/jelly.md` says what Jelly does with the declaration: Jelly applies the `access` setting itself from each tool's
   `readOnly` (the two reads run at every value; the seven machine changes ask at Ask before changes and are denied at
   Read only), in place of the sentence that a declared `allow` changes nothing in Jelly. It counts the declared tools
