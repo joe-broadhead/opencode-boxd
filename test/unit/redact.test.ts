@@ -17,6 +17,14 @@ describe("redaction", () => {
     }
   })
 
+  test("drops an email address and the owner's name in a home folder", () => {
+    const mac = ["", "Users", "alice", "x"].join("/")
+    const linux = ["", "home", "alice", "x"].join("/")
+    const windows = ["C:", "Users", "alice", "x"].join("\\")
+    const reason = shortReason(`signed in as alice.b+boxd@example.co.uk; ${mac} ${linux} ${windows}`)
+    expect(reason).toBe("signed in as [email]; ~/x ~/x ~\\x")
+  })
+
   test("keeps a URL's scheme, host and path, and drops its credentials and query", () => {
     expect(shortReason("GET https://user:pass@boxd.sh/machines/oc-1?token=abc#frag failed")).toBe("GET https://boxd.sh/machines/oc-1 failed")
   })

@@ -215,7 +215,8 @@ export function createFleet(deps: Deps) {
       const works = await deps.ledger.list()
       const listing = await deps.boxd.list().then(
         (machines) => ({ machines }),
-        (error: unknown) => ({ error: error instanceof Error ? error.message : String(error) }),
+        // The CLI's stderr is untrusted text: it reaches the model's tool output, so it is redacted and cut here.
+        (error: unknown) => ({ error: reasonOf(error) }),
       )
       const listed = "machines" in listing ? listing.machines : undefined
       const names = await snapshotNames(false)

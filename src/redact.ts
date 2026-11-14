@@ -3,7 +3,8 @@
 
 /**
  * Token shapes, the same as the tools RPC's for upstream errors (src/host/tools-rpc.ts): bearer and basic values,
- * `key=value` secrets, JWTs, vendor-prefixed keys, and any long run of key characters.
+ * `key=value` secrets, JWTs, vendor-prefixed keys, and any long run of key characters; then email addresses and the
+ * owner's name in a home folder (macOS, Linux or Windows), which becomes `~`.
  */
 const SECRETS: readonly [RegExp, string][] = [
   [/\b(bearer|basic|token)\s+[\w.~+/=-]{8,}/gi, "$1 [redacted]"],
@@ -11,6 +12,9 @@ const SECRETS: readonly [RegExp, string][] = [
   [/\beyJ[\w-]{4,}\.[\w-]{4,}\.[\w-]{4,}/g, "[redacted]"],
   [/\b(?:tvly|sk|pk|rk|ghp|gho|ghu|ghs|ghr|github_pat|glpat|xox[abposr]|lin_api|lin_oauth)[-_][\w-]{8,}/gi, "[redacted]"],
   [/[\w+=-]{40,}/g, "[redacted]"],
+  // An email address names a person, and a home folder names its owner: neither belongs on a status surface.
+  [/\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b/g, "[email]"],
+  [/(?:\/(?:Users|home)\/|[A-Za-z]:\\Users\\)[^\s/\\"'`]+/g, "~"],
 ]
 
 const REASON_LIMIT = 160

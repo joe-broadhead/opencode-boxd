@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   status already makes, or not signed in or not reachable with the CLI's reason, and then the next step is
   `boxd auth login`. `boxd_status` returns it as `cli`, and the status RPC as `signedIn` and `signInError`. The Account
   row is gone; its sentence is part of the new row.
+- A status reason is redacted for email addresses and the user name in a home folder too, beside the token shapes. The
+  boxd CLI's reason in `boxd_status` goes through the same redaction and is cut to 160 characters.
 
 ### Changed
 
