@@ -21,6 +21,17 @@ opencode api post /api/rpc/boxd.machines.tools/describe -H "x-opencode-directory
 A plugin-owned method's result is the method's output object, as `describe` gives its schema: for boxd, the JSON the
 tool itself returns (a work's state, a harvest's sessions, a job's outcome). `text` is what the model path would show.
 
+`boxd_status` reads the whole fleet in one call: each work's `phase`, its last `outcome`, and for a running work whose
+last prompt is not harvested, `lastActivityAt`, `lastText` and `pending`, read from each guest in parallel with a bound
+per machine. A guest that does not answer within it is `phase: "unreachable"` with `error`, `message` and `next`, and the
+other works still report. `credentials` lists the account's sealed variables by `name`, `scope` and `hosts`, never a
+value. A script that watches many works can call `boxd_status` once a round, instead of `boxd_job` per work:
+
+```sh
+opencode api post /api/rpc/boxd.machines.tools/boxd_status -H "x-opencode-directory:$PWD" \
+  -d '{"input":{"sessionID":"<id>","input":{}}}'
+```
+
 ## Methods
 
 | Method | Class | Runs when |
@@ -120,15 +131,22 @@ A call the RPC refuses before the method runs is the RPC error `failed`, with `d
 | `SESSION_AGENT_REQUIRED` | the session names no agent | create a session that names an agent |
 | `TOOL_UNAVAILABLE` | OpenCode does not list the method's tool now | call `describe` to see the methods there are |
 
-A method that ran and refused answers with its output, not an RPC error: `{ "error": "<code>", "message": "<what
-happened>", "next": "<the one next step>" }`, the same object the model path gets. The codes a script meets most:
+A method that ran and refused answers with its output, not an RPC error, in the same shape as a success: `{ "workId":
+"<id>", "machine": "oc-<id>", "state": "<state>", "error": "<code>", "message": "<what happened>", "next": "<the one
+next step>" }`, the same object the model path gets. `workId` and `machine` are there when the call named a valid one.
+`state` is `unreachable` when boxd or the guest did not answer (`TIMEOUT`, `GUEST_UNRESPONSIVE`, `GUEST_SERVER_DOWN`,
+`GUEST_FAILED`, `BOXD_FAILED`, `BOXD_MISSING`, `CREATE_UNCERTAIN`), `starting`, `gone` and `busy` as a read would say
+them, `failed` for a run that failed, and `refused` for everything else, so a status loop reads `state` on every answer.
+A refusal can carry facts beside the sentence: `NAME_INVALID` and `PATH_REFUSED` name the input in `field` (such as
+`localDirectory` or `files[0].from`), and `UNTRACKED` gives `kind` (`untracked` or `ignored`), `count`, and the first 50
+`paths`. The codes a script meets most:
 
 | Code | When | What to do |
 |---|---|---|
 | `NOT_OURS` | no open work has that id, or it is bound to another machine | call `boxd_ensure` for that work id |
 | `MACHINE_GONE` | the machine is missing or destroyed | call `boxd_resume` to rebuild it from the golden snapshot |
 | `SNAPSHOT_MISSING` | the golden snapshot is not in this boxd account | build the image as `docs/golden-image.md` describes, and set `snapshot` |
-| `SESSION_BUSY` | the guest session is still running | call `boxd_job` until it reports idle, then harvest |
+| `SESSION_BUSY` | the guest session is still running (a harvest, or a submit that names a `model`) | call `boxd_job` until it reports idle, then make the call again |
 | `NOT_PROVEN` | no fresh laptop import since the last prompt | call `boxd_harvest` first |
 | `GUEST_RUN_FAILED`, `GUEST_AUTH_FAILED` | the guest session's last run failed | read the transcript, then `boxd_submit` again; an auth failure is fixed in the image |
 | `RUN_INTERRUPTED` | `boxd_resume` only: the guest's OpenCode stopped during the session's run | harvest what exists with `boxd_harvest`, then `boxd_submit` again |

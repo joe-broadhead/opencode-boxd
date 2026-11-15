@@ -3,6 +3,7 @@ import { boxdError } from "./errors.js"
 import {
   allowSleepArgs,
   createArgs,
+  envListArgs,
   getArgs,
   hibernateArgs,
   holdAwakeArgs,
@@ -10,10 +11,11 @@ import {
   listSnapshotArgs,
   outboundArgs,
   removeArgs,
+  resizeArgs,
   saveSnapshotArgs,
   wakeArgs,
 } from "./argv.js"
-import type { BoxdPort, MachineInfo, MachineStatus } from "./ports.js"
+import type { BoxdPort, MachineInfo, MachineStatus, SecretInfo } from "./ports.js"
 import { assertLaptopCli } from "./cli-flavor.js"
 import { parseJson, run } from "./run.js"
 
@@ -64,6 +66,29 @@ export function cliBoxd(bin = "boxd"): BoxdPort {
       await ok(bin, allowSleepArgs(name))
       await ok(bin, outboundArgs(name, "on"))
     },
+    // A reboot is part of a resize: the CLI waits up to about 20 s for the guest's writes before it stops it.
+    resize: (name, vcpu) => ok(bin, resizeArgs(name, vcpu), 60_000),
+    listSecrets: async () => {
+      const result = await run(bin, envListArgs())
+      if (result.code !== 0) fail("env list", result.stderr)
+      return parseSecrets(parseJson(result.stdout))
+    },
+  })
+}
+
+/**
+ * The sealed variables in `env list --json`: `{env: [...], secret: [{name, scope, domains}]}`. The plain variables carry
+ * their values, so they are not read at all; a secret has no value in the answer.
+ */
+export function parseSecrets(raw: unknown): SecretInfo[] {
+  const secrets = asRecord(raw).secret
+  if (!Array.isArray(secrets)) return []
+  return secrets.flatMap((item) => {
+    const record = asRecord(item)
+    const name = typeof record.name === "string" ? record.name : ""
+    if (!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(name)) return []
+    const hosts = Array.isArray(record.domains) ? record.domains.filter((host): host is string => typeof host === "string" && /^[A-Za-z0-9.*-]{1,253}$/.test(host)) : []
+    return [{ name, scope: typeof record.scope === "string" && /^[a-z-]{1,32}$/.test(record.scope) ? record.scope : "unknown", hosts }]
   })
 }
 
@@ -105,7 +130,14 @@ export function parseMachine(raw: unknown, fallbackName: string): MachineInfo {
     // `machine get --json` prints isolation as the string "yes" or "no"; a fake may print a boolean.
     isolated: record.isolated === true || record.isolated === "yes" || record.isolated === "true",
     source: typeof record.source === "string" ? record.source : undefined,
+    ...vcpuOf(record.size),
   }
+}
+
+/** The vCPUs in boxd's size line, such as `2 vCPU · 8 GiB`. */
+function vcpuOf(size: unknown): { vcpu?: number } {
+  const match = typeof size === "string" ? /^(\d{1,2}) vCPU\b/.exec(size) : null
+  return match ? { vcpu: Number(match[1]) } : {}
 }
 
 function missing(name: string): MachineInfo {

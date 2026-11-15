@@ -60,6 +60,30 @@ A boxd snapshot is an image. Booting one restores a disk, not a transcript, and 
 sign-in. So the transcript moves by export and import: the guest exports the session tree, this laptop imports it parents
 first, and only then may the machine sleep, be imaged or be destroyed.
 
+## Reading the fleet
+
+`boxd_status` is one call for every open work. Each work's machine is read with `machine get`, all in parallel. A running
+work whose last prompt is not harvested also gets one `phase` read from its guest, bounded at 6 s for the call and 15 s
+for the work with its probe, so a guest that hangs reads `unreachable` with its code and the others still report. A
+harvested work's guest is not read: its outcome is the harvest's, and an inbound `machine exec` resets the machine's idle
+clock (below), so reading it every round would keep an idle machine from hibernating. The account's sealed variables
+come from `env list --json`; only its `secret` list is read, whose entries carry a name, a scope and bound hosts and
+never a value, and boxd reports no time a secret was set.
+
+`/boxd-status`, the dialog and the status RPC keep to the machine reads: they never call a guest or list variables.
+
+Every tool answer has a `state`. A refusal is `{ workId, machine, state, error, message, next }` and any facts its code
+carries (`field` for `NAME_INVALID` and `PATH_REFUSED`; `kind`, `count` and `paths` for `UNTRACKED`), so a loop over
+results needs one code path.
+
+`boxd_ensure` and `boxd_submit` take `wait: true`, which polls a starting machine and its OpenCode every 3 s for at most
+30 s; nothing is copied or admitted until the machine answers, so a poll repeats no step. A size (`vcpu`) is applied by
+`machine resize … -y` right after the create, because boxd refuses a size on a machine restored from a snapshot; the
+resize reboots a machine nothing runs on yet, and the next guest call copies the helper the reboot cleared. A rebuilt
+machine gets the recorded size again. A `model` reaches OpenCode's own session API: `model` on the session create, and
+`POST /api/session/<id>/model` before a prompt, which the guest refuses for a running session rather than change the
+task under way.
+
 ## Platform facts
 
 - `opencode session import` keeps the transcript's id on 2.2.3–2.2.7 and 2.3.0, and answers `Session already exists` (exit 0, no

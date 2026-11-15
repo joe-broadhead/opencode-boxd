@@ -25,7 +25,7 @@ describe("parseMachine", () => {
   })
 
   test("a private running machine reads as running, private and not isolated", () => {
-    expect(parseMachine(RUNNING, "oc-demo")).toEqual({ name: "oc-demo", status: "running", sharing: "private", isolated: false, source: "snapshot/golden:1" })
+    expect(parseMachine(RUNNING, "oc-demo")).toEqual({ name: "oc-demo", status: "running", sharing: "private", isolated: false, source: "snapshot/golden:1", vcpu: 2 })
   })
 
   test("a shared machine reads as shared, and an isolated one reads as isolated from the string yes", () => {

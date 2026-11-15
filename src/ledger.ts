@@ -60,6 +60,10 @@ export interface Work {
   /** The folder the guest works in: /home/boxd/work/<workId>, always made by the plugin. */
   guestDirectory: string
   repo?: string
+  /** The model the work's session starts on, from `boxd_ensure`; the guest's default when unset. */
+  model?: string
+  /** The size the machine was created with, by vCPU: a rebuilt machine gets it again. */
+  vcpu?: 1 | 2 | 4 | 8
   rootSessionId?: string
   lastSubmitAt?: string
   proof?: Proof

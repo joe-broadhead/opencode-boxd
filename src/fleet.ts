@@ -1,13 +1,13 @@
 import { mkdir, stat } from "node:fs/promises"
 import { join } from "node:path"
 import { assertTotal, assertWorkPath, loadFile, resolveLaptopPath, rootsOf, sha256, storeFile, FILE_LIMIT, TOTAL_LIMIT } from "./paths.js"
-import { boxdError, BoxdError } from "./errors.js"
+import { boxdError, BoxdError, CODES, inField, type Code } from "./errors.js"
 import type { Ledger, MovedFile, Work, WorkWarning } from "./ledger.js"
-import { assertRepo, assertSessionId, assertSnapshot, assertWorkId, machineName, workDirectory } from "./names.js"
-import type { BoxdPort, GuestPort, MachineInfo, Prover } from "./ports.js"
+import { assertModel, assertRepo, assertSessionId, assertSnapshot, assertWorkId, machineName, workDirectory } from "./names.js"
+import type { BoxdPort, GuestActivity, GuestPort, MachineInfo, MachineSize, Prover, SecretInfo } from "./ports.js"
 import { digest, order, parseExport, rewrite, type Transfer } from "./transfer.js"
 import { checkGuest } from "./host-version.js"
-import { reasonOf } from "./redact.js"
+import { reasonOf, shortReason } from "./redact.js"
 import { failureCode, failureText, nextStepFor, readRun, type GuestRun, type RunOutcome } from "./outcome.js"
 
 export type Deps = {
@@ -25,9 +25,18 @@ export type Deps = {
   readonly projectDirectory: string
   /** Further laptop roots the user named; a path outside both is refused. */
   readonly allowedRoots: readonly string[]
+  /** Waits between the polls of a call's bounded `wait`; a timer by default. */
+  readonly pause?: (ms: number) => Promise<void>
 }
 
 type FleetResult = Record<string, unknown>
+
+/**
+ * What a work is doing, as one word: `busy` or `idle` (the guest session), `empty` (no prompt yet), `asleep`, `starting`,
+ * `gone` (the machine is destroyed or missing), `missing` (the guest has no such session), or `unreachable` (boxd or the
+ * guest did not answer; `error`, `message` and `next` say why).
+ */
+export type WorkPhase = "busy" | "idle" | "empty" | "asleep" | "starting" | "gone" | "missing" | "unreachable"
 
 /** One work as status reports it: the ledger's facts, and the machine's live state when boxd answered. */
 export interface WorkSummary {
@@ -39,10 +48,22 @@ export interface WorkSummary {
   readonly machineStatus: MachineInfo["status"] | null
   /** Recorded warnings, such as a sleep taken before the last prompt was harvested. */
   readonly warnings: readonly string[]
-  /** The guest session's last run, as the last harvest recorded it. */
+  /**
+   * The guest session's last run: read live in `boxd_status` for a work with an unharvested prompt, else as the last
+   * harvest recorded it.
+   */
   readonly outcome: RunOutcome | null
-  /** A failed run's redacted error line. */
+  /** A failed run's redacted error line; for an `unreachable` phase, the failure's code, with `message` and `next`. */
   readonly error?: string
+  /** The work's phase, in `boxd_status` only: the status command reads machines, never guests. */
+  readonly phase?: WorkPhase
+  /** What the session last did, read live with the phase: when, its last words, and the prompts waiting. */
+  readonly lastActivityAt?: string
+  readonly lastText?: string
+  readonly pending?: number
+  /** For an `unreachable` phase: what failed, redacted and cut to one line, and the code's next step. */
+  readonly message?: string
+  readonly next?: string
   /** Why a machine that is down is down: `boxd_sleep`, or the idle bound or the boxd CLI. Only while it is down. */
   readonly asleepBy?: AsleepBy
   /** When `boxd_sleep` hibernated it, when that is why. */
@@ -64,7 +85,20 @@ export interface FleetStatus {
    * failure keeps the CLI's own reason, because a network failure fails the same way.
    */
   readonly cli: { readonly signedIn: true } | { readonly signedIn: false; readonly reason: string }
+  /**
+   * The account's sealed variables, in `boxd_status` only: names, scopes and bound hosts, never a value. boxd does not
+   * say when one was last set. A failed read keeps the CLI's redacted reason.
+   */
+  readonly credentials?: { readonly secrets: readonly SecretInfo[] } | { readonly error: string }
 }
+
+/** How long `boxd_status` waits for one work's guest: a sick guest is reported as unreachable, not waited for. */
+const STATUS_GUEST_MS = 15_000
+/** One guest call's own bound inside that, so its probe still fits. */
+const STATUS_CALL_MS = 6_000
+/** A call's bounded `wait` for the machine and its OpenCode: polled this often, for at most this long. */
+const WAIT_STEP_MS = 3_000
+const WAIT_MS = 30_000
 
 type Awake = "hold" | "sleep"
 
@@ -209,127 +243,249 @@ export function createFleet(deps: Deps) {
     throw boxdError("NOT_OURS", `Machine ${name} was created shared or isolated, so it was removed again.`)
   }
 
-  return {
-    /** The ledger and each work's machine when the CLI answers. Never starts, wakes or runs a session. */
-    async status(): Promise<FleetStatus> {
-      const works = await deps.ledger.list()
-      const listing = await deps.boxd.list().then(
-        (machines) => ({ machines }),
-        // The CLI's stderr is untrusted text: it reaches the model's tool output, so it is redacted and cut here.
-        (error: unknown) => ({ error: reasonOf(error) }),
+  /**
+   * A call's bounded wait: while `attempt` reports the machine or its OpenCode starting, it is polled again every 3 s,
+   * for at most 30 s. The last answer is returned as it is, so a machine that is still starting says so.
+   */
+  async function waited<T>(wait: boolean | undefined, attempt: () => Promise<T>, starting: (result: T) => boolean): Promise<T> {
+    const pause = deps.pause ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
+    const until = Date.now() + WAIT_MS
+    for (let polls = 0; ; polls++) {
+      const result = await attempt().then(
+        (value) => ({ value }),
+        (error: unknown) => ({ error }),
       )
+      const still = "error" in result ? result.error instanceof BoxdError && result.error.code === "MACHINE_STARTING" : starting(result.value)
+      if (!wait || !still || polls >= WAIT_MS / WAIT_STEP_MS || Date.now() + WAIT_STEP_MS > until) {
+        if ("error" in result) throw result.error
+        return result.value
+      }
+      await pause(WAIT_STEP_MS)
+    }
+  }
+
+  /**
+   * One work for `boxd_status`. A machine that is not running is not touched. A running one is read live only while its
+   * last prompt is not harvested: a harvested work's outcome is the harvest's, and reading its guest would only keep the
+   * machine busy. The read is bounded, so one sick guest does not slow the rest.
+   */
+  async function summarize(work: Work, live: boolean): Promise<WorkSummary> {
+    const read = await deps.boxd.get(work.machine).then(
+      (machine) => ({ machine }),
+      (error: unknown) => ({ error }),
+    )
+    const machine = "machine" in read ? read.machine : undefined
+    const base: WorkSummary = {
+      workId: work.workId,
+      machine: work.machine,
+      sessionId: work.rootSessionId ?? null,
+      proof: proofState(work),
+      dirty: work.git?.dirty ?? false,
+      machineStatus: machine?.status ?? null,
+      warnings: (work.warnings ?? []).map((warning) => warning.code),
+      outcome: work.lastOutcome?.state ?? null,
+      ...(work.lastOutcome?.error ? { error: work.lastOutcome.error } : {}),
+      ...(machine ? asleepOf(work, machine.status) : {}),
+    }
+    if (!live) return base
+    if (!machine) return unreachable(base, "error" in read ? read.error : undefined)
+    const status = machine.status
+    if (status === "missing" || status === "destroyed") return { ...base, phase: "gone" }
+    if (status === "hibernated" || status === "standby" || status === "stopped") return { ...base, phase: "asleep" }
+    if (status !== "running") return { ...base, phase: "starting" }
+    if (!work.rootSessionId) return { ...base, phase: "empty" }
+    if (base.proof === "fresh") return { ...base, phase: "idle" }
+    try {
+      const { phase, run, activity } = await deadline(deps.guest.phase(work.machine, work.rootSessionId, { timeoutMs: STATUS_CALL_MS }), STATUS_GUEST_MS, work.machine)
+      const { error: _, ...rest } = base
+      // A live outcome replaces the harvest's, and its error with it; no live outcome keeps the harvest's.
+      const error = run.outcome ? (run.outcome === "failed" ? run.error : undefined) : base.error
+      return { ...rest, phase, outcome: run.outcome ?? base.outcome, ...(error ? { error } : {}), ...activityFields(activity) }
+    } catch (error) {
+      return unreachable(base, error)
+    }
+  }
+
+  /**
+   * One pass of `boxd_ensure`, once its input is checked: the machine, created or woken when it is not there or down, and
+   * the work recorded. `created` says this pass made the machine, so a size is applied to it and to nothing that runs.
+   */
+  async function openWork(input: OpenInput): Promise<{ result: FleetResult; created: boolean; vcpu?: number }> {
+    const { laptopDirectory, repo, model } = input
+    const guestDirectory = workDirectory(input.workId)
+    const directory = guestDirectory
+    let created = false
+    const name = machineName(input.workId)
+    let work = await deps.ledger.load(input.workId)
+    if (work?.dropped) throw boxdError("NOT_OURS", `Work "${input.workId}" was dropped. Use a new work id.`)
+    let machine = await deps.boxd.get(name)
+    refuseUnsafe(machine)
+    if (machine.status === "missing" || machine.status === "destroyed") {
+      await requireSnapshot()
+      // The intent is recorded before the create: a create that times out must never be an unowned billing machine.
+      await deps.ledger.mutate(input.workId, (current) => ({
+        ...current,
+        workId: input.workId,
+        machine: name,
+        snapshot,
+        laptopDirectory,
+        guestDirectory,
+        ...(repo ?? current?.repo ? { repo: repo ?? current?.repo } : {}),
+        pendingCreate: { at: deps.now(), snapshot },
+      }))
+      machine = await create(name, input.workId)
+      if (machine.sharing === "shared" || machine.isolated) await removeRefused(name)
+      created = true
+    }
+    work = await deps.ledger.mutate(input.workId, (current) => {
+      // Everything the ledger knows stays, such as the files moved and the last outcome, which a drop and status read.
+      // Only the create intent is done once the machine is recorded.
+      const { pendingCreate: _, ...known } = current ?? {}
+      const next: Work = {
+        ...known,
+        workId: input.workId,
+        machine: name,
+        snapshot,
+        laptopDirectory,
+        guestDirectory,
+        ...(repo ?? current?.repo ? { repo: repo ?? current?.repo } : {}),
+        // The work's default model, for the session its first prompt creates.
+        ...(model ?? current?.model ? { model: model ?? current?.model } : {}),
+        ...(created && input.vcpu ? { vcpu: input.vcpu } : current?.vcpu ? { vcpu: current.vcpu } : {}),
+      }
+      return next
+    })
+    const size = machine.vcpu !== undefined ? { vcpu: machine.vcpu } : {}
+    const starting = { result: { workId: input.workId, machine: name, state: "starting", next: STARTING_NEXT }, created, ...size }
+    // A machine from a snapshot keeps the snapshot's size, so a size is set by a resize, which reboots it. Only a machine
+    // this call created is resized: nothing runs on it yet, and the reboot costs nothing.
+    if (created && input.vcpu && machine.vcpu !== input.vcpu) {
+      await deps.boxd.resize(name, input.vcpu)
+      deps.guest.forget(name)
+      await armAwake(name, "hold")
+      return starting
+    }
+    if (machine.status !== "running") {
+      if (machine.status === "hibernated" || machine.status === "standby" || machine.status === "stopped") {
+        await deps.boxd.wake(name)
+        await armAwake(name, "hold")
+        await woke(input.workId)
+      }
+      return starting
+    }
+    await armAwake(name, "hold")
+    checkGuest(await deps.guest.version(name), deps.hostVersion)
+    if ((await deps.guest.server(name)) !== "up") return starting
+    await prepareWorkspace(deps, name, directory, work.repo)
+    return {
+      result: {
+        workId: input.workId,
+        machine: name,
+        guestDirectory,
+        laptopDirectory,
+        state: "ready",
+        guestVersion: deps.hostVersion,
+        ...(work.model ? { model: work.model } : {}),
+        // A default model reaches the session the first prompt creates; one that exists already keeps its own.
+        ...(model && work.rootSessionId ? { next: "The work's session exists already, so it keeps its model. Pass model to boxd_submit to switch it." } : {}),
+      },
+      created,
+      ...size,
+    }
+  }
+
+  return {
+    /**
+     * The ledger and each work's machine when the CLI answers. Never starts, wakes or runs a session. With `live` (the
+     * tool, not the status command), each work also gets its phase and what its session last did, and the account's
+     * sealed variables are listed by name.
+     */
+    async status(options: { readonly live?: boolean } = {}): Promise<FleetStatus> {
+      const live = options.live === true
+      const works = await deps.ledger.list()
+      const [listing, names, secrets, summaries] = await Promise.all([
+        deps.boxd.list().then(
+          (machines) => ({ machines }),
+          // The CLI's stderr is untrusted text: it reaches the model's tool output, so it is redacted and cut here.
+          (error: unknown) => ({ error: reasonOf(error) }),
+        ),
+        snapshotNames(false),
+        live
+          ? deps.boxd.listSecrets().then(
+              (list) => ({ secrets: list }),
+              (error: unknown) => ({ error: reasonOf(error) }),
+            )
+          : undefined,
+        Promise.all(works.map((work) => summarize(work, live))),
+      ])
       const listed = "machines" in listing ? listing.machines : undefined
-      const names = await snapshotNames(false)
       const known = new Set(works.map((work) => work.machine))
       return {
         snapshot,
         snapshotPresent: names ? names.has(snapshot) : null,
-        works: await Promise.all(
-          works.map(async (work) => {
-            const machine = await deps.boxd.get(work.machine).catch(() => undefined)
-            return {
-              workId: work.workId,
-              machine: work.machine,
-              sessionId: work.rootSessionId ?? null,
-              proof: proofState(work),
-              dirty: work.git?.dirty ?? false,
-              machineStatus: machine?.status ?? null,
-              warnings: (work.warnings ?? []).map((warning) => warning.code),
-              outcome: work.lastOutcome?.state ?? null,
-              ...(work.lastOutcome?.error ? { error: work.lastOutcome.error } : {}),
-              ...(machine ? asleepOf(work, machine.status) : {}),
-            }
-          }),
-        ),
+        works: summaries,
         orphans: (listed ?? []).map((machine) => machine.name).filter((name) => name.startsWith("oc-") && !known.has(name)).sort(),
         cli: "machines" in listing ? { signedIn: true } : { signedIn: false, reason: listing.error },
+        ...(secrets ? { credentials: secrets } : {}),
       }
     },
 
-    async ensure(input: { workId: string; directory?: string; repo?: string; title?: string }): Promise<FleetResult> {
+    async ensure(input: { workId: string; directory?: string; repo?: string; title?: string; model?: string; vcpu?: MachineSize; wait?: boolean }): Promise<FleetResult> {
       assertWorkId(input.workId)
+      const model = input.model ? assertModel(input.model) : undefined
       // The laptop keeps the work in a folder of its own; the guest always works in /home/boxd/work/<work id>, because a
       // laptop path is not writable there and must never be sent to it. The folder is created when it does not exist.
-      const laptopDirectory = await resolveWorkDirectory(deps, input.directory ?? deps.projectDirectory, rootsOf(deps.projectDirectory, deps.allowedRoots), true)
-      const guestDirectory = workDirectory(input.workId)
-      const directory = guestDirectory
+      const laptopDirectory = await inField("directory", () =>
+        resolveWorkDirectory(deps, input.directory ?? deps.projectDirectory, rootsOf(deps.projectDirectory, deps.allowedRoots), true),
+      )
       const repo = input.repo ? assertRepo(input.repo) : undefined
-      const name = machineName(input.workId)
-      let work = await deps.ledger.load(input.workId)
-      if (work?.dropped) throw boxdError("NOT_OURS", `Work "${input.workId}" was dropped. Use a new work id.`)
-      let machine = await deps.boxd.get(name)
-      refuseUnsafe(machine)
-      if (machine.status === "missing" || machine.status === "destroyed") {
-        await requireSnapshot()
-        // The intent is recorded before the create: a create that times out must never be an unowned billing machine.
-        await deps.ledger.mutate(input.workId, (current) => ({
-          ...current,
-          workId: input.workId,
-          machine: name,
-          snapshot,
-          laptopDirectory,
-          guestDirectory,
-          ...(repo ?? current?.repo ? { repo: repo ?? current?.repo } : {}),
-          pendingCreate: { at: deps.now(), snapshot },
-        }))
-        machine = await create(name, input.workId)
-        if (machine.sharing === "shared" || machine.isolated) await removeRefused(name)
-      }
-      work = await deps.ledger.mutate(input.workId, (current) => {
-        // Everything the ledger knows stays, such as the files moved and the last outcome, which a drop and status read.
-        // Only the create intent is done once the machine is recorded.
-        const { pendingCreate: _, ...known } = current ?? {}
-        const next: Work = {
-          ...known,
-          workId: input.workId,
-          machine: name,
-          snapshot,
-          laptopDirectory,
-          guestDirectory,
-          ...(repo ?? current?.repo ? { repo: repo ?? current?.repo } : {}),
-        }
-        return next
-      })
-      if (machine.status !== "running") {
-        if (machine.status === "hibernated" || machine.status === "standby" || machine.status === "stopped") {
-          await deps.boxd.wake(name)
-          await armAwake(name, "hold")
-          await woke(input.workId)
-        }
-        return { workId: input.workId, machine: name, state: "starting", next: "Call boxd_status in a later turn." }
-      }
-      await armAwake(name, "hold")
-      checkGuest(await deps.guest.version(name), deps.hostVersion)
-      if ((await deps.guest.server(name)) !== "up") {
-        return { workId: input.workId, machine: name, state: "starting", next: "Call boxd_status in a later turn." }
-      }
-      await prepareWorkspace(deps, name, directory, work.repo)
-      return { workId: input.workId, machine: name, guestDirectory, laptopDirectory, state: "ready", guestVersion: deps.hostVersion }
+      let created = false
+      let current: number | undefined
+      const result = await waited(
+        input.wait,
+        async () => {
+          const opened = await openWork({ workId: input.workId, laptopDirectory, ...(repo ? { repo } : {}), ...(model ? { model } : {}), ...(input.vcpu ? { vcpu: input.vcpu } : {}) })
+          created ||= opened.created
+          current = opened.vcpu
+          return opened.result
+        },
+        (answer) => answer.state === "starting",
+      )
+      return { ...result, ...sizeNote(input.vcpu, created, current) }
     },
 
-    async submit(input: { workId: string; text: string; title?: string; files?: ReadonlyArray<{ from: string; to: string }> }): Promise<FleetResult> {
+    async submit(input: { workId: string; text: string; title?: string; model?: string; files?: ReadonlyArray<{ from: string; to: string }>; wait?: boolean }): Promise<FleetResult> {
       const work = await loadOwned(input.workId)
-      if (!input.text.trim()) throw boxdError("NAME_INVALID", "Prompt text is empty.")
+      if (!input.text.trim()) throw boxdError("NAME_INVALID", "text: the prompt is empty.", { field: "text" })
+      const model = input.model ? assertModel(input.model) : undefined
       // Read and check every file before anything is copied or admitted: a path outside the roots fails the call whole.
       const incoming = await readIncoming(deps, input.files ?? [])
-      await ready(work, { wake: true })
+      // Nothing is copied or admitted until the machine and its OpenCode answer, so a poll inside the wait repeats no step.
+      await waited(input.wait, () => ready(work, { wake: true }), () => false)
       const uploaded = await uploadAll(deps, work, incoming)
       let sessionId = work.rootSessionId
+      // A new session starts on the call's model, else the work's default; an existing one switches only when asked.
+      let switchTo = model
+      let started: string | undefined
       if (!sessionId) {
-        const created = await deps.guest.createSession(work.machine, work.guestDirectory, input.title ?? input.workId)
+        started = model ?? work.model
+        const created = await deps.guest.createSession(work.machine, work.guestDirectory, input.title ?? input.workId, started)
         sessionId = assertSessionId(created.id)
+        switchTo = undefined
         await deps.ledger.mutate(work.workId, (current) => ({ ...(current ?? work), rootSessionId: sessionId }))
       }
       // Stamped before the prompt: a crash between the two leaves the proof stale, never falsely fresh.
       const at = deps.now()
       await deps.ledger.mutate(work.workId, (current) => ({ ...(current ?? work), lastSubmitAt: at }))
-      const { queued } = await deps.guest.prompt(work.machine, sessionId, input.text)
+      const { queued } = await deps.guest.prompt(work.machine, sessionId, input.text, switchTo)
+      const onModel = switchTo ?? started
       return {
         workId: work.workId,
         machine: work.machine,
         sessionId,
         state: "admitted",
         ...(queued ? { queued: true } : {}),
+        ...(onModel ? { model: onModel } : {}),
         ...(uploaded.length ? { files: uploaded.map((file) => ({ path: file.path, bytes: file.bytes, sha256: file.sha256 })) } : {}),
         next: queued
           ? "The session was running, so this prompt waits in its inbox until that run takes it. Call boxd_job in a later turn: pending says how many wait."
@@ -339,9 +495,9 @@ export function createFleet(deps: Deps) {
 
     /**
      * One read. It never wakes a hibernated machine: it reports `asleep` with the machine's own state, and the next step
-     * is the asking call that would wake it.
+     * is the asking call that would wake it. `tail` adds the session's newest assistant messages, oldest first.
      */
-    async job(input: { workId: string }): Promise<FleetResult> {
+    async job(input: { workId: string; tail?: number }): Promise<FleetResult> {
       const work = await loadOwned(input.workId)
       const machine = await machineOf(work)
       const status = machine.status
@@ -369,7 +525,7 @@ export function createFleet(deps: Deps) {
         return { workId: work.workId, state: "empty", next: "Call boxd_submit." }
       }
       await ready(work, { wake: false, arm: false })
-      const { phase, run, activity } = await deps.guest.phase(work.machine, work.rootSessionId)
+      const { phase, run, activity } = await deps.guest.phase(work.machine, work.rootSessionId, input.tail ? { tail: input.tail } : undefined)
       return {
         workId: work.workId,
         sessionId: work.rootSessionId,
@@ -388,10 +544,11 @@ export function createFleet(deps: Deps) {
       const work = await loadOwned(input.workId)
       const roots = rootsOf(deps.projectDirectory, deps.allowedRoots)
       // The transcript lands in the work's laptop folder unless the call names another, and both must be inside a root.
-      const localDirectory = await resolveWorkDirectory(deps, input.localDirectory ?? work.laptopDirectory, roots)
+      // A refusal names the field: `localDirectory` must be an existing folder, while `to` is made when it does not exist.
+      const localDirectory = await inField("localDirectory", () => resolveWorkDirectory(deps, input.localDirectory ?? work.laptopDirectory, roots))
       // The files a work produced, read before the transcript moves: a refused path fails the call whole.
-      const wanted = (input.files ?? []).map((path) => assertWorkPath(path))
-      const toDirectory = input.to ? await resolveWorkDirectory(deps, input.to, roots, true) : localDirectory
+      const wanted = await Promise.all((input.files ?? []).map((path, index) => inField(`files[${index}]`, () => assertWorkPath(path))))
+      const toDirectory = input.to ? await inField("to", () => resolveWorkDirectory(deps, input.to!, roots, true)) : localDirectory
       await ready(work, { wake: true })
       // A work that never had a prompt has no transcript to import, but its tree is still accounted for: the proof
       // records no session and the guest's git state, so drop applies its usual guard instead of refusing for good.
@@ -516,6 +673,13 @@ export function createFleet(deps: Deps) {
         machine = await create(work.machine, work.workId)
         if (machine.sharing === "shared" || machine.isolated) await removeRefused(work.machine)
         recreated = true
+        // The rebuilt machine gets the size the work was created with; the resize reboots it, which costs nothing yet.
+        if (work.vcpu && machine.vcpu !== work.vcpu) {
+          await deps.boxd.resize(work.machine, work.vcpu)
+          deps.guest.forget(work.machine)
+          await armAwake(work.machine, "hold")
+          return { workId: work.workId, machine: work.machine, state: "starting", resumed: "import", next: "Call boxd_resume again once boxd_status reports running." }
+        }
         if (machine.status !== "running") return { workId: work.workId, machine: work.machine, state: "starting", resumed: "import", next: "Call boxd_resume again once boxd_status reports running." }
       }
       await armAwake(work.machine, "hold")
@@ -599,7 +763,7 @@ async function resolveWorkDirectory(deps: Deps, path: string, roots = rootsOf(de
     await mkdir(real, { recursive: true, mode: 0o700 })
     return real
   }
-  throw boxdError("NAME_INVALID", `The local directory "${path}" does not exist.`)
+  throw boxdError("NAME_INVALID", info ? `"${path}" is not a folder.` : `"${path}" does not exist.`)
 }
 
 /** Every file to copy in, read and checked before anything is uploaded or admitted. */
@@ -607,11 +771,11 @@ async function readIncoming(deps: Deps, files: ReadonlyArray<{ from: string; to:
   const roots = rootsOf(deps.projectDirectory, deps.allowedRoots)
   const seen = new Set<string>()
   const out: Array<{ path: string; body: Buffer; bytes: number; sha256: string }> = []
-  for (const file of files) {
-    const path = assertWorkPath(file.to)
-    if (seen.has(path)) throw boxdError("NAME_INVALID", `Two files copy to "${path}".`)
+  for (const [index, file] of files.entries()) {
+    const path = await inField(`files[${index}].to`, () => assertWorkPath(file.to))
+    if (seen.has(path)) throw boxdError("NAME_INVALID", `files[${index}].to: two files copy to "${path}".`, { field: `files[${index}].to` })
     seen.add(path)
-    const loaded = await loadFile(file.from, roots)
+    const loaded = await inField(`files[${index}].from`, () => loadFile(file.from, roots))
     out.push({ path, body: loaded.body, bytes: loaded.bytes, sha256: loaded.sha256 })
   }
   assertTotal(out)
@@ -674,6 +838,63 @@ function asleepOf(work: Work, status: MachineInfo["status"]): { asleepBy?: Aslee
   return work.sleptAt && status === "hibernated" ? { asleepBy: "boxd_sleep", sleptAt: work.sleptAt } : { asleepBy: "idle_or_cli" }
 }
 
+/** What `boxd_ensure` hands one pass, once its input is checked. */
+interface OpenInput {
+  readonly workId: string
+  readonly laptopDirectory: string
+  readonly repo?: string
+  readonly model?: string
+  readonly vcpu?: MachineSize
+}
+
+const STARTING_NEXT = "Call boxd_status in a later turn, or call again with wait: true."
+
+/**
+ * What an ensure says about the size it was asked for: set on a machine it created, already that size, or kept on a
+ * machine that was there with another size.
+ */
+function sizeNote(vcpu: MachineSize | undefined, created: boolean, current: number | undefined): FleetResult {
+  if (!vcpu) return {}
+  if (created || current === vcpu) return { vcpu }
+  const was = current === undefined ? "its size" : `its ${current} vCPU`
+  return {
+    ...(current === undefined ? {} : { vcpu: current }),
+    sizeNote: `The machine was already there, so it keeps ${was}: boxd applies a size by rebooting, which would stop a run. Resize it with the boxd CLI when it is idle.`,
+  }
+}
+
+/** A guest read that has not answered within `ms` is a TIMEOUT, so a status of many works never waits on one. */
+function deadline<T>(work: Promise<T>, ms: number, machine: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(boxdError("TIMEOUT", `The guest on ${machine} did not answer within ${ms / 1000} s.`)), ms)
+  })
+  return Promise.race([work, late]).finally(() => clearTimeout(timer))
+}
+
+/** A work boxd or its guest did not answer for: the code, the redacted reason, and the code's next step. */
+function unreachable(base: WorkSummary, error: unknown): WorkSummary {
+  const { error: _, ...rest } = base
+  const coded = error instanceof BoxdError ? error : undefined
+  const code: Code = coded?.code ?? "BOXD_FAILED"
+  return {
+    ...rest,
+    phase: "unreachable",
+    error: code,
+    message: shortReason(coded ? coded.what : error instanceof Error ? error.message : String(error)) ?? "no reason given",
+    next: coded?.next ?? CODES[code],
+  }
+}
+
+/** The activity a phase read returned, as status carries it: no tail, which only `boxd_job` asks for. */
+function activityFields(activity: GuestActivity): Pick<WorkSummary, "lastActivityAt" | "lastText" | "pending"> {
+  return {
+    ...(activity.lastActivityAt ? { lastActivityAt: activity.lastActivityAt } : {}),
+    ...(activity.lastText ? { lastText: activity.lastText } : {}),
+    ...(activity.pending !== undefined ? { pending: activity.pending } : {}),
+  }
+}
+
 function refuseUnsafe(machine: MachineInfo): void {
   if (machine.status === "missing") return
   if (machine.sharing === "shared") throw boxdError("MACHINE_SHARED", `Machine ${machine.name} is shared, and sharing deletes OpenCode's sign-in.`)
@@ -698,8 +919,8 @@ function addWarning(warnings: readonly WorkWarning[] | undefined, warning: WorkW
 function dropAdvice(git: Work["git"], proof: "fresh" | "stale" | "missing"): string {
   if (proof !== "fresh") return "Call boxd_harvest again before drop."
   if (!git || !git.known) return "The guest directory is not a git repository, so boxd_drop will refuse. Hibernate instead, or make it one."
-  if (git.untracked.length) return `Commit or delete ${list(git.untracked)} on the machine, then harvest again. boxd_drop will refuse until you do.`
-  if (git.ignored.length) return `Remove ${list(git.ignored)} on the machine, then harvest again. boxd_drop will refuse until you do.`
+  if (git.untracked.length) return `Commit or delete ${some(git.untracked)} on the machine, then harvest again. boxd_drop will refuse until you do.`
+  if (git.ignored.length) return `Remove ${some(git.ignored)} on the machine, then harvest again. boxd_drop will refuse until you do.`
   if (git.dirty) {
     return git.patchStored
       ? "The uncommitted change is stored as a patch on this laptop. Call boxd_sleep to hibernate, or boxd_drop, which keeps the patch and then destroys the machine."
@@ -709,6 +930,18 @@ function dropAdvice(git: Work["git"], proof: "fresh" | "stale" | "missing"): str
 }
 
 const list = (names: readonly string[]) => (names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`)
+
+/** How many paths a sentence names before it counts the rest: an ignored `node_modules` can hold thousands. */
+const NAMED_PATHS = 10
+/** How many paths a refusal's `paths` carries for a program. */
+const LISTED_PATHS = 50
+
+/** The first few paths, and how many more there are. */
+const some = (names: readonly string[]) =>
+  names.length <= NAMED_PATHS ? list(names) : `${names.slice(0, NAMED_PATHS).join(", ")} and ${names.length - NAMED_PATHS} more`
+
+/** A refusal's paths for a program: the first 50, and the count of them all. */
+const pathDetails = (names: readonly string[]) => ({ paths: names.slice(0, LISTED_PATHS), count: names.length })
 
 /**
  * The drop guard: every way the disk is not fully accounted for on this laptop. A file harvested at the digest the guest
@@ -723,10 +956,12 @@ async function requireDroppable(deps: Deps, work: Work): Promise<void> {
   const recovered = await recoveredPaths(deps, work, git)
   const lostUntracked = git.untracked.filter((path) => !recovered.has(path))
   const lostIgnored = git.ignored.filter((path) => !recovered.has(path))
-  if (lostUntracked.length) throw boxdError("UNTRACKED", `The guest tree has untracked paths the patch cannot hold: ${list(lostUntracked)}.`)
-  if (lostIgnored.length) throw boxdError("UNTRACKED", `The guest tree has ignored paths the patch cannot hold: ${list(lostIgnored)}.`)
+  if (lostUntracked.length) throw boxdError("UNTRACKED", `The guest tree has ${count(lostUntracked, "untracked path")} the patch cannot hold: ${some(lostUntracked)}.`, { kind: "untracked", ...pathDetails(lostUntracked) })
+  if (lostIgnored.length) throw boxdError("UNTRACKED", `The guest tree has ${count(lostIgnored, "ignored path")} the patch cannot hold: ${some(lostIgnored)}.`, { kind: "ignored", ...pathDetails(lostIgnored) })
   if (git.dirty && !git.patchStored) throw boxdError("DIRTY", "The guest tree has uncommitted work and no patch in the ledger.")
 }
+
+const count = (names: readonly string[], noun: string) => `${names.length} ${noun}${names.length === 1 ? "" : "s"}`
 
 /** The untracked and ignored paths whose current guest digest is the one last harvested. */
 async function recoveredPaths(deps: Deps, work: Work, git: NonNullable<Work["git"]>): Promise<Set<string>> {

@@ -10,13 +10,13 @@ export const CODES = {
   OPTIONS_INVALID: `Fix the plugin options in opencode.json, then restart OpenCode.`,
   STATUS_UNAVAILABLE: "Restart OpenCode, then run /boxd-status again.",
   SKILLS_INVALID: "Reinstall the plugin so its skill file is present, then restart OpenCode.",
-  NAME_INVALID: `Use a short lowercase work id, an absolute guest path with no "..", and a lowercase snapshot name.`,
+  NAME_INVALID: "Fix the input the message names, as its reason says, then call again.",
   NOT_OURS: "Call boxd_ensure for this work id, and act only on the machine the ledger records for it.",
   MACHINE_GONE: "Call boxd_resume to wake it, or to rebuild it from the golden snapshot and the proven transcript.",
-  MACHINE_STARTING: "Call boxd_status in a later turn. Do not wait inside a call.",
+  MACHINE_STARTING: "Call boxd_status in a later turn. boxd_ensure and boxd_submit can instead wait up to 30 s, with wait: true.",
   MACHINE_SHARED: "Recreate the machine without --shared: sharing deletes the guest's OpenCode sign-in.",
   MACHINE_ISOLATED: "Recreate the machine without --isolated, which drops git and the in-VM boxd CLI.",
-  SESSION_BUSY: "Call boxd_job until it reports idle, then harvest.",
+  SESSION_BUSY: "Call boxd_job until it reports idle, then make this call again.",
   GUEST_VERSION: "Boot the machine from an image whose OpenCode is the same version as this laptop's.",
   GUEST_RUN_FAILED: "Read the transcript, then boxd_submit again.",
   RUN_INTERRUPTED: "Call boxd_harvest to keep what exists, then boxd_submit again.",
@@ -46,21 +46,41 @@ export const CODES = {
 
 export type Code = keyof typeof CODES
 
-/** One plugin error: the code, what happened, and the code's next step. */
+/** Facts a program can read beside the sentence, such as the paths a drop refused for. Plain JSON values only. */
+export type ErrorDetails = Readonly<Record<string, unknown>>
+
+/** One plugin error: the code, what happened, the code's next step, and any facts a program needs. */
 export class BoxdError extends Error {
   readonly code: Code
   /** What happened, the sentence between the code and the next step. */
   readonly what: string
   readonly next: string
+  readonly details: ErrorDetails
 
-  constructor(code: Code, message: string) {
+  constructor(code: Code, message: string, details: ErrorDetails = {}) {
     super(errorText(code, message, CODES[code]))
     this.name = "BoxdError"
     this.code = code
     this.what = message
     this.next = CODES[code]
+    this.details = details
   }
 }
 
 /** A coded error with the table's next step for its code. */
-export const boxdError = (code: Code, message: string) => new BoxdError(code, message)
+export const boxdError = (code: Code, message: string, details?: ErrorDetails) => new BoxdError(code, message, details)
+
+/**
+ * Runs a check on one input and names that input in its refusal: `localDirectory: "…" does not exist.` A refusal of
+ * another kind passes through unchanged.
+ */
+export async function inField<T>(field: string, check: () => Promise<T> | T): Promise<T> {
+  try {
+    return await check()
+  } catch (error) {
+    if (error instanceof BoxdError && (error.code === "NAME_INVALID" || error.code === "PATH_REFUSED")) {
+      throw new BoxdError(error.code, `${field}: ${error.what}`, { ...error.details, field })
+    }
+    throw error
+  }
+}

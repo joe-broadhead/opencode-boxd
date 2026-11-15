@@ -3,6 +3,42 @@
 All notable changes to this project are documented here. The format is [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `boxd_status` reads the whole fleet in one call (#1): each work's `phase` (`busy`, `idle`, `empty`, `asleep`,
+  `starting`, `gone`, `missing` or `unreachable`) and last `outcome`, and for a running work whose last prompt is not
+  harvested, `lastActivityAt`, `lastText` and `pending`, read from every guest in parallel with a bound per machine. A
+  guest that does not answer is `unreachable` with its code, reason and next step, and the other works still report. A
+  harvested work's guest is not read, so a status loop does not keep an idle machine awake. `/boxd-status` is unchanged.
+- `boxd_status` lists the account's sealed variables as `credentials`: name, scope and bound hosts, never a value.
+- `boxd_job` takes `tail` (1 to 10) and returns the session's newest assistant messages, oldest first, redacted and cut
+  to 300 characters each, without a harvest.
+- `model` on `boxd_ensure` (the work's default, for the session its first prompt creates) and on `boxd_submit` (a new
+  session starts on it; an idle one switches to it; a running one refuses with `SESSION_BUSY`).
+- `vcpu` on `boxd_ensure`: 1, 2, 4 or 8. boxd keeps a snapshot's size on a machine made from it, so the size is applied
+  by a resize right after the create, before anything runs, and again when `boxd_resume` rebuilds the machine. A machine
+  that is already there keeps its size, and the answer says so.
+- `wait: true` on `boxd_ensure` and `boxd_submit` waits up to 30 s for the machine and its OpenCode instead of answering
+  `starting`.
+
+### Changed
+
+- Every answer has a `state`, a refusal too: `{ workId, machine, state, error, message, next }`, with `state`
+  `unreachable`, `starting`, `gone`, `busy`, `failed` or `refused`, so a status loop reads one shape.
+- `NAME_INVALID` and `PATH_REFUSED` name the input that failed and why (`localDirectory: "…" does not exist.`,
+  `files[0].from: …`), with `field` in the result; `NAME_INVALID`'s next step says to fix that input.
+- `UNTRACKED` names the first ten paths and counts the rest, and the result carries `kind`, `count` and the first 50
+  `paths`. A harvest's next step names at most ten paths too.
+- `SESSION_BUSY`'s next step is to make the call again once `boxd_job` reports idle, and `MACHINE_STARTING`'s names
+  `wait: true`.
+
+### Fixed
+
+- A harvest reports the guest's git remote without its user information, so a remote such as
+  `https://x-access-token:<placeholder>@github.com/…` no longer puts a credential placeholder in a result.
+
 ## [0.0.4] - 2026-11-15
 
 ### Changed

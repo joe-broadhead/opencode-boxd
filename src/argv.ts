@@ -55,6 +55,16 @@ export function outboundArgs(name: string, value: "on" | "off"): string[] {
   return ["machine", "config", "set", name, "idle.ignore-outbound", value]
 }
 
+/** `-y` confirms the reboot that applies the size; the plugin asks for it only on a machine it just created. */
+export function resizeArgs(name: string, vcpu: number): string[] {
+  return ["machine", "resize", name, "--vcpu", String(vcpu), "-y", "--json"]
+}
+
+/** The account's variables. Only the sealed ones are read from the answer, and boxd never prints their values. */
+export function envListArgs(): string[] {
+  return ["env", "list", "--json"]
+}
+
 export function saveSnapshotArgs(machine: string, snapshot: string): string[] {
   assertSnapshot(snapshot)
   return ["snapshots", "save", machine, snapshot, "--json"]

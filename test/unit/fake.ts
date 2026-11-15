@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createFleet, type Deps } from "../../src/fleet.js"
 import { Ledger } from "../../src/ledger.js"
-import type { BoxdPort, GitState, GuestActivity, GuestPort, MachineInfo, MachineStatus, Prover } from "../../src/ports.js"
+import type { BoxdPort, GitState, GuestActivity, GuestPort, MachineInfo, MachineSize, MachineStatus, PhaseOptions, Prover, SecretInfo } from "../../src/ports.js"
 import type { Transfer } from "../../src/transfer.js"
 import { boxdError } from "../../src/errors.js"
 
@@ -121,6 +121,20 @@ export class FakeBoxd implements BoxdPort {
     this.calls.push(`sleep-timeout ${name}`)
   }
 
+  async resize(name: string, vcpu: MachineSize): Promise<void> {
+    this.calls.push(`resize ${name} ${vcpu}`)
+    this.set(name, "starting")
+  }
+
+  /** The account's sealed variables, or the failure `env list` answers with. */
+  secrets: SecretInfo[] | Error = [{ name: "GH_TOKEN", scope: "private", hosts: ["github.com"] }]
+
+  async listSecrets(): Promise<SecretInfo[]> {
+    this.calls.push("env list")
+    if (this.secrets instanceof Error) throw this.secrets
+    return this.secrets
+  }
+
   seed(name: string, status: MachineStatus, extra?: Partial<MachineInfo>): void {
     this.machines.set(name, { name, status, sharing: "private", isolated: false, ...extra })
   }
@@ -178,14 +192,21 @@ export class FakeGuest implements GuestPort {
   async listSessions(_machine: string) {
     return [...this.sessions]
   }
-  async createSession(_machine: string, _directory: string, _title: string) {
+  /** The model each session was created on, and each switch a prompt asked for. */
+  readonly models: string[] = []
+  /** The options each phase read was given. */
+  readonly phaseReads: Array<PhaseOptions | undefined> = []
+  async createSession(_machine: string, _directory: string, _title: string, model?: string) {
+    if (model) this.models.push(`create:${model}`)
     return { id: "ses_root_review-api" }
   }
-  async prompt(_machine: string, sessionID: string, text: string) {
+  async prompt(_machine: string, sessionID: string, text: string, model?: string) {
+    if (model) this.models.push(`switch:${model}`)
     this.prompts.push(`${sessionID}:${text}`)
     return { queued: this.queued }
   }
-  async phase(_machine: string, sessionID: string) {
+  async phase(_machine: string, sessionID: string, options?: PhaseOptions) {
+    this.phaseReads.push(options)
     const phase = this.phaseById.get(sessionID) ?? "missing"
     return { phase, run: this.runById.get(sessionID) ?? { outcome: null }, activity: this.activityById.get(sessionID) ?? {} }
   }

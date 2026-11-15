@@ -1,7 +1,7 @@
 import { basename } from "node:path"
 import { boxdError, BoxdError } from "./errors.js"
 import { copyFromGuestArgs, copyToGuestArgs, execArgs, guestRequest } from "./argv.js"
-import type { GuestActivity, GuestPort } from "./ports.js"
+import { TAIL_LIMIT, type GuestActivity, type GuestPort } from "./ports.js"
 import { readGuestHelper } from "./cli-boxd.js"
 import { duration, run, runBuffer } from "./run.js"
 import { errorLine, mapOutcome } from "./outcome.js"
@@ -16,16 +16,16 @@ const PROBE_MS = 10_000
 export function cliGuest(bin = "boxd", timeoutMs = 30_000): GuestPort {
   const uploaded = new Set<string>()
 
-  async function call(machine: string, action: string, fields: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+  async function call(machine: string, action: string, fields: Record<string, unknown> = {}, bound = timeoutMs): Promise<Record<string, unknown>> {
     await ensureHelper(bin, machine, uploaded)
     const request = guestRequest(action, fields)
     const exec = () =>
-      run(bin, execArgs(machine), { stdin: request, timeoutMs }).catch(async (error: unknown) => {
+      run(bin, execArgs(machine), { stdin: request, timeoutMs: bound }).catch(async (error: unknown) => {
         if (!(error instanceof BoxdError) || error.code !== "TIMEOUT") throw error
         // One cheap probe says whether waiting a turn can help: a guest out of memory never answers by itself.
-        const health = await probe(bin, machine, Math.min(PROBE_MS, timeoutMs))
+        const health = await probe(bin, machine, Math.min(PROBE_MS, bound))
         // No answer to the probe either: name the step that timed out, the guest's own action on its machine.
-        if (!health) throw boxdError("TIMEOUT", `The guest's ${action} on ${machine} did not answer within ${duration(timeoutMs)}.`)
+        if (!health) throw boxdError("TIMEOUT", `The guest's ${action} on ${machine} did not answer within ${duration(bound)}.`)
         const facts = healthText(health)
         const late = `The guest's ${action} on ${machine} did not answer in time`
         if (strained(health)) throw boxdError("GUEST_UNRESPONSIVE", `${late}, but the machine did: ${facts}.`)
@@ -72,16 +72,19 @@ export function cliGuest(bin = "boxd", timeoutMs = 30_000): GuestPort {
         return { id: String(record.id), parentID: record.parentID ? String(record.parentID) : undefined }
       })
     },
-    createSession: async (machine, directory, title) => {
-      const parsed = await call(machine, "create", { directory, title })
+    createSession: async (machine, directory, title, model) => {
+      const parsed = await call(machine, "create", { directory, title, ...(model ? { model } : {}) })
       return { id: String(parsed.id) }
     },
-    prompt: async (machine, sessionID, text) => {
-      const parsed = await call(machine, "prompt", { sessionID, text })
+    prompt: async (machine, sessionID, text, model) => {
+      const parsed = await call(machine, "prompt", { sessionID, text, ...(model ? { model } : {}) })
+      // Switching the model of a running session would change the task under way: the guest refuses it before it admits.
+      if (parsed.refused === "busy") throw boxdError("SESSION_BUSY", `The session is running, so it was not switched to ${model ?? "another model"} and the prompt was not admitted.`)
       return { queued: parsed.queued === true }
     },
-    phase: async (machine, sessionID) => {
-      const parsed = await call(machine, "phase", { sessionID })
+    phase: async (machine, sessionID, options) => {
+      const tail = options?.tail
+      const parsed = await call(machine, "phase", { sessionID, ...(tail ? { tail } : {}) }, options?.timeoutMs ?? timeoutMs)
       const phase = parsed.phase === "busy" || parsed.phase === "idle" || parsed.phase === "missing" ? parsed.phase : "missing"
       const outcome = mapOutcome(parsed.outcome)
       const error = errorLine(parsed.error)
@@ -115,7 +118,7 @@ export function cliGuest(bin = "boxd", timeoutMs = 30_000): GuestPort {
       const parsed = await call(machine, "git", { directory })
       return {
         known: parsed.known === true,
-        remote: stringOrNull(parsed.remote),
+        remote: remoteOf(parsed.remote),
         branch: stringOrNull(parsed.branch),
         sha: stringOrNull(parsed.sha),
         dirty: parsed.dirty === true,
@@ -235,17 +238,43 @@ function parseLine(stdout: string, stderr: string): Record<string, unknown> {
 
 /** The last thing a session said it did, as much as the guest reported: its words are redacted and cut to 300. */
 function activityOf(parsed: Record<string, unknown>): GuestActivity {
-  const at = typeof parsed.activityAt === "number" && Number.isFinite(parsed.activityAt) && parsed.activityAt > 0 ? new Date(parsed.activityAt) : undefined
+  const at = timeOf(parsed.activityAt)
   const text = typeof parsed.lastText === "string" ? excerpt(parsed.lastText, LAST_TEXT_LIMIT) : undefined
   const pending = typeof parsed.pending === "number" && Number.isInteger(parsed.pending) && parsed.pending >= 0 ? parsed.pending : undefined
+  const tail = Array.isArray(parsed.tail)
+    ? parsed.tail.slice(0, TAIL_LIMIT).flatMap((item) => {
+        const record = item && typeof item === "object" ? (item as Record<string, unknown>) : {}
+        const words = typeof record.text === "string" ? excerpt(record.text, LAST_TEXT_LIMIT) : undefined
+        const when = timeOf(record.at)
+        return words ? [{ ...(when ? { at: when } : {}), text: words }] : []
+      })
+    : undefined
   return {
-    ...(at && !Number.isNaN(at.getTime()) ? { lastActivityAt: at.toISOString() } : {}),
+    ...(at ? { lastActivityAt: at } : {}),
     ...(text ? { lastText: text } : {}),
     ...(pending !== undefined ? { pending } : {}),
+    ...(tail ? { tail } : {}),
   }
 }
 
+/** A guest time in milliseconds as an ISO time; undefined when it is not one. */
+function timeOf(value: unknown): string | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return undefined
+  const at = new Date(value)
+  return Number.isNaN(at.getTime()) ? undefined : at.toISOString()
+}
+
 const LAST_TEXT_LIMIT = 300
+
+/**
+ * The guest's git remote without its user information: a remote such as `https://x-access-token:<placeholder>@host/…`
+ * would put a credential, or its placeholder, in a result that is safe to paste.
+ */
+export function remoteOf(value: unknown): string | null {
+  const remote = stringOrNull(value)
+  if (!remote) return null
+  return remote.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/?#]*@/i, "$1")
+}
 
 function stringOrNull(value: unknown): string | null {
   return typeof value === "string" && value ? value : null

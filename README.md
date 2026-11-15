@@ -65,7 +65,8 @@ session you cannot get back.
 3. `boxd_job` in a later turn: busy, idle, asleep, gone or starting, with the guest session's last outcome
    (`completed`, `failed` or `aborted`) when it is idle. A running machine's answer also carries `lastText`, the
    session's newest assistant text (redacted, at most 300 characters), `lastActivityAt`, and `pending`, the prompts
-   waiting in its inbox: a run can complete and still say its task did not happen. It never wakes a machine, because
+   waiting in its inbox: a run can complete and still say its task did not happen. `tail: n` (1 to 10) adds the newest
+   `n` assistant messages, oldest first, without a harvest. It never wakes a machine, because
    waking starts billing; a hibernated work reports `asleep` with `boxd_resume` as its next step, and `asleepBy` says
    who put it down: `boxd_sleep`, with `sleptAt`, or `idle_or_cli` for the idle bound or the boxd CLI, whose time boxd
    does not report.
@@ -74,7 +75,23 @@ session you cannot get back.
 5. `boxd_sleep` to hibernate, `boxd_resume` to wake or rebuild, `boxd_image` to save a snapshot, `boxd_drop` to destroy.
    Hibernating destroys nothing and keeps the disk, so `boxd_sleep` works even when the guest cannot be harvested; it
    records a warning that the last prompt is not yet on the laptop, and status shows it.
-6. `boxd_status` reads the ledger and each open work's machine state. It starts nothing.
+6. `boxd_status` reads the whole fleet in one call: each open work's machine state and `phase`, its last outcome, and,
+   for a running work whose last prompt is not harvested, `lastActivityAt`, `lastText` and `pending`, read from every
+   guest in parallel, each with its own bound, so one sick guest reads `unreachable` and does not slow the rest. It also
+   lists the account's sealed variables by name, scope and bound hosts (never a value; boxd does not say when one was
+   set). It starts and wakes nothing.
+
+`boxd_ensure` takes a `model` (`provider/model`, with `#variant` when it has one), the default for the session the first
+prompt creates, and a `vcpu` size of 1, 2, 4 or 8. boxd keeps a snapshot's size on a machine made from it, so a size is
+applied by a resize right after the create, before anything runs; a machine that is already there keeps its size, and
+the answer says so. `boxd_submit` takes a `model` too: a new session starts on it, and an existing one switches to it
+for this prompt and the ones after, unless it is running, which is refused with `SESSION_BUSY`. Both take `wait: true`
+to wait up to 30 s for the machine and its OpenCode instead of answering `starting`.
+
+Every answer has a `state`, a refusal too: `{ workId, machine, state, error, message, next }`, where `state` is
+`unreachable` when boxd or the guest did not answer, `starting`, `gone`, `busy`, `failed`, or `refused`. A harvest
+reports the guest's git remote without its user information, so a credential placeholder in the remote URL never
+reaches a result.
 
 Every tool is allowed by default, reads and machine changes alike, so `ensure`, `submit`, `harvest`, `sleep`, `resume`,
 `image` and `drop` run without asking, and `boxd_status` and `boxd_job` are the two reads. The `access` option below
@@ -189,13 +206,13 @@ one next step).
 | `OPTIONS_INVALID` | Fix the plugin options in `opencode.json`, then restart OpenCode. |
 | `STATUS_UNAVAILABLE` | Restart OpenCode, then run `/boxd-status` again. |
 | `SKILLS_INVALID` | Reinstall the plugin so its skill file is present, then restart OpenCode. |
-| `NAME_INVALID` | Use a short lowercase work id, an absolute guest path with no `..`, and a lowercase snapshot name. |
+| `NAME_INVALID` | An input is not in the form the plugin accepts; the message names it (`workId`, `model`, `localDirectory`, `files[0].from`, …) and says why. Fix that input, then call again. |
 | `NOT_OURS` | Call `boxd_ensure` for this work id, and act only on the machine the ledger records for it. |
 | `MACHINE_GONE` | Call `boxd_resume` to wake it, or to rebuild it from the golden snapshot and the proven transcript. |
-| `MACHINE_STARTING` | Call `boxd_status` in a later turn. Do not wait inside a call. |
+| `MACHINE_STARTING` | Call `boxd_status` in a later turn. `boxd_ensure` and `boxd_submit` can instead wait up to 30 s, with `wait: true`. |
 | `MACHINE_SHARED` | Recreate the machine without `--shared`: sharing deletes the guest's OpenCode sign-in. |
 | `MACHINE_ISOLATED` | Recreate the machine without `--isolated`, which drops git and the in-VM boxd CLI. |
-| `SESSION_BUSY` | Call `boxd_job` until it reports idle, then harvest. |
+| `SESSION_BUSY` | The session is running: a harvest, or a submit that names a `model`, waits for it. Call `boxd_job` until it reports idle, then make the call again. |
 | `GUEST_VERSION` | Boot the machine from an image whose OpenCode is the same version as this laptop's. |
 | `PATH_REFUSED` | A laptop path is outside the project and the allowed roots, or is a symlink. Name its root in `allowedRoots`, and allow it with the `external_directory` rule. |
 | `FILE_TOO_LARGE` | A file is over 8 MiB, or the call is over 32 MiB. |
@@ -218,7 +235,7 @@ one next step).
 | `SNAPSHOT_MISSING` | Create the golden image [docs/golden-image.md](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/golden-image.md) describes, then set the `snapshot` option to its name. |
 | `LEDGER_FAILED` | Check that the ledger folder is writable, then restart OpenCode. |
 | `RULES_NOT_ADDED` | The default permission rules could not be added, so a machine change may run without asking. Restart OpenCode, then run `/boxd-status`. |
-| `UNTRACKED` | Commit or delete the paths the message names on the machine, harvest again, then drop. Or hibernate, which keeps the disk. |
+| `UNTRACKED` | Commit or delete the paths the message names (the first ten, and the result's `paths` the first 50) on the machine, harvest again, then drop. Or hibernate, which keeps the disk. |
 | `GIT_UNKNOWN` | Commit the work in a git repository on the machine, harvest again, then drop. Or hibernate, which keeps the disk. |
 | `CREATE_UNCERTAIN` | Run `boxd_status`: if the machine appears there, call `boxd_ensure` to adopt it; if not, ensure again. |
 
