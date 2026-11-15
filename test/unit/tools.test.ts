@@ -49,10 +49,13 @@ describe("the tool table", () => {
     }
   })
 
-  test("a coded error's result keeps the code, what happened and the next step, so a program can read all three", async () => {
+  test("a coded error's result keeps the work, a state, the code, what happened and the next step, so a program reads one shape", async () => {
     const { fleet } = await world()
     const answer = await runTool("job", fleet, { workId: "never-opened" })
     expect(answer.output).toEqual({
+      workId: "never-opened",
+      machine: "oc-never-opened",
+      state: "refused",
       error: "NOT_OURS",
       message: 'No open work "never-opened".',
       next: "Call boxd_ensure for this work id, and act only on the machine the ledger records for it.",

@@ -160,8 +160,11 @@ describe("the docs set", () => {
     const documents = ["README.md", "AGENTS.md", "SECURITY.md", "docs/configuration.md", "CHANGELOG.md"]
     let found = 0
     for (const document of documents) {
-      // The CHANGELOG's released sections are history: only the newest section has to name the current list.
-      const body = document === "CHANGELOG.md" ? read(document).split(/\n(?=## \[)/).slice(0, 2).join("\n") : read(document)
+      // The CHANGELOG's older released sections are history: only the newest released section, and an unreleased one
+      // above it, have to name the current list.
+      const sections = read(document).split(/\n(?=## \[)/)
+      const newest = sections.findIndex((section, index) => index > 0 && !section.startsWith("## [Unreleased]"))
+      const body = document === "CHANGELOG.md" ? sections.slice(0, newest + 1).join("\n") : read(document)
       const text = body.replace(/\s+/g, " ")
       for (const phrase of ["tested on ", "runs on OpenCode ", "tested on OpenCode "]) {
         for (let at = text.indexOf(phrase); at !== -1; at = text.indexOf(phrase, at + 1)) {

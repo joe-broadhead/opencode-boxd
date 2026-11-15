@@ -134,9 +134,10 @@ describe("the plugin on a stock host", () => {
         expect({ name: method.name, kind: method.kind, class: method.class, action: method.action }).toEqual({ name: method.name, kind: "plugin", class: spec.class, action: spec.id })
       }
 
-      // A plugin code is the method's output, not an RPC error: the code, what happened and the next step.
+      // A plugin code is the method's output, not an RPC error, in the shape of any answer: the work, a state, the code,
+      // what happened and the next step.
       const unopened = (await call("boxd_job", { sessionID: build, input: { workId: "review-api" } })).output
-      expect(unopened).toEqual({ error: "NOT_OURS", message: 'No open work "review-api".', next: "Call boxd_ensure for this work id, and act only on the machine the ledger records for it." })
+      expect(unopened).toEqual({ workId: "review-api", machine: "oc-review-api", state: "refused", error: "NOT_OURS", message: 'No open work "review-api".', next: "Call boxd_ensure for this work id, and act only on the machine the ledger records for it." })
 
       const before = host.boxd.calls().length
       // The default block allows every tool, so a script's write is the same call a model's is: it runs.
@@ -605,6 +606,98 @@ describe("what a guest session last did", () => {
       const idle = (await attempt(host, build, "build", "boxd_job", "reject", { workId: "review-api" })).output as Record<string, unknown>
       expect(idle).toMatchObject({ state: "idle", outcome: "completed" })
       expect(idle).not.toHaveProperty("lastText")
+    } finally {
+      await host.close()
+    }
+  })
+})
+
+describe("the fleet in one call, through the real guest helper (#1)", () => {
+  test("a work's model reaches the guest's session, a switch waits for idle, and the tail reads the newest messages", async () => {
+    const host = await startHost()
+    try {
+      const build = await session(host)
+      const opened = await attempt(host, build, "build", "boxd_ensure", "always", { workId: "review-api", directory: host.location.directory, model: "anthropic/claude-sonnet-4-5" })
+      expect(opened.output).toMatchObject({ state: "ready", model: "anthropic/claude-sonnet-4-5" })
+      await attempt(host, build, "build", "boxd_submit", "always", { workId: "review-api", text: "Open the pull request." })
+      expect(host.guest.sessions.get("ses_guest_root")?.model).toEqual({ providerID: "anthropic", id: "claude-sonnet-4-5" })
+
+      // The session runs: a switch now would change the task under way, so nothing is switched or admitted.
+      const refused = await attempt(host, build, "build", "boxd_submit", "always", { workId: "review-api", text: "Harder.", model: "openai/gpt-5#high" })
+      expect(refused.output).toMatchObject({ workId: "review-api", state: "busy", error: "SESSION_BUSY" })
+      expect(host.guest.switches).toEqual([])
+      expect(host.guest.prompts).toHaveLength(1)
+
+      host.guest.say("ses_guest_root", "First step done.", Date.parse("2026-11-11T09:00:00.000Z"))
+      host.guest.say("ses_guest_root", "Second step done.", Date.parse("2026-11-11T09:10:00.000Z"))
+      host.guest.say("ses_guest_root", "All done.", Date.parse("2026-11-11T09:20:00.000Z"))
+      host.guest.complete("ses_guest_root")
+      const job = (await attempt(host, build, "build", "boxd_job", "reject", { workId: "review-api", tail: 2 })).output as Record<string, unknown>
+      expect(job).toMatchObject({
+        state: "idle",
+        lastText: "All done.",
+        tail: [
+          { at: "2026-11-11T09:10:00.000Z", text: "Second step done." },
+          { at: "2026-11-11T09:20:00.000Z", text: "All done." },
+        ],
+      })
+
+      await attempt(host, build, "build", "boxd_submit", "always", { workId: "review-api", text: "Harder.", model: "openai/gpt-5#high" })
+      expect(host.guest.switches).toEqual([{ sessionID: "ses_guest_root", model: { providerID: "openai", id: "gpt-5", variant: "high" } }])
+    } finally {
+      await host.close()
+    }
+  })
+
+  test("boxd_status reads each unharvested work's phase and last words, and lists the sealed variables without a value", async () => {
+    const host = await startHost()
+    try {
+      const state = JSON.parse(readFileSync(host.boxd.state, "utf8"))
+      state.secrets = [{ name: "GH_TOKEN", scope: "private", domains: ["github.com"] }]
+      writeFileSync(host.boxd.state, JSON.stringify(state))
+      const build = await session(host)
+      await attempt(host, build, "build", "boxd_ensure", "always", { workId: "review-api", directory: host.location.directory })
+      await attempt(host, build, "build", "boxd_submit", "always", { workId: "review-api", text: "Open the pull request." })
+      host.guest.say("ses_guest_root", "Pushing the branch now.", Date.parse("2026-11-11T09:30:00.000Z"))
+      const status = (await attempt(host, build, "build", "boxd_status", "reject")).output as Record<string, unknown>
+      expect((status.works as unknown[])[0]).toMatchObject({ workId: "review-api", phase: "busy", lastText: "Pushing the branch now.", lastActivityAt: "2026-11-11T09:30:00.000Z" })
+      expect(status.credentials).toEqual({ secrets: [{ name: "GH_TOKEN", scope: "private", hosts: ["github.com"] }] })
+      // The fake CLI's answer also holds a plain variable with its value: none of it reaches the result.
+      expect(JSON.stringify(status)).not.toContain("plain-value-visible")
+      expect(host.boxd.calls()).toContain("env list --json")
+    } finally {
+      await host.close()
+    }
+  })
+
+  test("a size at ensure resizes the new machine, and the next call copies the helper the reboot cleared", async () => {
+    const host = await startHost()
+    try {
+      const build = await session(host)
+      const opened = await attempt(host, build, "build", "boxd_ensure", "always", { workId: "review-api", directory: host.location.directory, vcpu: 4 })
+      expect(opened.output).toMatchObject({ state: "starting", vcpu: 4 })
+      expect(host.boxd.calls()).toContain("machine resize oc-review-api --vcpu 4 -y --json")
+      const ready = await attempt(host, build, "build", "boxd_ensure", "always", { workId: "review-api", directory: host.location.directory, vcpu: 4 })
+      expect(ready.output).toMatchObject({ state: "ready", vcpu: 4 })
+      expect(host.boxd.calls().filter((call) => call.startsWith("machine resize"))).toHaveLength(1)
+    } finally {
+      await host.close()
+    }
+  })
+
+  test("a harvest reports the guest's remote without its user information", async () => {
+    const host = await startHost()
+    try {
+      const build = await session(host)
+      await attempt(host, build, "build", "boxd_ensure", "always", { workId: "review-api", directory: host.location.directory })
+      await attempt(host, build, "build", "boxd_submit", "always", { workId: "review-api", text: "Open the pull request." })
+      host.guest.complete("ses_guest_root")
+      // The fake CLI keeps the machine's /home/boxd/work/<id> in the host's work folder.
+      const guestTree = join(host.location.directory, "review-api")
+      Bun.spawnSync(["git", "-C", guestTree, "remote", "add", "origin", "https://x-access-token:bxds_placeholder_value@github.com/owner/repo.git"])
+      const harvested = await attempt(host, build, "build", "boxd_harvest", "always", { workId: "review-api" })
+      expect((harvested.output as { git: { remote: string } }).git.remote).toBe("https://github.com/owner/repo.git")
+      expect(JSON.stringify(harvested.output)).not.toContain("bxds_placeholder_value")
     } finally {
       await host.close()
     }

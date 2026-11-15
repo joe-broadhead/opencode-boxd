@@ -361,7 +361,11 @@ describe("the rest of the review", () => {
     await w.fleet.ensure({ workId: "review-api" })
     await w.fleet.submit({ workId: "review-api", text: "Harvest nowhere." })
     w.guest.phaseById.set("ses_root_review-api", "idle")
-    await refusal(w.fleet.harvest({ workId: "review-api", localDirectory: join(w.root, "missing") }), "NAME_INVALID")
+    const refused = await refusal(w.fleet.harvest({ workId: "review-api", localDirectory: join(w.root, "missing") }), "NAME_INVALID")
+    // The refusal names the input that failed, and why, not the work id or a guest path.
+    expect(refused.what).toStartWith('localDirectory: "')
+    expect(refused.what).toEndWith('missing" does not exist.')
+    expect(refused.details).toEqual({ field: "localDirectory" })
   })
 
   test("a submit stamps the prompt before it admits it, so a crash fails towards stale", async () => {

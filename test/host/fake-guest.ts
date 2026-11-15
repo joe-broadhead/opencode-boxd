@@ -16,6 +16,8 @@ export interface FakeSession {
   inbox: Array<{ id: string; type: "user"; payload: { text: string } }>
   /** When the session last changed, in epoch milliseconds. */
   updated: number
+  /** The model the session runs on, as OpenCode's model reference; unset for the server's default. */
+  model?: { providerID: string; id: string; variant?: string }
 }
 
 export type FakeMessage = {
@@ -33,6 +35,8 @@ export interface FakeGuest {
   readonly sessions: Map<string, FakeSession>
   readonly prompts: Array<{ sessionID: string; text: string }>
   readonly imports: Array<{ id: string; parentID?: string }>
+  /** Every model switch, in order: the session and the reference the request carried. */
+  readonly switches: Array<{ sessionID: string; model: unknown }>
   /** Ways this server can misbehave: a test sets one to see a caller cope. */
   readonly quirks: { activeFails: boolean; ignoresTypeFilter: boolean }
   /** The next created session's id. */
@@ -56,6 +60,7 @@ export function startFakeGuest(): FakeGuest {
   const sessions = new Map<string, FakeSession>()
   const prompts: Array<{ sessionID: string; text: string }> = []
   const imports: Array<{ id: string; parentID?: string }> = []
+  const switches: Array<{ sessionID: string; model: unknown }> = []
   let created = 0
   let nextId = "ses_guest_root"
   const quirks = { activeFails: false, ignoresTypeFilter: false }
@@ -72,7 +77,8 @@ export function startFakeGuest(): FakeGuest {
       if (path === "/api/session" && request.method === "POST") {
         created += 1
         const id = created === 1 ? nextId : `${nextId}_${created}`
-        sessions.set(id, { id, busy: false, directory: String((body.location as { directory?: string } | undefined)?.directory ?? ""), messages: [], inbox: [], updated: 1 })
+        const model = body.model as FakeSession["model"] | undefined
+        sessions.set(id, { id, busy: false, directory: String((body.location as { directory?: string } | undefined)?.directory ?? ""), messages: [], inbox: [], updated: 1, ...(model ? { model } : {}) })
         return json({ data: { id } })
       }
       if (path === "/api/session/active" && quirks.activeFails) return json({ error: "unavailable" }, 503)
@@ -106,6 +112,17 @@ export function startFakeGuest(): FakeGuest {
         const session = sessions.get(inbox[1]!)
         if (!session) return json({ error: "not found" }, 404)
         return json({ data: session.inbox })
+      }
+      const switched = /^\/api\/session\/(ses_[A-Za-z0-9_-]+)\/model$/.exec(path)
+      if (switched && request.method === "POST") {
+        const session = sessions.get(switched[1]!)
+        if (!session) return json({ error: "not found" }, 404)
+        const model = body.model as FakeSession["model"] | undefined
+        if (!model?.providerID || !model.id) return json({ error: "model is required" }, 400)
+        switches.push({ sessionID: session.id, model })
+        session.model = model
+        // The real endpoint answers 204 No Content.
+        return new Response(null, { status: 204 })
       }
       const prompt = /^\/api\/session\/(ses_[A-Za-z0-9_-]+)\/prompt$/.exec(path)
       if (prompt && request.method === "POST") {
@@ -160,6 +177,7 @@ export function startFakeGuest(): FakeGuest {
     sessions,
     prompts,
     imports,
+    switches,
     next: (id: string) => void (nextId = id),
     idle: (sessionID: string) => {
       const session = sessions.get(sessionID)

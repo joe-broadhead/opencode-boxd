@@ -6,7 +6,7 @@
 // The state file (BOXD_FAKE_STATE) holds the machines, the snapshots, the guest port and a log of every call, which is
 // how a test sees that a refused call ran nothing.
 import { spawnSync } from "node:child_process"
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join, normalize, sep } from "node:path"
 
 const statePath = process.env.BOXD_FAKE_STATE
@@ -19,10 +19,37 @@ const HELPER = "/tmp/opencode-boxd/guest.py"
 const helperCopy = join(dirname(statePath), "guest.py")
 
 const read = () => (existsSync(statePath) ? JSON.parse(readFileSync(statePath, "utf8")) : { machines: {}, snapshots: [], log: [], version: "2.2.6", port: 0 })
-const write = (state) => {
-  mkdirSync(dirname(statePath), { recursive: true })
-  writeFileSync(statePath, JSON.stringify(state, null, 2))
+
+/**
+ * The plugin runs several CLI calls at once (status reads every machine in parallel), so every change to the state file
+ * happens under a lock, on a fresh read, and lands by rename: a reader never sees half a file, and no call's log line is
+ * lost.
+ */
+function update(change) {
+  const lock = `${statePath}.lock`
+  for (let tries = 0; ; tries++) {
+    try {
+      mkdirSync(lock)
+      break
+    } catch {
+      if (tries > 2000) throw new Error("the fake boxd state lock was not released")
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5)
+    }
+  }
+  try {
+    const current = read()
+    change(current)
+    mkdirSync(dirname(statePath), { recursive: true })
+    const temp = `${statePath}.${process.pid}.tmp`
+    writeFileSync(temp, JSON.stringify(current, null, 2))
+    renameSync(temp, statePath)
+  } finally {
+    rmdirSync(lock)
+  }
 }
+
+/** This call's machines and snapshots, written over a fresh read, so a log line another call added meanwhile stays. */
+const write = (state) => update((current) => Object.assign(current, { machines: state.machines, snapshots: state.snapshots, ...(state.secrets ? { secrets: state.secrets } : {}) }))
 
 const argv = process.argv.slice(2)
 // `boxd --help` is how the plugin tells the laptop CLI from the in-VM one. It reads nothing and is not logged.
@@ -30,10 +57,9 @@ if (argv.length === 1 && argv[0] === "--help") {
   process.stdout.write("boxd CLI\n\nCommands:\n  machine    Create, inspect, and control machines\n  snapshots  Save machine state\n")
   process.exit(0)
 }
-const state = read()
 // Every call is logged before it is answered, so a test can see what ran and what did not.
-state.log.push(argv.join(" "))
-write(state)
+update((current) => current.log.push(argv.join(" ")))
+const state = read()
 
 const machine = (name) => state.machines[name]
 
@@ -78,6 +104,7 @@ function printMachine(name) {
     idle_ignore_outbound: "off",
     sharing: found.sharing,
     isolated: found.isolated ? "yes" : "no",
+    size: `${found.vcpu ?? 2} vCPU · ${(found.vcpu ?? 2) * 4} GiB`,
   })
 }
 
@@ -150,6 +177,18 @@ if (group === "machine" && action === "new") {
   write(state)
 } else if (group === "machine" && action === "config") {
   out({ ok: true })
+} else if (group === "machine" && action === "resize") {
+  // A resize saves the size and reboots the machine, which clears /tmp: the helper's copy goes with it.
+  const found = machine(rest[0])
+  if (!found) fail("not found")
+  if (!rest.includes("-y")) fail("a resize of a running machine needs -y")
+  found.vcpu = Number(rest[rest.indexOf("--vcpu") + 1])
+  write(state)
+  if (existsSync(helperCopy)) rmSync(helperCopy)
+  out({ name: found.name, vcpu: found.vcpu })
+} else if (group === "env" && action === "list") {
+  // The real `env list --json`: plain variables with their values, and secrets by name, scope and bound hosts only.
+  out({ env: [{ name: "PLAIN_SETTING", scope: "all", value: "plain-value-visible" }], secret: state.secrets ?? [] })
 } else if (group === "machine" && action === "exec") {
   const name = rest[0]
   const command = rest.slice(1)

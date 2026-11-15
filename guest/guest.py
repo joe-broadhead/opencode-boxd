@@ -64,6 +64,20 @@ def directory(value):
     return value
 
 
+MODEL = re.compile(r"([A-Za-z0-9][A-Za-z0-9._-]{0,63})/([A-Za-z0-9][A-Za-z0-9._:/@-]{0,127})(?:#([A-Za-z0-9][A-Za-z0-9._-]{0,31}))?")
+
+
+def model_ref(value):
+    """OpenCode's model reference from `provider/model#variant`, as the session API takes it."""
+    parsed = MODEL.fullmatch(value) if isinstance(value, str) else None
+    if not parsed:
+        fail("bad model")
+    ref = {"providerID": parsed.group(1), "id": parsed.group(2)}
+    if parsed.group(3):
+        ref["variant"] = parsed.group(3)
+    return ref
+
+
 def guest_password():
     try:
         with open(PASSWORD_PATH, encoding="utf8") as handle:
@@ -142,6 +156,8 @@ def action_list(request):
 
 def action_create(request):
     body = {"title": request.get("title") or "boxd"}
+    if request.get("model"):
+        body["model"] = model_ref(request["model"])
     created = unwrap(http("POST", base_url(request) + "/api/session", body))
     emit({"id": created.get("id")})
 
@@ -158,6 +174,14 @@ def action_prompt(request):
         running = sid in (unwrap(http("GET", base + "/api/session/active")) or {})
     except (GuestError, ValueError):
         running = False
+    model = request.get("model")
+    if model:
+        ref = model_ref(model)
+        # A switch reaches the session's next provider turn, which for a running session is the task under way.
+        if running:
+            emit({"refused": "busy"})
+            return
+        http("POST", base + f"/api/session/{sid}/model", {"model": ref})
     http("POST", base + f"/api/session/{sid}/prompt", {"text": text})
     emit({"admitted": sid, "queued": running})
 
@@ -200,8 +224,9 @@ def action_phase(request):
         emit({"phase": "missing"})
         return
     active = unwrap(http("GET", base + "/api/session/active")) or {}
+    tail = tail_size(request.get("tail"))
     if sid in active:
-        emit({"phase": "busy", **activity(base, sid, info)})
+        emit({"phase": "busy", **activity(base, sid, info, tail)})
         return
     # A busy stamp with no run in the server is a run the server died in: it never reached an idle turn, so the session
     # is not busy, and its last run was interrupted.
@@ -209,7 +234,7 @@ def action_phase(request):
     busy = time.get("busy")
     idle = time.get("idle")
     if isinstance(busy, (int, float)) and (not isinstance(idle, (int, float)) or busy > idle):
-        emit({"phase": "idle", "outcome": "interrupted", "error": None, **activity(base, sid, info)})
+        emit({"phase": "idle", "outcome": "interrupted", "error": None, **activity(base, sid, info, tail)})
         return
     # The last idle turn carries the outcome and, when a run failed, the error an agent must hear about. The server lists
     # messages newest first, so the one idle message asked for is the last run's.
@@ -228,14 +253,29 @@ def action_phase(request):
     except GuestError:
         # An outcome is a report, not a gate: a server that cannot list messages still answers the phase.
         pass
-    emit({"phase": "idle", "outcome": outcome, "error": error, **activity(base, sid, info)})
+    emit({"phase": "idle", "outcome": outcome, "error": error, **activity(base, sid, info, tail)})
 
 
 TEXT_LIMIT = 2000
+TAIL_LIMIT = 10
 
 
-def activity(base, sid, info):
-    """When the session last did something, the text of its newest assistant message, and the prompts in its inbox.
+def tail_size(value):
+    """How many recent assistant messages to return: 0 unless the laptop asked for 1 to 10."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        return 0
+    return min(value, TAIL_LIMIT)
+
+
+def message_text(message):
+    content = message.get("content") if isinstance(message.get("content"), list) else []
+    parts = [part["text"] for part in content if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str)]
+    return " ".join(parts).strip()[:TEXT_LIMIT] or None
+
+
+def activity(base, sid, info, tail=0):
+    """When the session last did something, the text of its newest assistant message, the prompts in its inbox, and
+    with `tail` the newest assistant messages, oldest first.
 
     A report, not a gate: a read the server refuses leaves its field out. The laptop redacts and cuts the text."""
     stamps = [info.get("time", {}).get(key) for key in ("updated", "busy", "idle")] if isinstance(info.get("time"), dict) else []
@@ -247,9 +287,21 @@ def activity(base, sid, info):
     if isinstance(message, dict):
         time = message.get("time") if isinstance(message.get("time"), dict) else {}
         stamps += [time.get("completed"), time.get("created")]
-        content = message.get("content") if isinstance(message.get("content"), list) else []
-        parts = [part["text"] for part in content if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str)]
-        text = " ".join(parts).strip()[:TEXT_LIMIT] or None
+        text = message_text(message)
+    recent = None
+    if tail:
+        try:
+            listed = unwrap(http("GET", base + f"/api/session/{sid}/message?type=assistant&order=desc&limit={tail}")) or []
+        except GuestError:
+            listed = None
+        if isinstance(listed, list):
+            recent = []
+            for item in reversed(listed):
+                if not isinstance(item, dict) or item.get("type") != "assistant" or not message_text(item):
+                    continue
+                time = item.get("time") if isinstance(item.get("time"), dict) else {}
+                at = time.get("completed") or time.get("created")
+                recent.append({"at": at if isinstance(at, (int, float)) and not isinstance(at, bool) else None, "text": message_text(item)})
     pending = None
     try:
         inbox = unwrap(http("GET", base + f"/api/session/{sid}/inbox")) or []
@@ -257,7 +309,10 @@ def activity(base, sid, info):
     except GuestError:
         pass
     numbers = [stamp for stamp in stamps if isinstance(stamp, (int, float)) and not isinstance(stamp, bool)]
-    return {"activityAt": max(numbers) if numbers else None, "lastText": text, "pending": pending}
+    result = {"activityAt": max(numbers) if numbers else None, "lastText": text, "pending": pending}
+    if recent is not None:
+        result["tail"] = recent
+    return result
 
 
 def newest(base, sid, kind):

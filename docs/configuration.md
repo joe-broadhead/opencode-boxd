@@ -169,13 +169,13 @@ errors pass through unchanged. No error, log or status line contains a token, a 
 | `OPTIONS_INVALID` | The plugin options are not valid. |
 | `STATUS_UNAVAILABLE` | The status RPC could not read the status. |
 | `SKILLS_INVALID` | The plugin's skill file is missing or malformed. |
-| `NAME_INVALID` | A work id, guest path, snapshot name or prompt is not in the form the plugin accepts. |
+| `NAME_INVALID` | An input is not in the form the plugin accepts. The message names it (`workId`, `model`, `tail`, `vcpu`, `localDirectory`, `files[0].from`, …) and says why, and the result's `field` names it for a program. |
 | `NOT_OURS` | No open work, or the machine is not the one the ledger records for it. |
 | `MACHINE_GONE` | The machine no longer exists. `boxd_resume` rebuilds it. |
-| `MACHINE_STARTING` | The machine or its OpenCode is not up yet. Nothing waits inside a call. |
+| `MACHINE_STARTING` | The machine or its OpenCode is not up yet. `boxd_ensure` and `boxd_submit` wait up to 30 s for it with `wait: true`; every other call answers at once. |
 | `MACHINE_SHARED` | The machine is shared, which deletes the guest's OpenCode sign-in. |
 | `MACHINE_ISOLATED` | The machine is isolated, so it has no git and no in-VM boxd CLI. |
-| `SESSION_BUSY` | The guest session is still running; harvest only when it is idle. |
+| `SESSION_BUSY` | The guest session is still running: harvest, or switch its model with `boxd_submit`, only when it is idle. |
 | `GUEST_VERSION` | The machine's OpenCode differs from this laptop's. |
 | `GUEST_RUN_FAILED` | The guest session's last run failed. The transcript is still imported and proven; the error is the run's own. |
 | `RUN_INTERRUPTED` | The guest's OpenCode stopped during a run, so the run never finished. The transcript is kept. Call `boxd_harvest`, then `boxd_submit` again. |
@@ -194,7 +194,7 @@ errors pass through unchanged. No error, log or status line contains a token, a 
 | `SNAPSHOT_MISSING` | The golden snapshot is not in this boxd account, so no machine is created. |
 | `LEDGER_FAILED` | A ledger read or write failed: a file system error, not a boxd one. |
 | `RULES_NOT_ADDED` | The default permission rules could not be inserted into the agents, so a machine change may run without asking. |
-| `UNTRACKED` | The guest tree has untracked or ignored paths, which a stored patch cannot hold. |
+| `UNTRACKED` | The guest tree has untracked or ignored paths, which a stored patch cannot hold. The message names the first ten and counts the rest; the result carries `kind`, `count` and the first 50 `paths`. |
 | `GIT_UNKNOWN` | The guest directory is not a git repository, so nothing about its files can be proven. |
 | `CREATE_UNCERTAIN` | `machine new` timed out and no machine with that name exists yet. |
 | `PATH_REFUSED` | A laptop path is outside the project and `allowedRoots`, or is a symlink. Name its root in the option, and allow it with the `external_directory` rule as well as the path rule. |
