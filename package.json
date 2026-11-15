@@ -72,7 +72,7 @@
     "title": "boxd",
     "summary": "Run an OpenCode session on a private boxd machine and keep the transcript on your laptop.",
     "icon": "assets/icon.svg",
-    "cost": "boxd bills each machine the plugin makes: compute and memory while running, disk only while hibernated, until boxd_drop. boxd_golden and boxd_ensure may make a short-lived builder. At access Allowed, finished works are harvested and hibernated after 10 idle minutes; else only with automation \"on\".",
+    "cost": "boxd bills each plugin machine: compute and memory while running, disk while hibernated, until boxd_drop. boxd_golden and boxd_ensure may make a short-lived builder. At access Allowed, finished works are harvested and hibernated after 10 idle minutes by default; else only with automation \"on\".",
     "tools": [
       {
         "name": "boxd.status",

@@ -168,6 +168,13 @@ export const SPAWN_BUDGETS: readonly BudgetRow[] = [
     total: 7,
   },
   {
+    call: "boxd_sleep",
+    scenario: "one running work",
+    owner: "C2",
+    max: { "machine get": 1, "machine hibernate": 1 },
+    total: 2,
+  },
+  {
     call: "boxd_drop",
     scenario: "a saved work with a clean tree",
     owner: "C2",

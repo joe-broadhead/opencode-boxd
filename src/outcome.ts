@@ -1,3 +1,4 @@
+// Owner: package D, which keeps or folds it into the fleet view; the guest helper (package A) reports the outcome.
 // What the guest session's last run did. OpenCode records it on the session (`outcome`) and on its last idle message,
 // with the failure's structured error beside it, so the plugin reads it from what the guest or the imported transcript
 // already holds: never from a model call, and never by asking the guest to run anything.

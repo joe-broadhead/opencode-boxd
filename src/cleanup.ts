@@ -14,12 +14,13 @@
  * - **A declined prompt is caught per action** (review note N-2): `assert` rejects with an error that would end the
  *   current step, so each action's assert is caught on its own, logged as "declined", and the command moves on to the
  *   next action. A "no" or a deny changes nothing, and the session stays usable.
- * - A "yes" runs that one action in the plugin's process, through the same code as the tool (drop's whole guard per
- *   work), never through the tools RPC.
+ * - The report's matches come from `services.actions.match`, and a "yes" runs that one action in the plugin's process
+ *   through `services.actions` (C2's code: drop's whole guard per work), against the ids that were in the prompt, never
+ *   through the tools RPC. Its children are tagged `cleanup-command`.
  */
 import type { Plugin } from "@opencode/plugin"
 import { COMMAND_STEM } from "./constants.js"
-import type { CostHookDeps } from "./hooks.js"
+import type { CostServices } from "./services.js"
 
 export const CLEANUP_COMMAND = `${COMMAND_STEM}-cleanup`
 
@@ -29,7 +30,7 @@ type CleanupContext = {
   readonly permission: Pick<Plugin.Context["permission"], "assert">
 }
 
-export function registerCleanupCommand(ctx: CleanupContext, _deps: CostHookDeps) {
+export function registerCleanupCommand(ctx: CleanupContext, _services: CostServices) {
   return ctx.command.transform((editor) =>
     editor.add({
       name: CLEANUP_COMMAND,

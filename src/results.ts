@@ -58,7 +58,12 @@ interface WorkFields {
   readonly region: Region | null
 }
 
-/** A next step: one concrete call with its arguments, never "check status" (principle 3). */
+/**
+ * A next step: one concrete call with its arguments, never "check status" (principle 3). A `next` that names a list
+ * call spells each item as that tool's schema takes it: `boxd_ensure` and `boxd_submit` take objects
+ * (`works: [{ workId: "a", text: "…" }]`); `boxd_sleep`, `boxd_resume`, `boxd_harvest` and `boxd_drop` take a bare work
+ * id or an object (`works: ["a", "b"]`); `boxd_job` takes work ids.
+ */
 type Next = { readonly next: string }
 
 // ── Reads ─────────────────────────────────────────────────────────────────────────────────────────────────────────

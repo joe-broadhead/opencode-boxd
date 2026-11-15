@@ -1,3 +1,4 @@
+// v0 module. Owner: package A, which replaces it with the v1 CLI port in `src/boxd/*` and deletes it.
 import { assertDirectory, assertSessionId, assertSnapshot, assertWorkId, machineName } from "./names.js"
 
 /** Argv for the boxd binary. Never a shell string. Never --shared or --isolated. */

@@ -14,9 +14,9 @@ what a Jelly may call.
   CLI**, with `boxd auth login` as the next step when the CLI does not answer.
 - **`icon`** — `assets/icon.svg`, boxd's own mark: boxd.sh's `favicon.svg`, unchanged, on a rounded tile in boxd.sh's page colour #0a0c12 (`opencode.vendor.mark` is `true`).
 - **`cost`** — the line Jelly shows on the plugin's review before it installs, in the plugin's own words, saying what
-  it costs with boxd: "boxd bills each machine the plugin makes: compute and memory while running, disk only while
-  hibernated, until boxd_drop. boxd_golden and boxd_ensure may make a short-lived builder. At access Allowed, finished
-  works are harvested and hibernated after 10 idle minutes; else only with automation "on"." It changes nothing Jelly
+  it costs with boxd: "boxd bills each plugin machine: compute and memory while running, disk while hibernated, until
+  boxd_drop. boxd_golden and boxd_ensure may make a short-lived builder. At access Allowed, finished works are
+  harvested and hibernated after 10 idle minutes by default; else only with automation "on"." It changes nothing Jelly
   allows. Jelly keeps the line to 300 characters.
 - **`contributes`** — one setting, `access`, the option of the same name, as a choice of three: **Allowed** (`all`, the
   default), **Ask before changes** (`ask-changes`) and **Read only** (`read-only`), with Jelly's own line for each.

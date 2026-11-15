@@ -1,3 +1,4 @@
+// v0 module. Owner: package A, which replaces it with the runner in `src/exec/runner.ts` and deletes it.
 import { spawn } from "node:child_process"
 import { basename } from "node:path"
 import { boxdError } from "./errors.js"

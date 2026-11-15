@@ -1,5 +1,6 @@
 <!-- A copy of the reviewed design (rounds 1 to 5 passed), kept with the code it describes. The packages build against it;
-a change to the design is made here, in the same pull request as the code it changes. -->
+a change to the design is made here, in the same pull request as the code it changes. Changes since the review copy
+are in "Day 0 contract" (§9.1) and marked "(Day 0)" where they land. -->
 
 # opencode-boxd v0.1.0: the design
 
@@ -382,7 +383,7 @@ Result:
   "cost": { … },                               // always: per-hour estimate and today (a `manage usage` read cached 10 min);
                                                // per-work with include "cost" (§C.4); machine cost is null for a member, with boxd's reason
   "cleanup": [ … ],                            // always: suggested actions with their savings, each one call (§C.4)
-  "automation": "on",                          // "on" | "off" | "read-only" | "not-owner" (§C.3)
+  "automation": "on",                          // "on" | "on (consent)" | "off" | "off (access)" | "not-owner" (§C.3)
   "budget": { "daily": 50, "today": 6.12, "action": "warn", "state": "ok" },   // only with the budget option (§C.5)
   "images": [{ "region": "fra", "name": "oc-golden-2.2.6-4x16", "opencode": "2.2.6", "size": "4x16" }],
   "cli": { "signedIn": true, "version": "0.3.4" },
@@ -413,7 +414,7 @@ How it reads, with a budget of about 3 CLI calls plus bounded guest reads:
    work whose cached phase is `idle`, `ready` or `asleep` (an inbound exec resets the idle clock, so polling status
    would keep every idle machine awake), only when the machine is `running` in a listing at most 2 s old (otherwise
    the exec could wake it), and only when the watcher's cached read (§3.13) is older than 60 s. They run in the
-   background lane (cap 4), at most one per machine, bounded at 8 s each (`machine exec --timeout 8`, plus a laptop kill
+   background pool (cap 4), at most one per machine, bounded at 8 s each (`machine exec --timeout 8`, plus a laptop kill
    at 10 s). A work whose read misses the call's total budget of 20 s keeps its cached phase, marked `"stale": true`.
    An `idle` work's phase changes only by a change tool, which records it, or by the machine going to sleep, which the
    listing shows.
@@ -745,9 +746,9 @@ the update banner removed and redacted. It refuses a hibernated machine unless `
 `machine exec --timeout`, so boxd kills the remote command. It is a change (`readOnly: false`) because a command can do
 anything.
 
-**Its own lane** (M4): `boxd_exec` runs in an exec lane with a cap of 4, outside the 12 runner slots, and it never
+**Its own pool** (M4): `boxd_exec` runs in an exec pool with a cap of 4, outside the 12 runner slots, and it never
 takes the machine's helper lock. A ten-minute `gh pr checks --watch` therefore blocks neither the work's `submit`
-(`interrupt` included), nor its reads, nor the watcher, nor other works' tools. A fifth `boxd_exec` waits in its lane.
+(`interrupt` included), nor its reads, nor the watcher, nor other works' tools. A fifth `boxd_exec` waits in its pool.
 
 **Quoting** (L2): the remote side runs the command through a shell ("shell constructs work", boxd docs). The plugin
 quotes each argv element in single quotes (with `'` written as `'\''`) and joins them, so `["grep", "a b", "f;rm"]`
@@ -763,7 +764,7 @@ This is #14 §9's first option. A **watcher** in the plugin runs while any open 
 
 - Every 60 s, or twice the last sweep's duration if that is longer: one `machine list --region all --json`, then one
   `phase` read (helper action `phase`, read-only) for each busy work that the listing just showed `running`, in the
-  background lane (cap 4, one per machine), under the read rule of §4.1. It never reads an idle or asleep work,
+  background pool (cap 4, one per machine), under the read rule of §4.1. It never reads an idle or asleep work,
   because an inbound exec resets the machine's idle timer, and it never uploads anything.
 - A change of phase is appended to `events.jsonl`: `idle` (with outcome), `failed` (with code), `asleep` (with
   `asleepBy`), `gone`, `ready`, or `unreachable` (after two failed reads in a row).
@@ -836,12 +837,12 @@ which `access` level, and keeps the family block unchanged.
 
 `src/exec/runner.ts` owns every child process the plugin starts:
 
-- **Slots:** at most **12** `boxd` children at once for plugin work. The foreground lane (tool calls) may use all 12;
-  the background lane (watcher, status guest reads) at most 4 of them. Two lanes stand apart, each with its own cap:
-  the **exec lane** for `boxd_exec` (4), whose commands can run for minutes, and the **import lane** for the laptop's
+- **Slots:** at most **12** `boxd` children at once for plugin work. The foreground pool (tool calls) may use all 12;
+  the background pool (watcher, status guest reads) at most 4 of them. Two pools stand apart, each with its own cap:
+  the **exec pool** for `boxd_exec` (4), whose commands can run for minutes, and the **import pool** for the laptop's
   `opencode session delete`/`import` (2). So at most 18 children exist at once. The caps are constants, measured in live
   check L12, not options.
-- **Queue:** FIFO per lane, foreground first. A queued call honours its signal while it waits.
+- **Queue:** FIFO per pool, foreground first. A queued call honours its signal while it waits.
 - **Machine locks:** a machine change (`create`, `wake`, `resize`, `reboot`, `hibernate`, `remove`, `rename`,
   `label set`) or a mutating helper action (`setup`, `prompt`, `interrupt`, `upgrade`, `adopt`, `export`, `import`,
   `git` for a harvest or drop) holds that machine's lock, so two changes never race on one machine. Machine locks are
@@ -855,7 +856,7 @@ which `access` level, and keeps the family block unchanged.
   takes neither (M4). So a machine has at most one change exec, one read exec and up to 4 `boxd_exec` commands.
 - **Lock order** (M4): a call takes a machine lock first, and then a slot for **one child process at a time**; it gives
   the slot back when that process ends, before it waits, polls or takes the next slot. A slot is never held while
-  waiting for a machine lock, a golden-build single flight, a poll interval or another lane. A golden build waits
+  waiting for a machine lock, a golden-build single flight, a poll interval or another pool. A golden build waits
   for nothing while it holds a builder machine's lock, and calls that wait for the build hold no lock and no slot. With
   this order no cycle can form, and §7.1 tests it with 300 queued items and a build in flight.
 - **Acting by id** (H2): every change to a work's machine starts with `machine get <name> --region R --json`, under
@@ -928,11 +929,15 @@ asserts its row.
 | Call | v0.0.6 | v0.1.0 |
 |---|---|---|
 | `boxd_status`, 170 works | 170 `get` + up to 170 `exec` + list + snapshots + env | 1 list + 1 limit (cached) + guest reads only for busy, running works whose watcher read is older than 60 s |
-| `boxd_ensure`, new work, wait | 20–40 | create + `setup` + polls (2–4; +1 `get` when adopting) |
-| `boxd_submit` | 6–8 | 1 listing (≤ 2 s) + 1 prompt exec (+1 per file); +1 `get` when it wakes |
+| `boxd_ensure`, new work, wait | 20–40 | 1 all-region listing (§3.4 step 2) + create + `setup` + polls (at most 5, with the limit and snapshot caches warm); adopting: listing + 1 `get` + `setup` + polls (at most 5) |
+| `boxd_submit` | 6–8 | 1 listing (≤ 2 s) + 1 `get` (the by-id check, §4.1) + 1 prompt exec (+1 `cp` per file) |
 | `boxd_job` | 4–5 | 1 listing (≤ 2 s) + 1 read exec |
-| `boxd_harvest`, 1 session | 7–9 | 1 export exec + 1 `cp` + 1 git exec + 1 patch `cp` + 2 laptop imports |
+| `boxd_harvest`, 1 session | 7–9 | 1 `get` + 1 export exec + 1 `cp` + 1 git exec + 1 patch `cp` + 2 laptop imports (delete, import) |
+| `boxd_sleep` | 3 | 1 `get` + 1 `hibernate` |
 | `boxd_drop` | 4–6 | 1 git exec + 1 `get` + 1 `remove`; gone: 1 fresh list + 1 `get` per region |
+
+(Day 0) Every change to an existing work's machine pays the one `get` of §4.1's by-id check; the table counts it.
+`test/support/spawn-count.ts` holds these rows as `SPAWN_BUDGETS`.
 
 ---
 
@@ -1374,13 +1379,16 @@ password. v1 keeps both in `~/.opencode-boxd/`.
 - **Reads** on such a work use v0's own helper, read-only (§3.2): its `phase` action answers the watcher, `boxd_status`
   and `boxd_job`. Nothing is copied to the machine and the ledger is not written (M2).
 - **The first change tool** for the work (`ensure`, `submit`, `harvest`, `sleep`, `resume`, `drop`, `reassign`,
-  `exec`), under the machine lock, copies the v1 helper up and runs its `adopt` action once: when
-  `~/.opencode-boxd/password` is missing and `/tmp/opencode-boxd/password` exists, it copies that file (0600). It then
-  sets `guestHelper: "v1"`. The running server and its session are untouched, so a busy work stays busy.
+  `exec`), under the machine lock, calls `ImportV0Port.adopt` once: (Day 0) a plain `machine exec`, run by the import
+  module, that copies `/tmp/opencode-boxd/password` to `~/.opencode-boxd/password` (0600) when the latter is missing.
+  The v1 helper has no `adopt` action and knows nothing of v0. The caller then sets `guestHelper: "v1"`. The running
+  server and its session are untouched, so a busy work stays busy.
 - A v0 guest whose `/tmp` a reboot cleared has no helper and no running server: reads answer `GUEST_FAILED` with
   `next: boxd_ensure({ workId })`, and that `ensure` sets the machine up as v1 does for any work.
 
-`adopt` and the v0 read fallback live in the import module, and go away with it.
+`adopt` and the v0 read fallback live in the import module (`ImportV0Port`, implemented in `src/import-v0.ts`), and go
+away with it; the guest port has no v0 member. The ledger fields `guestHelper`, `importedFrom` and `laptopCopy` go in
+v0.2.0 too.
 
 ---
 
@@ -1389,13 +1397,13 @@ password. v1 keeps both in `~/.opencode-boxd/`.
 ### 7.1 Unit (no real boxd, no real model)
 
 - **Runner (package A):** an instrumented fake spawn shows peak children ≤ 12 in the shared slots, background ≤ 4,
-  exec lane ≤ 4, imports ≤ 2, under 300 queued calls **with a golden build in flight**, and no deadlock (the lock
+  exec pool ≤ 4, imports ≤ 2, under 300 queued calls **with a golden build in flight**, and no deadlock (the lock
   order of §4.1). Machine locks order changes; reads are single flight; a timeout kills the child (SIGTERM, then
   SIGKILL); an abort kills in-flight children and drops queued ones; the output cap kills an over-large child.
 - **The read rule:** a read exec with a listing older than 2 s, or for a machine not `running`, is refused by the
   runner; status never reads an `idle` work's guest; no read spawns `machine cp` or writes the ledger.
 - **`boxd_exec`:** four 600 s execs on one machine do not delay that work's `submit` with `interrupt`, its `job`, or the
-  watcher; a fifth waits in its lane. Quoting round-trips `["a b", "f;rm", "it's"]` exactly.
+  watcher; a fifth waits in its pool. Quoting round-trips `["a b", "f;rm", "it's"]` exactly.
 - **Acting by id:** `oc-x` re-pointed to another id before `drop`, `sleep`, `resume`, `ensure` (resize, reboot) or
   `reassign` → `NOT_OURS`, and the fake CLI shows nothing removed, renamed, resized or rebooted.
 - **Gone:** drop closes as gone only with a fresh all-region listing and not-found `get`s of the id; a cached listing,
@@ -1620,7 +1628,7 @@ A list the owner can forward:
 
 **Day 0**, by the lead, one PR that every package codes against:
 
-- `src/ports.ts`: the runner (lanes, locks, the read rule, by-id), the boxd port with regions, and the guest port with
+- `src/ports.ts`: the runner (pools, locks, the read rule, by-id), the boxd port with regions, and the guest port with
   its v1 actions; and **the watcher's event stream** (round 4, L-5), which D emits and E consumes: `WorkEvent { seq,
   at, workId, from: Phase, to: Phase, outcome?, code?, needsInput?, reading?: { residentGiB, load1 } }`, with
   `subscribe(listener): () => void`, plus the fleet snapshot E reads for the cost estimate;
@@ -1631,11 +1639,31 @@ A list the owner can forward:
   packages;
 - the spawn-count harness's interface (a fake CLI that counts spawns per call).
 
+**Day 0 contract** (after review of the Day 0 PR), so no package edits another's files or the wiring:
+
+- `src/services.ts` declares every dependency a run, hook or loop gets (`HostServices`, `CoreServices`,
+  `FleetServices`, `CostServices`), the clock and session access, and one entry module per package with a fixed
+  signature: A `src/exec/runtime.ts` (`createRuntime`), B `src/import-v0.ts` (`createImportV0`) and
+  `src/ledger/index.ts` (`createLedger`), D `src/watch.ts` (`createWatch`) and `src/fleet/view.ts` (`viewRuns`), E
+  `src/cost/index.ts` (`createCost`), `src/automation.ts`, `src/hooks.ts` and `src/cleanup.ts`, C1
+  `src/fleet/machines.ts` (`machineRuns`), C2 `src/fleet/sessions.ts` (`sessionRuns`: runs, selectors and
+  `FleetActions`). `src/plugin.ts` wires them once, in that order, and the contract files change only on the
+  integration branch.
+- `src/ports.ts` adds the `LedgerPort` (get, list, update under the work locks, saved, events and `cursorExpired`,
+  copy-on-write file commit, the import gate) and the `ImportV0Port` (state, run, `readPhase`, `adopt`).
+- `FleetActions` (C2 → E): `match`, `harvest`, `sleep` and `drop`, in-process and pre-authorised, tagged
+  `automation` or `cleanup-command`. `CostPort` (E → C1, C2, D): the cost and cleanup blocks, the automation state and
+  the budget check.
+- The registry, not a run, decides permission: every change asserts before its run, a `select` call with exactly the
+  ids its selector matched (which the run then acts on), and an ambiguous selection is `NAME_INVALID` before anything
+  runs. `ChangeTarget` is a branded type that only the boxd port's `checkOwned` makes. `sleep`, `resume`, `harvest`
+  and `drop` list items are a work id or an object.
+
 After Day 0, every file belongs to exactly one package (M8):
 
 | Package | Owns | Must prove |
 |---|---|---|
-| **A. Runtime** | `src/exec/runner.ts`, `src/boxd/*` (CLI port v1: regions, list-all, limit, usage, create flags, by-id verbs, rename, reboot, label; the stderr table), `src/guest/*` (laptop side), `guest/guest.py` v1 (at the stable path `~/.opencode-boxd/guest.py` with a protocol version; `setup`, `serve`, `prompt` with delivery and interrupt, `phase`, `export` to file, `read`, `upgrade`, `health`, `git` with the session marks), `test/host/fake-boxd.mjs`, the spawn-count harness | §7.1 runner tests (caps, lanes, lock order with 300 items and a build in flight, the read rule, the exec lane, by-id), stderr table; the fake CLI covers every verb; the helper's own tests |
+| **A. Runtime** | `src/exec/runner.ts`, `src/boxd/*` (CLI port v1: regions, list-all, limit, usage, create flags, by-id verbs, rename, reboot, label; the stderr table), `src/guest/*` (laptop side), `guest/guest.py` v1 (at the stable path `~/.opencode-boxd/guest.py` with a protocol version; `setup`, `serve`, `prompt` with delivery and interrupt, `phase`, `export` to file, `read`, `upgrade`, `health`, `git` with the session marks), `test/host/fake-boxd.mjs`, the spawn-count harness | §7.1 runner tests (caps, pools, lock order with 300 items and a build in flight, the read rule, the exec pool, by-id), stderr table; the fake CLI covers every verb; the helper's own tests |
 | **B. Ledger and import** | `src/ledger/*` (format 1, cross-process lock, index, `events.jsonl` with `cursorExpired`, `saved`), `src/import-v0.ts` (staging, publish, blocked ids, `adopt`, the v0 read fallback), the prover (delete then import) | §7.1 ledger, import and import-crash tests; the prover on all six stock binaries (F1) |
 | **C1. Machines** | `src/fleet/ensure.ts`, `golden.ts`, `regions.ts`, `reassign.ts`, `resume.ts`, the shared list-form runner `src/fleet/list.ts` | §7.1 regions, ensure state machine, golden scrub, list forms; their §4.4 rows; §7.2 the longest-call measurement |
 | **C2. Sessions** | `src/fleet/submit.ts`, `harvest.ts`, `sleep.ts`, `drop.ts`, `exec.ts`, `read.ts` | §7.1 submit modes, harvest, drop against the guest, gone, by-id; their §4.4 rows; §7.2 signal and Stop, read-only host test, the host-side stall test |

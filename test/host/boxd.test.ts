@@ -171,6 +171,22 @@ describe("the access option (OD-29)", () => {
     }
   })
 
+  test("a select on a change tool still asks at ask-changes, and a decline runs nothing", async () => {
+    const host = await startHost({ options: { access: "ask-changes" } })
+    try {
+      const build = await session(host)
+      const declined = await attempt(host, build, "build", "boxd_sleep", "reject", { select: "finished" })
+      expect(declined).toMatchObject({ asked: "boxd_sleep", ok: false })
+      const dry = await attempt(host, build, "build", "boxd_drop", "reject", { select: "saved-finished", dryRun: true })
+      expect(dry).toMatchObject({ asked: "boxd_drop", ok: false })
+      // A script cannot answer a prompt, so its select is refused.
+      expect(await refusedCode(rpcCall(host, "boxd_harvest", { sessionID: build, input: { select: "unsaved-finished" } }))).toBe("PERMISSION_DENIED")
+      expect(host.boxd.calls()).toEqual([])
+    } finally {
+      await host.close()
+    }
+  })
+
   test("read-only denies every change and allows the reads", async () => {
     const host = await startHost({ options: { access: "read-only" } })
     try {
@@ -178,6 +194,10 @@ describe("the access option (OD-29)", () => {
       for (const id of READ_TOOLS) expect({ id, effect: await effect(host, "build", id) }).toEqual({ id, effect: "allow" })
       const build = await session(host)
       expect(await refusedCode(rpcCall(host, "boxd_golden", { sessionID: build, input: {} }))).toBe("PERMISSION_DENIED")
+      // A select is denied like any other change.
+      for (const [method, select] of [["boxd_sleep", "idle"], ["boxd_harvest", "unsaved-finished"], ["boxd_drop", "saved-finished"]] as const) {
+        expect({ method, code: await refusedCode(rpcCall(host, method, { sessionID: build, input: { select, dryRun: true } })) }).toEqual({ method, code: "PERMISSION_DENIED" })
+      }
       expect(host.boxd.calls()).toEqual([])
     } finally {
       await host.close()

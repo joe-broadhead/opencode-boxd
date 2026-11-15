@@ -14,11 +14,14 @@ and keeps the transcript on the laptop. It has no MCP server: its twelve tools a
 - **Greenfield.** No legacy, migration code, compatibility shim, dual path or deprecated alias, and nothing dead.
 - **One written exception, until v0.2.0: the v0 import.** v0.1.0 imports the v0 ledger once, so the works that ran on
   v0.0.x are not stranded (docs/v1-design.md §6). The exception is narrow and time-limited:
-  - `src/import-v0.ts` is the only code that reads the v0 format. It runs only until a complete `v1/` ledger exists,
-    and it never changes a v0 file (it only adds `works/README-MOVED-TO-v1`).
-  - Nothing else in v1 knows v0, apart from two things that live in the same module and go with it: the read fallback
-    to a v0 guest's own `phase` action, and the `adopt` helper action that takes a running v0 guest over.
-  - v0.2.0 removes the module, the fallback and `adopt`, and this exception with them. Add nothing to it.
+  - `src/import-v0.ts` (package B) is the only code that reads the v0 format or touches a v0 guest. It runs the import
+    only until a complete `v1/` ledger exists, and it never changes a v0 file (it only adds `works/README-MOVED-TO-v1`).
+  - It also holds the two v0 things a running v1 needs: the read of a v0 guest through v0's own `phase` action, and
+    `adopt`, a plain `machine exec` that takes a running v0 guest's password over. Both are behind `ImportV0Port` in
+    `src/ports.ts`. The guest port and `guest/guest.py` know nothing of v0.
+  - The only other v0 traces are the ledger fields `guestHelper`, `importedFrom` and `laptopCopy` in
+    `src/ledger/types.ts`, which say a record was imported.
+  - v0.2.0 removes the module, `ImportV0Port`, those three fields, and this exception with them. Add nothing to it.
 - **No peers, no runtime dependencies, no lifecycle scripts.** `@opencode/plugin`, `@opencode/sdk` and
   `@opencode/client` are devDependencies pinned to exactly `2.2.3`. The host stage installs the other tested SDKs into
   a temp folder.

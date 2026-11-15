@@ -1,3 +1,4 @@
+// Owner: package B, which rewrites it as the laptop port's delete-then-import (F1).
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"

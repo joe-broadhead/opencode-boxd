@@ -53,9 +53,10 @@ describe("the jelly declaration", () => {
   })
 
   test("the cost line says what boxd bills, the golden builder, and when automation hibernates (design §3.14, §C.3)", () => {
-    expect(jelly.cost).toContain("boxd bills each machine the plugin makes")
+    expect(jelly.cost).toContain("boxd bills each plugin machine")
     expect(jelly.cost).toContain("boxd_golden and boxd_ensure may make a short-lived builder.")
-    expect(jelly.cost).toContain('At access Allowed, finished works are harvested and hibernated after 10 idle minutes; else only with automation "on".')
+    // autoSleepMinutes is an option, so the line gives its default, not a fixed time.
+    expect(jelly.cost).toContain('At access Allowed, finished works are harvested and hibernated after 10 idle minutes by default; else only with automation "on".')
   })
 
   test("declares every known tool once, with the effect the default rules give it", () => {

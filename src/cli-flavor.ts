@@ -1,3 +1,4 @@
+// Owner: package A, which moves the flavour check into `src/boxd/*` as a single flight (F9).
 import { boxdError, BoxdError } from "./errors.js"
 import { run } from "./run.js"
 

@@ -6,6 +6,7 @@ import { cut, shortReason } from "./redact.js"
 import { failureText, nextStepFor } from "./outcome.js"
 import type { MachineStatus, RunOutcome, SecretInfo } from "./ports.js"
 import { TOOLS } from "./tools.js"
+import type { FleetServices } from "./services.js"
 import { VERSION } from "./version.js"
 
 export { shortReason }
@@ -315,6 +316,27 @@ export async function readStatus(
     tools: tools.filter((tool) => tool.options?.namespace === "boxd").map((tool) => tool.id),
     agents: agents.data,
   })
+}
+
+/**
+ * The status reader `src/plugin.ts` wires into `/boxd-status`, the dialog and the status RPC. Package D owns it and
+ * fills the fleet read from `services`; until then the ledger read fails, so status is `failed` with that reason.
+ */
+export function statusReader(
+  ctx: StatusContext,
+  input: { readonly services: FleetServices; readonly host: HostCheck; readonly problems: () => readonly string[] },
+): () => Promise<Status> {
+  const { options, hostVersion } = input.services
+  return () =>
+    readStatus(ctx, {
+      access: options.access,
+      host: input.host,
+      // The image a new work in the default size boots from: <prefix>-<this laptop's OpenCode>-<size>.
+      snapshot: `${options.goldenPrefix}-${hostVersion ?? "unknown"}-${options.size}`,
+      guestVersion: hostVersion,
+      problems: input.problems(),
+      ledger: () => Promise.reject(new Error("The v1 ledger is not built yet on this branch.")),
+    })
 }
 
 /** Why status could not be read: a coded message and its next step. The reason is cut like a failure's. */

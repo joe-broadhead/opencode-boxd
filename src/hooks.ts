@@ -20,18 +20,12 @@
  *   watcher's `ctx.session.get` check stays the ground truth. OpenCode has no separate "session ended" event.
  */
 import type { Plugin } from "@opencode/plugin"
-import type { FleetWatch } from "./ports.js"
-import type { ToolDeps } from "./tools.js"
+import type { CostServices, Dispose } from "./services.js"
 
 /** The session hooks cost and cleanup registers. */
 export const COST_HOOKS = ["context", "compaction", "experimental.idle"] as const
 /** The session events that orphan a coordinator's works. */
 export const SESSION_GONE_EVENTS = ["session.deleted", "session.archived"] as const
-
-export interface CostHookDeps extends ToolDeps {
-  /** The watcher's events and fleet snapshot (package D); absent until the watcher lands. */
-  readonly watch?: FleetWatch
-}
 
 type HookContext = {
   readonly session: Pick<Plugin.Context["session"], "hook">
@@ -40,10 +34,11 @@ type HookContext = {
 
 /**
  * Registers the three hooks and the session-events subscription. Never throws: a hook a host refuses is reported once
- * through `report` and the rest still register. Returns the disposers, newest last.
+ * for status and the rest still register. Returns the disposers, newest last. Harvest and sleep go through
+ * `services.actions` (C2's code), never through C2's modules.
  */
-export async function registerCostHooks(ctx: HookContext, _deps: CostHookDeps, report: (problem: string | undefined) => void): Promise<Array<() => Promise<void>>> {
-  const stops: Array<() => Promise<void>> = []
+export async function registerCostHooks(ctx: HookContext, services: CostServices): Promise<Dispose[]> {
+  const stops: Dispose[] = []
   const failed: string[] = []
   for (const name of COST_HOOKS) {
     try {
@@ -67,6 +62,6 @@ export async function registerCostHooks(ctx: HookContext, _deps: CostHookDeps, r
     events.abort()
     await listening
   })
-  report(failed.length ? `The session hooks ${failed.join(", ")} could not be registered on this OpenCode, so the cost line, compaction note or idle check is off; automation still runs.` : undefined)
+  services.report("hooks", failed.length ? `The session hooks ${failed.join(", ")} could not be registered on this OpenCode, so the cost line, compaction note or idle check is off; automation still runs.` : undefined)
   return stops
 }

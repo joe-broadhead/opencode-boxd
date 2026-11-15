@@ -1,3 +1,4 @@
+// v0 module. Owner: package B: v1 never parses a transcript on the laptop (F8), so B deletes it.
 import { createHash } from "node:crypto"
 import { boxdError } from "./errors.js"
 import { assertSessionId } from "./names.js"

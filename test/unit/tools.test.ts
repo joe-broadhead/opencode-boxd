@@ -4,8 +4,8 @@
 import { describe, expect, test } from "bun:test"
 import type { Plugin } from "@opencode/plugin"
 import { BoxdError, boxdError, CODES } from "../../src/errors.js"
-import { DEFAULT_OPTIONS } from "../../src/options.js"
-import { CHANGING_TOOLS, READ_TOOLS, TOOLS, ownedMethods, refusal, resourcesOf, runTool, toolSpec, toolTransform, type CallContext, type ToolDeps, type ToolName, type ToolSpec } from "../../src/tools.js"
+import { notBuiltRun, type Run, type Selectors, type ToolRuns } from "../../src/services.js"
+import { CHANGING_TOOLS, READ_TOOLS, TOOLS, ownedMethods, refusal, resourcesOf, runTool, selectionOf, toolSpec, toolTransform, type CallContext, type RegistryDeps, type ToolName, type ToolSpec } from "../../src/tools.js"
 import { defaultRules } from "../../src/permissions.js"
 
 /** Design §3.14, row for row: the tool, its readOnly, its class, and whether it asserts. */
@@ -27,9 +27,15 @@ const TABLE: ReadonlyArray<readonly [ToolName, boolean, ToolSpec["class"]]> = [
 /** Design §4.2: the tools that take `works: [...]`. */
 const LIST_FORMS: readonly ToolName[] = ["ensure", "submit", "job", "harvest", "sleep", "resume", "drop"]
 
-const deps: ToolDeps = { options: DEFAULT_OPTIONS, hostVersion: "2.2.6", projectDirectory: "/work/example" }
+/** Every run is the scaffold's, and every selector matches `a` and `b`, unless a test swaps one in. */
+function registry(runs: Partial<Record<keyof ToolRuns, Run<{ readonly state: string }>>> = {}): RegistryDeps {
+  const all = Object.fromEntries(TOOLS.map((tool) => [tool.id, runs[tool.id] ?? notBuiltRun(tool.owner)])) as unknown as ToolRuns
+  const both = async () => ["a", "b"] as const
+  return { runs: all, selectors: { boxd_sleep: both, boxd_harvest: both, boxd_drop: both } as Selectors }
+}
+const deps = registry()
 const call = { sessionID: "ses_test", agent: "build", messageID: "msg_test", id: "call_test" }
-const context = (via: CallContext["via"] = "model"): CallContext => ({ ...call, signal: new AbortController().signal, via, assert: async () => {} })
+const context = (via: CallContext["via"] = "model"): CallContext => ({ ...call, signal: new AbortController().signal, via })
 
 /** A permission check that records, and refuses nothing. */
 function recorder() {
@@ -38,18 +44,6 @@ function recorder() {
     calls.push({ action: input.action, sessionID: input.sessionID, agent: input.agent, resources: input.resources })
   }) as Plugin.Context["permission"]["assert"]
   return { calls, assert }
-}
-
-/** Swaps one tool's run for the length of `body`, so a test can see what the registry passes it. */
-async function withRun(name: ToolName, run: ToolSpec["run"], body: () => Promise<void>) {
-  const spec = toolSpec(name) as { run: ToolSpec["run"] }
-  const original = spec.run
-  spec.run = run
-  try {
-    await body()
-  } finally {
-    spec.run = original
-  }
 }
 
 describe("the tool table", () => {
@@ -79,10 +73,18 @@ describe("the tool table", () => {
       }
       expect(properties.works).toMatchObject({ type: "array", minItems: 1, maxItems: 300 })
       expect(tool.input.required).toEqual([])
-      const items = properties.works!.items as Record<string, unknown>
-      // A list item is the single form: a work id string for job, an object with the same fields otherwise.
-      if (tool.name === "job") expect(items).toMatchObject({ type: "string" })
-      else expect(Object.keys(items.properties as object).sort()).toEqual(Object.keys(properties).filter((key) => !["works", "select", "dryRun"].includes(key)).sort())
+      const raw = properties.works!.items as Record<string, unknown>
+      // A list item is the single form: a work id string for job; an object with the same fields otherwise, which
+      // sleep, resume, harvest and drop also take as a bare work id (design review LOW-5).
+      if (tool.name === "job") {
+        expect(raw).toMatchObject({ type: "string" })
+        continue
+      }
+      const shorthand = ["sleep", "resume", "harvest", "drop"].includes(tool.name)
+      expect({ tool: tool.name, shorthand: "anyOf" in raw }).toEqual({ tool: tool.name, shorthand })
+      const items = shorthand ? (raw.anyOf as Array<Record<string, unknown>>)[1]! : raw
+      if (shorthand) expect((raw.anyOf as unknown[])[0]).toMatchObject({ type: "string" })
+      expect(Object.keys(items.properties as object).sort()).toEqual(Object.keys(properties).filter((key) => !["works", "select", "dryRun"].includes(key)).sort())
     }
   })
 
@@ -132,17 +134,20 @@ describe("the tool table", () => {
 describe("the registry runs a tool", () => {
   test("every tool answers the scaffold's typed NOT_IMPLEMENTED until its package fills it", async () => {
     for (const tool of TOOLS) {
-      const answer = await runTool(tool, deps, {}, context())
+      const answer = await runTool(tool, deps, recorder().assert, inputFor(tool.name), context())
       expect(answer.output).toEqual({ state: "failed", error: "NOT_IMPLEMENTED", message: `This tool is not built yet on this branch (package ${tool.owner}).`, next: "Use a released version of the plugin." })
       expect(JSON.parse(answer.text)).toEqual(answer.output)
     }
   })
 
   test("a coded error becomes a result in the shape of any answer: the work, its state, the code, the sentence, the next step and its facts", async () => {
-    await withRun("drop", async () => {
-      throw boxdError("UNTRACKED", "Two untracked paths were not harvested.", { paths: ["a.txt", "b.txt"], count: 2, kind: "untracked" })
-    }, async () => {
-      const answer = await runTool(toolSpec("drop"), deps, { workId: "review-api" }, context())
+    {
+      const failing = registry({
+        boxd_drop: async () => {
+          throw boxdError("UNTRACKED", "Two untracked paths were not harvested.", { paths: ["a.txt", "b.txt"], count: 2, kind: "untracked" })
+        },
+      })
+      const answer = await runTool(toolSpec("drop"), failing, recorder().assert, { workId: "review-api" }, context())
       expect(answer.output).toEqual({
         workId: "review-api",
         machine: "oc-review-api",
@@ -155,7 +160,7 @@ describe("the registry runs a tool", () => {
         kind: "untracked",
       })
       expect(answer.text).toBe(`UNTRACKED: Two untracked paths were not harvested. Next step: ${CODES.UNTRACKED.next}`)
-    })
+    }
   })
 
   test("a refusal's state is the code's own, and an invalid work id is not echoed as a work", () => {
@@ -175,10 +180,13 @@ describe("the registry runs a tool", () => {
 
   test("the model path passes the call's signal and says it came by the model; the RPC says rpc (F2, §3.5)", async () => {
     const seen: CallContext[] = []
-    await withRun("submit", async (_deps, _input, received) => {
-      seen.push(received)
-      return { state: "admitted" }
-    }, async () => {
+    const deps = registry({
+      boxd_submit: async (_input, received) => {
+        seen.push(received)
+        return { state: "admitted" }
+      },
+    })
+    {
       const added: Array<{ name: string; execute: (input: unknown, context: unknown) => Promise<unknown> }> = []
       toolTransform(deps, recorder().assert)({ namespace: () => {}, add: (spec: (typeof added)[number]) => added.push(spec) } as never)
       const stop = new AbortController()
@@ -189,7 +197,7 @@ describe("the registry runs a tool", () => {
       expect(seen.map((entry) => entry.via)).toEqual(["model", "rpc"])
       expect(seen[0]!.signal).toBe(stop.signal)
       expect(seen[1]!.signal).toBe(rpcStop.signal)
-    })
+    }
   })
 })
 
@@ -209,19 +217,69 @@ describe("every change asserts inside its own execute", () => {
     }
   })
 
-  test("a select call is asserted by its run, once its match is known, with the tool's own action and the call's source", async () => {
+  test("a select call asserts the tool's action with exactly the ids its selector matched, and the run acts on those", async () => {
     const { calls, assert } = recorder()
-    let given: CallContext | undefined
-    await withRun("sleep", async (_deps, _input, received) => {
-      given = received
-      await received.assert(["a", "b"])
-      return { state: "done" }
-    }, async () => {
-      const method = ownedMethods(deps, assert).find((entry) => entry.name === "boxd_sleep")!
-      await method.run({ select: "finished" }, { ...call, signal: new AbortController().signal, progress: async () => {} })
+    const given: CallContext[] = []
+    const deps = registry({
+      boxd_sleep: async (_input, received) => {
+        given.push(received)
+        return { state: "done" }
+      },
     })
-    expect(given?.via).toBe("rpc")
-    expect(calls).toEqual([{ action: "boxd_sleep", sessionID: "ses_test", agent: "build", resources: ["a", "b"] }])
+    const method = ownedMethods(deps, assert).find((entry) => entry.name === "boxd_sleep")!
+    for (const input of [{ select: "finished" }, { select: "idle", dryRun: true }]) {
+      await method.run(input, { ...call, signal: new AbortController().signal, progress: async () => {} })
+    }
+    // A dryRun is still asserted: an input key never skips the permission check.
+    expect(calls).toEqual([
+      { action: "boxd_sleep", sessionID: "ses_test", agent: "build", resources: ["a", "b"] },
+      { action: "boxd_sleep", sessionID: "ses_test", agent: "build", resources: ["a", "b"] },
+    ])
+    expect(given.map((entry) => entry.matched)).toEqual([["a", "b"], ["a", "b"]])
+  })
+
+  test("a select that matches nothing still asserts, with resource *", async () => {
+    const { calls, assert } = recorder()
+    const deps = { ...registry(), selectors: { ...registry().selectors, boxd_drop: async () => [] } } as RegistryDeps
+    await runTool(toolSpec("drop"), deps, assert, { select: "saved-finished" }, context())
+    expect(calls.map((entry) => entry.resources)).toEqual([["*"]])
+  })
+
+  test("a declined or denied assert stops the call before its run", async () => {
+    let ran = false
+    const deps = registry({
+      boxd_sleep: async () => {
+        ran = true
+        return { state: "done" }
+      },
+    })
+    const refuse = (async () => {
+      throw new Error("PermissionDeniedError")
+    }) as unknown as Plugin.Context["permission"]["assert"]
+    await expect(runTool(toolSpec("sleep"), deps, refuse, { select: "finished" }, context())).rejects.toThrow("PermissionDeniedError")
+    expect(ran).toBe(false)
+  })
+
+  test("an ambiguous or wrong selection is refused before anything is asserted or run (NAME_INVALID, with its field)", async () => {
+    const { calls, assert } = recorder()
+    const cases: Array<[ToolName, Record<string, unknown>, string]> = [
+      ["ensure", { workId: "a", select: "idle" }, "select"],
+      ["exec", { workId: "a", command: ["true"], select: "idle" }, "select"],
+      ["sleep", { workId: "a", select: "finished" }, "select"],
+      ["sleep", { works: ["a"], select: "finished" }, "select"],
+      ["sleep", { workId: "a", works: ["b"] }, "works"],
+      ["sleep", { select: "saved-finished" }, "select"],
+      ["drop", { workId: "a", dryRun: true }, "dryRun"],
+      ["drop", { select: "saved-finished", dryRun: "yes" }, "dryRun"],
+      ["harvest", {}, "workId"],
+    ]
+    for (const [name, input, field] of cases) {
+      const answer = await runTool(toolSpec(name), deps, assert, input, context())
+      expect({ name, input, output: answer.output }).toMatchObject({ name, input, output: { state: "refused", error: "NAME_INVALID", field } })
+    }
+    expect(calls).toEqual([])
+    expect(selectionOf(toolSpec("sleep"), { select: "idle" })).toBe("idle")
+    expect(selectionOf(toolSpec("status"), {})).toBeUndefined()
   })
 
   test("a list call asserts once, with every work id as a resource", async () => {

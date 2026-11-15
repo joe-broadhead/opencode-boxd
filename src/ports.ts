@@ -1,7 +1,8 @@
 /**
  * The ports every package codes against (design §4.1, §3, §9.1): the runner that owns every child process, the boxd
- * CLI port with regions, and the guest port with the v1 helper's actions. Interfaces and constants only: the runner
- * lives in `src/exec/runner.ts`, the CLI port in `src/boxd/*` and the guest port in `src/guest/*` (package A).
+ * CLI port with regions, the guest port with the v1 helper's actions and the laptop port (package A); the ledger port
+ * and the v0 import port (package B); and the watcher's event stream (package D). Interfaces and constants only;
+ * `src/services.ts` says which entry module builds each one.
  *
  * The rules these types carry, so no package re-decides them:
  *
@@ -17,7 +18,7 @@
  *   while waiting for a lock, a golden build, a poll interval or another pool.
  */
 
-import type { Phase, SavedState } from "./ledger/types.js"
+import type { EventLine, Phase, SavedState, WorkRecord } from "./ledger/types.js"
 
 // ── Vocabulary ────────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -208,7 +209,7 @@ export const CALL_TAG_ENV = "OPENCODE_BOXD_CALL"
 /** Which call a child belongs to: a tool call's id, or a named background job. */
 export interface CallTag {
   readonly callId: string
-  readonly source: `boxd_${string}` | "watcher" | "import-v0" | "status-command"
+  readonly source: `boxd_${string}` | "watcher" | "import-v0" | "status-command" | "automation" | "cleanup-command"
 }
 
 /** What every port operation takes: the call it belongs to, its signal, and the pool it runs in. */
@@ -272,9 +273,6 @@ export interface Runner {
 
 // ── Targets ───────────────────────────────────────────────────────────────────────────────────────────────────────
 
-/** Which helper a machine has: v1 at `GUEST_HELPER_PATH`, or only v0's at `/tmp/opencode-boxd/guest.py` (design §6.3). */
-export type GuestHelper = "v1" | "v0"
-
 /** A read's target: by name (L-g), with the listing that proves it is running. Reads take no machine lock. */
 export interface ReadTarget {
   readonly region: Region
@@ -282,20 +280,21 @@ export interface ReadTarget {
   readonly listing: Listing
   /** When the listing carries ids (U14), a read compares this and answers `NOT_OURS` on a difference. */
   readonly machineId: MachineId | null
-  readonly helper: GuestHelper
 }
 
+declare const changeTargetBrand: unique symbol
 /**
  * A change's target: the name resolved to the recorded id by a `machine get` in this call, under the machine lock.
- * Only `checkOwned` makes one, so no change can act on whatever now holds the name.
+ * Branded: only `BoxdPort.checkOwned` makes one (package A casts there and nowhere else), so a change can never act on
+ * a target built by hand, or on whatever now holds the name.
  */
-export interface ChangeTarget {
+export type ChangeTarget = {
   readonly region: Region
   readonly name: MachineName
   readonly machineId: MachineId
   /** Proof the check ran: when the `get` answered. */
   readonly checkedAt: number
-}
+} & { readonly [changeTargetBrand]: true }
 
 // ── The boxd CLI port ─────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -385,7 +384,7 @@ export const GUEST_WORK_ROOT = "/home/boxd/work"
 /** The read actions: no machine lock, the read rule, never an upload. Their input and output hold within v0.1.x. */
 export const GUEST_READ_ACTIONS = ["phase", "read", "health", "serve"] as const
 /** The mutating actions: under the machine lock, after the by-id check; a change may upload the helper first. */
-export const GUEST_CHANGE_ACTIONS = ["setup", "prompt", "interrupt", "upgrade", "adopt", "export", "import", "git", "scrub"] as const
+export const GUEST_CHANGE_ACTIONS = ["setup", "prompt", "interrupt", "upgrade", "export", "import", "git", "scrub"] as const
 export type GuestReadAction = (typeof GUEST_READ_ACTIONS)[number]
 export type GuestChangeAction = (typeof GUEST_CHANGE_ACTIONS)[number]
 export type GuestAction = GuestReadAction | GuestChangeAction
@@ -510,7 +509,8 @@ export interface ScrubAnswer {
 }
 
 export interface GuestPort {
-  // Reads: the read rule, the helper already on the machine (v0's `phase` for a v0 guest), no upload, no ledger write.
+  // Reads: the read rule, the v1 helper already on the machine, no upload, no ledger write. A guest with only v0's
+  // helper is read through `ImportV0Port.readPhase`, never through this port.
   serve(target: ReadTarget, context: OpContext): Promise<ServeAnswer>
   phase(target: ReadTarget, input: { readonly sessionId: string; readonly tail?: number }, context: OpContext): Promise<PhaseAnswer>
   read(
@@ -525,8 +525,6 @@ export interface GuestPort {
   prompt(target: ChangeTarget, input: PromptInput, context: OpContext): Promise<PromptAnswer>
   interrupt(target: ChangeTarget, input: { readonly sessionId: string }, context: OpContext): Promise<void>
   upgrade(target: ChangeTarget, input: { readonly version: string }, context: OpContext): Promise<{ readonly opencode: string }>
-  /** Takes over a v0 guest: copies `/tmp/opencode-boxd/password` to the v1 home once; the running server is untouched. */
-  adopt(target: ChangeTarget, context: OpContext): Promise<void>
   export(target: ChangeTarget, input: { readonly rootId: string }, context: OpContext): Promise<ExportAnswer>
   /** Imports stored exports copied up with `machine cp`, parents first (`boxd_resume`). */
   import(target: ChangeTarget, input: { readonly directory: string; readonly files: readonly string[] }, context: OpContext): Promise<{ readonly rootId: string }>
@@ -589,4 +587,74 @@ export interface FleetWatch {
   /** Calls `listener` for every phase change, in `seq` order; returns the unsubscribe. */
   subscribe(listener: (event: WorkEvent) => void): () => void
   snapshot(): FleetSnapshot
+}
+
+// ── The ledger port (package B: `src/ledger/*`) ─────────────────────────────────────────────────────────────────────
+
+/** One page of `events.jsonl` after a cursor. `cursorExpired` when the cursor is older than the oldest kept event. */
+export interface EventPage {
+  readonly events: readonly EventLine[]
+  readonly cursor: number
+  readonly cursorExpired: boolean
+}
+
+/**
+ * The laptop ledger, format 1 (design §2.2). Every write is copy-on-write (temp, verify, fsync, rename), except the
+ * append-only `events.jsonl`. Every method first passes the import gate: while the v0 import is unfinished it throws
+ * `LEDGER_IMPORTING` with `progress`, and for a blocked work id it throws `IMPORT_V0_FAILED`.
+ */
+export interface LedgerPort {
+  /** The import gate alone, for a call that reads nothing else first. */
+  ready(context: OpContext): Promise<void>
+  /** One record, or undefined for an id the ledger has never seen (open or closed). */
+  get(workId: string, context: OpContext): Promise<WorkRecord | undefined>
+  /** Open records from the index (refreshed by mtime); closed ones only when asked for. */
+  list(filter: { readonly closed?: boolean; readonly workIds?: readonly string[]; readonly region?: Region }, context: OpContext): Promise<readonly WorkRecord[]>
+  /**
+   * Changes records under their cross-process work locks, taken in sorted id order (only `boxd_reassign` takes two),
+   * before any machine lock. `change` gets the current records (undefined for a new id) and returns the records to
+   * write and a value; nothing is written when it throws. A lock held elsewhere past its wait is `LEDGER_LOCKED`.
+   */
+  update<T>(
+    workIds: readonly string[],
+    change: (current: ReadonlyMap<string, WorkRecord | undefined>) => Promise<{ readonly write: readonly WorkRecord[]; readonly value: T }>,
+    context: OpContext,
+  ): Promise<T>
+  /** `saved`, computed: `fresh` when `saved.complete && saved.at >= lastSubmit.at`, `stale` when older or partial, else `none`. */
+  saved(record: WorkRecord): SavedState
+  /** Appends one phase change with the next `seq`, and returns it. */
+  appendEvent(event: Omit<EventLine, "seq">, context: OpContext): Promise<EventLine>
+  eventsSince(cursor: number, context: OpContext): Promise<EventPage>
+  /** A work's folder in the ledger, for exports, `patch.diff` and `untracked/`. */
+  workFolder(workId: string): string
+  /**
+   * Puts a verified file in place: `temp` (written beside `final`) must have `bytes` and `sha256`, is fsynced and renamed
+   * over `final`; otherwise it is deleted, `final` is left as it was, and `EXPORT_INVALID` is thrown.
+   */
+  commitFile(temp: string, final: string, expected: { readonly bytes: number; readonly sha256: string }): Promise<void>
+}
+
+// ── The v0 import (package B: `src/import-v0.ts`; removed in v0.2.0 with everything else that knows v0) ───────────
+
+export type ImportState =
+  | { readonly state: "complete"; readonly works: number; readonly blocked: readonly string[] }
+  | { readonly state: "importing"; readonly done: number; readonly total: number }
+  | { readonly state: "failed"; readonly reason: string; readonly retryAt: string }
+
+/**
+ * The only v0-aware code in v1 (AGENTS.md's exception): the one-time import, the read of a v0 guest through its own
+ * helper, and the takeover of a running v0 guest. The guest port and `guest/guest.py` know nothing of v0.
+ */
+export interface ImportV0Port {
+  state(): ImportState
+  /** Starts the import, or joins the one running in this or another process; at most once per 30 s after a failure. */
+  run(context: OpContext): Promise<ImportState>
+  /** Reads a v0 guest with v0's own `phase` action at `/tmp/opencode-boxd/guest.py`, under the read rule; never uploads. */
+  readPhase(target: ReadTarget, input: { readonly sessionId: string }, context: OpContext): Promise<PhaseAnswer>
+  /**
+   * Takes a running v0 guest over, once, at its first change: with a plain `machine exec`, copies
+   * `/tmp/opencode-boxd/password` to `~/.opencode-boxd/password` (0600) when the latter is missing. The running server
+   * and its session are untouched; the caller then records `guestHelper: "v1"`.
+   */
+  adopt(target: ChangeTarget, context: OpContext): Promise<void>
 }
