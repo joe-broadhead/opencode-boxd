@@ -11,5 +11,7 @@ export function createRuntime(_host: HostServices): Runtime {
     boxd: notBuilt<BoxdPort>("boxd"),
     guest: notBuilt<GuestPort>("guest"),
     laptop: notBuilt<LaptopPort>("laptop"),
+    // Package A: await runner.dispose(), then stop the ports' timers and caches.
+    dispose: async () => {},
   }
 }

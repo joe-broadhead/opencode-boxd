@@ -51,6 +51,11 @@ export interface Runtime {
   readonly boxd: BoxdPort
   readonly guest: GuestPort
   readonly laptop: LaptopPort
+  /**
+   * On plugin disposal or reload: `runner.dispose()` (every in-flight child aborted, queued ones dropped) and any timer
+   * or cache the ports hold. Called last, after every stage that spawns through it.
+   */
+  dispose(): Promise<void>
 }
 
 /** Built from the host and the options alone. */
@@ -87,6 +92,28 @@ export interface CostServices extends FleetServices {
 
 /** Something a stage started that the plugin stops when it is disposed. */
 export type Dispose = () => Promise<void>
+
+/** How long the plugin's cleanup waits for one stage to stop before it moves on to the next. */
+export const DISPOSE_BOUND_MS = 5_000
+
+/**
+ * Runs each stop in order, each bounded by `boundMs`. A stop that throws or does not finish in time is reported and
+ * left behind, and the stops after it still run, so one stuck stage never keeps the runner or a lock alive.
+ */
+export async function stopAll(stops: readonly Dispose[], report: (problem: string) => void, boundMs = DISPOSE_BOUND_MS): Promise<void> {
+  for (const [index, stop] of stops.entries()) {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const late = new Promise<"late">((resolve) => (timer = setTimeout(() => resolve("late"), boundMs)))
+    try {
+      const outcome = await Promise.race([stop().then(() => "done" as const), late])
+      if (outcome === "late") report(`Stop ${index + 1} of ${stops.length} did not finish within ${boundMs} ms; the plugin moved on.`)
+    } catch (error) {
+      report(`Stop ${index + 1} of ${stops.length} failed: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+}
 
 // ── Runs ──────────────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -152,11 +179,12 @@ export interface CostPort {
 
 // ── The scaffold ──────────────────────────────────────────────────────────────────────────────────────────────────
 
-/** A port whose package has not built it yet: any member throws, naming it. Goes with the last stub. */
+/** A port whose package has not built it yet: any member throws, naming it, except `dispose`, which does nothing. */
 export function notBuilt<T extends object>(name: string): T {
   return new Proxy({} as T, {
     get: (_target, member) => {
       if (member === "then") return undefined
+      if (member === "dispose") return async () => {}
       return () => {
         throw new Error(`${name}.${String(member)} is not built yet on this branch.`)
       }

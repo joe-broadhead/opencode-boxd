@@ -267,7 +267,11 @@ export interface Runner {
    */
   assertReadable(target: ReadTarget): void
   health(): RunnerHealth
-  /** Stops every pool: queued requests are dropped and running children killed. */
+  /**
+   * Stops every pool when the plugin is disposed or reloaded: queued requests are dropped (`CANCELLED`), and every
+   * running child, a long `boxd_exec` included, is aborted through its signal (SIGTERM, then SIGKILL after
+   * `TIMEOUTS.killGraceMs`). Resolves once no child is left; later `spawn` calls are refused.
+   */
   dispose(): Promise<void>
 }
 
@@ -632,6 +636,11 @@ export interface LedgerPort {
    * over `final`; otherwise it is deleted, `final` is left as it was, and `EXPORT_INVALID` is thrown.
    */
   commitFile(temp: string, final: string, expected: { readonly bytes: number; readonly sha256: string }): Promise<void>
+  /**
+   * On plugin disposal or reload: stops every lock heartbeat and releases the work locks this process holds, so another
+   * process does not wait for a stale takeover. A write in flight finishes or leaves the old file (copy-on-write).
+   */
+  dispose(): Promise<void>
 }
 
 // ── The v0 import (package B: `src/import-v0.ts`; removed in v0.2.0 with everything else that knows v0) ───────────
@@ -657,4 +666,9 @@ export interface ImportV0Port {
    * and its session are untouched; the caller then records `guestHelper: "v1"`.
    */
   adopt(target: ChangeTarget, context: OpContext): Promise<void>
+  /**
+   * On plugin disposal or reload: stops a running import (its staging folder is left for the next run to discard),
+   * stops the import lock's heartbeat and releases the lock.
+   */
+  dispose(): Promise<void>
 }

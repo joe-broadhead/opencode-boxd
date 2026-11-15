@@ -1658,6 +1658,10 @@ A list the owner can forward:
   ids its selector matched (which the run then acts on), and an ambiguous selection is `NAME_INVALID` before anything
   runs. `ChangeTarget` is a branded type that only the boxd port's `checkOwned` makes. `sleep`, `resume`, `harvest`
   and `drop` list items are a work id or an object.
+- **Disposal.** The runtime, the ledger and the import port each have `dispose()`. The plugin's cleanup stops, in order:
+  the registrations and E's loops, the watcher, the ledger and the import (heartbeats stopped, locks released), and the
+  runtime last (`runner.dispose()` aborts every in-flight child, a long `boxd_exec` included). Each stop is bounded at
+  5 s, and a stuck one never keeps the later ones from running.
 
 After Day 0, every file belongs to exactly one package (M8):
 

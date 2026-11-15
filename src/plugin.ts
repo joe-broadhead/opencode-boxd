@@ -20,7 +20,7 @@ import { createImportV0 } from "./import-v0.js"
 import { createLedger } from "./ledger/index.js"
 import { parseOptions } from "./options.js"
 import { defaultRules, registerDefaultRules } from "./permissions.js"
-import type { CoreServices, CostServices, Dispose, FleetServices, HostServices } from "./services.js"
+import { stopAll, type CoreServices, type CostServices, type Dispose, type FleetServices, type HostServices } from "./services.js"
 import { loadSkills, registerSkills } from "./skills.js"
 import { registerStatusCommand, registerStatusRpc, statusReader } from "./status.js"
 import { ownedMethods, toolTransform, type RegistryDeps } from "./tools.js"
@@ -70,7 +70,12 @@ export function createBoxdPlugin(seam: BoxdSeam = {}) {
       const read = statusReader(ctx, { services: fleet, host, problems: () => [...problems.values()] })
 
       // Every agent gets the block for the access option after its base allow: all allowed, ask on a change, or reads only.
+      // Stops run in reverse: registrations and E's loops first, then the watcher, then the ledger and the import
+      // (locks and heartbeats), and the runtime last (every in-flight child aborted).
       const stops: Dispose[] = [
+        () => runtime.dispose(),
+        () => importV0.dispose(),
+        () => core.ledger.dispose(),
         await registerDefaultRules(ctx.agent, defaultRules(options.access), (problem) => report("rules", problem), options.access).then((registration) => registration.dispose),
         await registerSkills(ctx.skill, skills).then((registration) => registration.dispose),
         await registerStatusCommand(ctx, read).then((registration) => registration.dispose),
@@ -84,9 +89,7 @@ export function createBoxdPlugin(seam: BoxdSeam = {}) {
         await registerCleanupCommand(ctx, costServices).then((registration) => registration.dispose),
         startAutomation(costServices),
       ]
-      return async () => {
-        for (const stop of stops.reverse()) await stop()
-      }
+      return () => stopAll(stops.reverse(), (problem) => report("dispose", problem))
     },
   })
 }

@@ -318,3 +318,26 @@ function inputFor(name: ToolName): Record<string, unknown> {
       return { workId: "review-api" }
   }
 }
+
+describe("the plugin's cleanup", () => {
+  test("runs every stop in order, each bounded, and a stuck or failing stop never keeps the later ones from running", async () => {
+    const { stopAll } = await import("../../src/services.js")
+    const ran: string[] = []
+    const problems: string[] = []
+    await stopAll(
+      [
+        async () => void ran.push("hooks"),
+        () => new Promise<void>(() => ran.push("stuck")),
+        async () => {
+          ran.push("failing")
+          throw new Error("lock gone")
+        },
+        async () => void ran.push("runtime"),
+      ],
+      (problem) => problems.push(problem),
+      50,
+    )
+    expect(ran).toEqual(["hooks", "stuck", "failing", "runtime"])
+    expect(problems).toEqual(["Stop 2 of 4 did not finish within 50 ms; the plugin moved on.", "Stop 3 of 4 failed: lock gone"])
+  })
+})
