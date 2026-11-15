@@ -141,7 +141,7 @@ Point the plugin at it in `opencode.json` (or rely on the default name):
 ```jsonc
 {
   "plugins": [{
-    "package": "github:joe-broadhead/opencode-boxd#v0.0.4",
+    "package": "github:joe-broadhead/opencode-boxd#v0.0.5",
     "options": { "snapshot": "opencode-golden" }
   }]
 }
