@@ -8,7 +8,7 @@ import { run } from "./run.js"
 type Transcript = { readonly info: { readonly id: string } }
 
 /**
- * The laptop's own `opencode session import`, which keeps the transcript's id on every 2.2.x release: a second import
+ * The laptop's own `opencode session import`, which keeps the transcript's id on every tested release: a second import
  * of the same transcript is a conflict, not a second session.
  */
 export function cliProver(bin = "opencode") {

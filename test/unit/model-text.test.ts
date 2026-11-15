@@ -37,7 +37,7 @@ const defaultStatus = (): Status =>
   ({
     version: "0.0.0",
     state: "connected",
-    host: { version: "2.2.6", range: ">=2.2.3 <2.3.0", tested: true },
+    host: { version: "2.2.6", range: ">=2.2.3 <2.4.0", tested: true },
     snapshot: "opencode-golden",
     snapshotPresent: true,
     signedIn: true,
