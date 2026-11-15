@@ -3,6 +3,14 @@
 All notable changes to this project are documented here. The format is [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.4] - 2026-11-15
+
+### Changed
+
+- Admits OpenCode 2.3: the host range is `>=2.2.3 <2.4.0`, tested on 2.2.3, 2.2.4, 2.2.5, 2.2.6, 2.2.7 and 2.3.0. CI now
+  installs a stock binary for every release in `TESTED_HOSTS`, read by `scripts/tested-hosts.mjs`, rather than a fixed
+  list, so the prover and pack stages run on 2.2.7 and 2.3.0. An out-of-range example is now 2.4.0.
+
 ## [0.0.3] - 2026-11-14
 
 ### Fixed

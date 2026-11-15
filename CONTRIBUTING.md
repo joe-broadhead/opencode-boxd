@@ -32,7 +32,7 @@ Only for development. Install the package into an OpenCode project from the fold
 { "plugins": ["./opencode-boxd"] }
 ```
 
-A published install is `opencode plugin add github:joe-broadhead/opencode-boxd#v0.0.3`.
+A published install is `opencode plugin add github:joe-broadhead/opencode-boxd#v0.0.4`.
 
 ## Rules
 
@@ -99,7 +99,7 @@ Before the approval, the workflow:
 - **verifies** on a fresh runner: the commit's identity, one parent on `master`, `package.json` exactly the parent's
   without the lifecycle scripts, only regular files in the allowed paths, no `package.json` under `dist/`, and a second,
   independent build of the parent (its own job) equal to the committed `dist/` byte for byte;
-- **installs** the release commit with `plugin add` on each stock OpenCode host (2.2.3 to 2.2.6);
+- **installs** the release commit with `plugin add` on each stock OpenCode host (2.2.3 to 2.2.7 and 2.3.0);
 - **packs** the commit before installing anything and keeps that tarball, then runs the pack stage against a copy;
 - **stages** the Release: verifies the attested native files, writes `SHA256SUMS` and the notes (the version's CHANGELOG
   section), and shows them all in the run summary with the sha256 of `SHA256SUMS`.
@@ -156,5 +156,5 @@ Each release has its own tag, and a Git install does not update by itself. To mo
 Or add the plugin to `opencode.json` instead, with the same spec:
 
 ```json
-{ "plugins": [{ "package": "github:joe-broadhead/opencode-boxd#v0.0.3" }] }
+{ "plugins": [{ "package": "github:joe-broadhead/opencode-boxd#v0.0.4" }] }
 ```

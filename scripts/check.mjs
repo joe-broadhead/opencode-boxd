@@ -29,7 +29,7 @@ const ASSET_EXPORTS = { "./icon.svg": "assets/icon.svg", "./icon-128.png": "asse
 // dist/ holds one self-contained bundle per export, and nothing else (scripts/build.mjs).
 const DIST = [...Object.values(EXPORTS).map((base) => `${base}.js`)].sort()
 // The tested OpenCode line. The host provides @opencode/plugin, OpenTUI and Solid, so the package declares no peers.
-const HOST_RANGE = ">=2.2.3 <2.3.0"
+const HOST_RANGE = ">=2.2.3 <2.4.0"
 const HOST_DEV_PIN = "2.2.3"
 const ABSENT_FIELDS = ["dependencies", "optionalDependencies", "bundleDependencies", "bundledDependencies", "peerDependencies", "peerDependenciesMeta", "engines", "overrides"]
 const LIFECYCLE_SCRIPTS = ["preinstall", "install", "postinstall", "preprepare", "prepare", "postprepare", "prepublish", "prepublishOnly", "prepack", "postpack", "publish", "postpublish"]

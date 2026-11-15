@@ -1,6 +1,6 @@
 {
   "name": "@joe-broadhead/opencode-boxd",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "private": true,
   "description": "Unofficial OpenCode plugin for boxd: run a session on a private boxd machine and keep the transcript on your laptop",
   "keywords": [
@@ -37,7 +37,7 @@
     "CHANGELOG.md"
   ],
   "opencode": {
-    "host": ">=2.2.3 <2.3.0",
+    "host": ">=2.2.3 <2.4.0",
     "icons": [
       {
         "src": "assets/icon.svg",

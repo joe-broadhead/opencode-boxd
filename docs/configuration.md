@@ -7,7 +7,7 @@ All options go in the plugin entry in `opencode.json`:
 ```jsonc
 {
   "plugins": [{
-    "package": "github:joe-broadhead/opencode-boxd#v0.0.3",
+    "package": "github:joe-broadhead/opencode-boxd#v0.0.4",
     "options": { "snapshot": "opencode-golden" }
   }]
 }
@@ -16,14 +16,14 @@ All options go in the plugin entry in `opencode.json`:
 | Option | Default | What it does |
 |---|---|---|
 | `snapshot` | `opencode-golden` | The golden snapshot every new machine boots from. A lowercase boxd snapshot name. Build it as [golden-image.md](golden-image.md) describes. |
-| `allowUntestedHost` | `false` | Run on an OpenCode outside `>=2.2.3 <2.3.0`. Status then says the host is untested. |
+| `allowUntestedHost` | `false` | Run on an OpenCode outside `>=2.2.3 <2.4.0`. Status then says the host is untested. |
 | `allowedRoots` | `[]` | Absolute laptop folders a work may read and write besides the project. A path outside both is refused. |
 | `access` | `"all"` | What the plugin's own tools may do without asking: `"all"` allows everything, `"ask-changes"` allows the reads and asks for every machine change, `"read-only"` allows the reads and denies every change. A later rule of the user's still wins. |
 
 An unknown option, a snapshot name boxd would refuse, or a non-boolean `allowUntestedHost` stops the plugin with
 `OPTIONS_INVALID`; OpenCode's plugin list shows why.
 
-Inside `>=2.2.3 <2.3.0` a release that was not tested, such as 2.2.99, still starts: status marks the version `untested`
+Inside `>=2.2.3 <2.4.0` a release that was not tested, such as 2.2.99, still starts: status marks the version `untested`
 and the next step is the same as on a tested release. Outside the range the plugin does not start unless
 `allowUntestedHost` is `true`.
 
@@ -108,7 +108,7 @@ permissions, followed by your top-level rules for boxd tools.
 
 ## Platform facts
 
-- **`opencode session import` keeps the transcript's id**, tested on 2.2.3, 2.2.4, 2.2.5 and 2.2.6. A second import of the same
+- **`opencode session import` keeps the transcript's id**, tested on 2.2.3, 2.2.4, 2.2.5, 2.2.6, 2.2.7 and 2.3.0. A second import of the same
   transcript answers `Session already exists` on stderr, exits 0, and prints no id; the plugin treats that as the
   transcript's own id. Tested against each stock release in `test/unit/prover.test.ts`.
 - **The prover runs `opencode session import --standalone`**, so the import writes the same store whether or not a
@@ -165,7 +165,7 @@ errors pass through unchanged. No error, log or status line contains a token, a 
 
 | Code | What it means |
 |---|---|
-| `HOST_UNTESTED` | OpenCode is outside `>=2.2.3 <2.3.0` and `allowUntestedHost` is not set. |
+| `HOST_UNTESTED` | OpenCode is outside `>=2.2.3 <2.4.0` and `allowUntestedHost` is not set. |
 | `OPTIONS_INVALID` | The plugin options are not valid. |
 | `STATUS_UNAVAILABLE` | The status RPC could not read the status. |
 | `SKILLS_INVALID` | The plugin's skill file is missing or malformed. |

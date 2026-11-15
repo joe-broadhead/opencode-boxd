@@ -73,13 +73,13 @@ describe("the README", () => {
   })
 
   test("states the supported range and every tested release", () => {
-    expect(README).toContain("OpenCode `>=2.2.3 <2.3.0`")
+    expect(README).toContain("OpenCode `>=2.2.3 <2.4.0`")
     expect(README).toContain(`tested on ${TESTED_HOSTS.slice(0, -1).join(", ")} and ${TESTED_HOSTS.at(-1)}`)
     expect(README).toContain("macOS or Linux")
   })
 
   test("installs from the GitHub release tag, not from a checkout or the registry", () => {
-    expect(README).toContain("opencode plugin add github:joe-broadhead/opencode-boxd#v0.0.3")
+    expect(README).toContain("opencode plugin add github:joe-broadhead/opencode-boxd#v0.0.4")
     expect(README).not.toMatch(/plugins.*\.\/opencode-boxd/)
     expect(README).not.toMatch(/npm run build/)
   })
@@ -160,7 +160,9 @@ describe("the docs set", () => {
     const documents = ["README.md", "AGENTS.md", "SECURITY.md", "docs/configuration.md", "CHANGELOG.md"]
     let found = 0
     for (const document of documents) {
-      const text = read(document).replace(/\s+/g, " ")
+      // The CHANGELOG's released sections are history: only the newest section has to name the current list.
+      const body = document === "CHANGELOG.md" ? read(document).split(/\n(?=## \[)/).slice(0, 2).join("\n") : read(document)
+      const text = body.replace(/\s+/g, " ")
       for (const phrase of ["tested on ", "runs on OpenCode ", "tested on OpenCode "]) {
         for (let at = text.indexOf(phrase); at !== -1; at = text.indexOf(phrase, at + 1)) {
           found += 1

@@ -62,7 +62,7 @@ first, and only then may the machine sleep, be imaged or be destroyed.
 
 ## Platform facts
 
-- `opencode session import` keeps the transcript's id on 2.2.3–2.2.6, and answers `Session already exists` (exit 0, no
+- `opencode session import` keeps the transcript's id on 2.2.3–2.2.7 and 2.3.0, and answers `Session already exists` (exit 0, no
   id) for an id already present. `test/unit/prover.test.ts` runs this against each stock binary.
 - The ledger writes atomically (a unique temp file, a rename) and serialises per work, so two tools in one script cannot
   lose each other's fields. `submit` stamps `lastSubmitAt` before the prompt, so a crash fails towards "stale".

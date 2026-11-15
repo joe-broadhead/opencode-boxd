@@ -24,27 +24,29 @@ describe("plugin options", () => {
 })
 
 describe("the host", () => {
-  test("supports 2.2.3 up to, not including, 2.3.0", () => {
-    expect(SUPPORTED_HOST).toBe(">=2.2.3 <2.3.0")
+  test("supports 2.2.3 up to, not including, 2.4.0", () => {
+    expect(SUPPORTED_HOST).toBe(">=2.2.3 <2.4.0")
     expect(isSupportedHost("2.2.3")).toBe(true)
     expect(isSupportedHost("2.2.6")).toBe(true)
     expect(isSupportedHost("2.2.9")).toBe(true)
-    expect(isSupportedHost("2.3.0")).toBe(false)
+    expect(isSupportedHost("2.3.0")).toBe(true)
+    expect(isSupportedHost("2.3.99")).toBe(true)
+    expect(isSupportedHost("2.4.0")).toBe(false)
     expect(isSupportedHost("2.2.2")).toBe(false)
     expect(isSupportedHost("2.2.6-dev.1")).toBe(false)
   })
 
-  test("the tested list holds every release the checks run on, 2.2.6 included", () => {
-    expect(TESTED_HOSTS).toEqual(["2.2.3", "2.2.4", "2.2.5", "2.2.6"])
-    expect(isTestedHost("2.2.6")).toBe(true)
-    expect(isTestedHost("2.2.7")).toBe(false)
+  test("the tested list holds every release the checks run on, 2.2.7 and 2.3.0 included", () => {
+    expect(TESTED_HOSTS).toEqual(["2.2.3", "2.2.4", "2.2.5", "2.2.6", "2.2.7", "2.3.0"])
+    expect(isTestedHost("2.3.0")).toBe(true)
+    expect(isTestedHost("2.2.8")).toBe(false)
   })
 
   test("starts inside the range, and outside it only with the opt-in", () => {
     expect(checkHost("2.2.4", false)).toEqual({ version: "2.2.4", range: SUPPORTED_HOST, tested: true })
-    expect(checkHost("2.2.7", false)).toEqual({ version: "2.2.7", range: SUPPORTED_HOST, tested: false })
-    expect(() => checkHost("2.3.0", false)).toThrow(/^HOST_UNTESTED: .*Next step: /)
-    expect(checkHost("2.3.0", true)).toMatchObject({ version: "2.3.0", tested: false })
+    expect(checkHost("2.2.8", false)).toEqual({ version: "2.2.8", range: SUPPORTED_HOST, tested: false })
+    expect(() => checkHost("2.4.0", false)).toThrow(/^HOST_UNTESTED: .*Next step: /)
+    expect(checkHost("2.4.0", true)).toMatchObject({ version: "2.4.0", tested: false })
     expect(checkHost("", true)).toMatchObject({ version: null, tested: false })
   })
 })

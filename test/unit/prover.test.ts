@@ -1,4 +1,4 @@
-// The prover against real stock OpenCode binaries: `session import` keeps the transcript's id on every 2.2.x release, so
+// The prover against real stock OpenCode binaries: `session import` keeps the transcript's id on every tested release, so
 // a second import of the same transcript is "Session already exists" (exit 0, no id) and the prover answers with the
 // transcript's own id instead of failing. This is the laptop-side fix, and the evidence for the host decision.
 import { describe, expect, test } from "bun:test"

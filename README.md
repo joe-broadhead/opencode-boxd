@@ -8,7 +8,7 @@ boxd is a trademark of Azin Tech Operating Company B.V.; this unofficial plugin 
 
 ## Requirements
 
-- OpenCode `>=2.2.3 <2.3.0`, tested on 2.2.3, 2.2.4, 2.2.5 and 2.2.6.
+- OpenCode `>=2.2.3 <2.4.0` (2.2.3 or a later 2.2 or 2.3 release), tested on 2.2.3, 2.2.4, 2.2.5, 2.2.6, 2.2.7 and 2.3.0.
 - The [boxd CLI](https://boxd.sh), signed in, on your `PATH`.
 - **First step: a golden image.** The stock boxd image ships OpenCode 1.19.5, which this plugin refuses, so build one
   image with the OpenCode version this laptop runs and a model credential it can reach:
@@ -20,17 +20,17 @@ boxd is a trademark of Azin Tech Operating Company B.V.; this unofficial plugin 
 ## Install
 
 ```sh
-opencode plugin add github:joe-broadhead/opencode-boxd#v0.0.3
+opencode plugin add github:joe-broadhead/opencode-boxd#v0.0.4
 ```
 
 Run `opencode reload`, or restart OpenCode, then run `/boxd-status`.
 
-Each release has its own tag, and a Git install does not update by itself. To move to a newer release, remove the old entry with `opencode plugin remove github:joe-broadhead/opencode-boxd#v0.0.2`, then add the new tag with `opencode plugin add github:joe-broadhead/opencode-boxd#v<version>`.
+Each release has its own tag, and a Git install does not update by itself. To move to a newer release, remove the old entry with `opencode plugin remove github:joe-broadhead/opencode-boxd#v0.0.3`, then add the new tag with `opencode plugin add github:joe-broadhead/opencode-boxd#v<version>`.
 
 Or add the plugin to `opencode.json` instead, with the same spec:
 
 ```json
-{ "plugins": [{ "package": "github:joe-broadhead/opencode-boxd#v0.0.3" }] }
+{ "plugins": [{ "package": "github:joe-broadhead/opencode-boxd#v0.0.4" }] }
 ```
 
 The install takes the GitHub release tag. Its commit carries the built `dist/`, so the install runs no build.
@@ -170,7 +170,7 @@ The snapshot is the one policy worth setting centrally: every member's machines 
 // /Library/Application Support/opencode/opencode.json on macOS
 {
   "plugins": [{
-    "package": "github:joe-broadhead/opencode-boxd#v0.0.3",
+    "package": "github:joe-broadhead/opencode-boxd#v0.0.4",
     "options": { "snapshot": "opencode-golden" }
   }]
 }
@@ -185,7 +185,7 @@ one next step).
 
 | Code | What to do |
 |---|---|
-| `HOST_UNTESTED` | Use OpenCode `>=2.2.3 <2.3.0`, or set `"allowUntestedHost": true` to run anyway. |
+| `HOST_UNTESTED` | Use OpenCode `>=2.2.3 <2.4.0`, or set `"allowUntestedHost": true` to run anyway. |
 | `OPTIONS_INVALID` | Fix the plugin options in `opencode.json`, then restart OpenCode. |
 | `STATUS_UNAVAILABLE` | Restart OpenCode, then run `/boxd-status` again. |
 | `SKILLS_INVALID` | Reinstall the plugin so its skill file is present, then restart OpenCode. |
@@ -245,6 +245,9 @@ works, tools, agents without the default rules, the OpenCode version and one nex
   laptop's is refused with `GUEST_VERSION`.
 - **Model keys.** A model provider can refuse a service-account key. The
   [golden image page](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/golden-image.md) says what to use.
+- **Stop does not end a boxd command already running.** The tools do not take OpenCode's stop signal (which 2.3
+  sends when you press Stop), so a stopped call's `boxd` commands run to their end or to their own timeout, at most two
+  minutes each, and a multi-step call such as `boxd_harvest` may finish its steps.
 - **Sign-in is boxd's.** The plugin runs the boxd CLI you are signed in to, and never runs `boxd auth login` for you.
 - **Guest credentials are boxd's too.** A guest reads its model key and any push token from `boxd env` at boot; the
   plugin never reads or renews them. A token that expires, such as a one-hour GitHub App token, stops every guest that
@@ -256,7 +259,7 @@ works, tools, agents without the default rules, the OpenCode version and one nex
 ## Uninstall
 
 ```sh
-opencode plugin remove github:joe-broadhead/opencode-boxd#v0.0.3
+opencode plugin remove github:joe-broadhead/opencode-boxd#v0.0.4
 ```
 
 The ledger is yours to keep or delete. Machines are boxd's: `boxd machine remove oc-<work id> -y` destroys one.
