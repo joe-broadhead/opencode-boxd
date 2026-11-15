@@ -54,7 +54,7 @@ const defaultStatus = (): Status =>
     orphans: [],
     warned: [],
     failedRuns: [],
-    tools: 9,
+    tools: 12,
     unknownCount: 1,
     unknownTools: ["shiny_new_tool"],
     unguardedAgents: [],
@@ -77,7 +77,7 @@ describe("the model-facing text at access all", () => {
   })
 
   test("the namespace says what the default does, and that access restricts it", () => {
-    expect(NAMESPACE_DESCRIPTION).toContain("with all (the default) ensure, submit, resume, sleep, image and drop run without a prompt")
+    expect(NAMESPACE_DESCRIPTION).toContain("with all (the default) ensure, submit, harvest, sleep, resume, reassign, golden, exec and drop run without a prompt")
     expect(NAMESPACE_DESCRIPTION).toContain("with ask-changes they ask")
     expect(NAMESPACE_DESCRIPTION).toContain("with read-only they are denied")
   })

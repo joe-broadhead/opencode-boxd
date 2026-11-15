@@ -1,6 +1,5 @@
 // An embedded OpenCode host from the public @opencode/sdk, isolated in the temp root from ./isolate.js. The boxd plugin
-// is built with its internal seam: the fake boxd CLI, the fake guest server behind it, a fake prover and a ledger in
-// the temp root. A probe plugin, loaded after it, lends its context to the tests.
+// is built with its internal seam: the fake boxd CLI, the fake guest server behind it, and a ledger in the temp root. A probe plugin, loaded after it, lends its context to the tests.
 import { HOST_SDK_DIR, ROOT as root } from "./isolate.js"
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
@@ -87,21 +86,6 @@ export function startFakeBoxd(guest: FakeGuest, guestDirectory: string, version 
   }
 }
 
-/** Records every import the plugin proves, so a test sees the order and the parent mapping without a real OpenCode. */
-export function fakeProver() {
-  const calls: Array<{ remoteId: string; parentID?: string; directory: string }> = []
-  return {
-    calls,
-    prover: {
-      importTransfer: async (transfer: { info: { id: string; parentID?: string } }, directory: string) => {
-        calls.push({ remoteId: transfer.info.id, ...(transfer.info.parentID ? { parentID: transfer.info.parentID } : {}), directory })
-        // The laptop keeps the transcript's id, as `opencode session import` does on every tested release.
-        return { id: transfer.info.id }
-      },
-    },
-  }
-}
-
 export interface HostInput {
   /** Plugin options, as a user writes them in opencode.json. */
   readonly options?: Record<string, unknown>
@@ -135,9 +119,8 @@ export async function startHost(input: HostInput = {}) {
   const guest = startFakeGuest()
   const work = workDirectory(`host-${hosts}`)
   const boxd = startFakeBoxd(guest, work, input.guestVersion ?? HOST_VERSION)
-  const prover = fakeProver()
   const model = input.model ? startMockModel() : undefined
-  const plugin = createBoxdPlugin({ boxdBin: boxd.bin, ledger: join(base, "ledger"), prover: prover.prover })
+  const plugin = createBoxdPlugin({ boxdBin: boxd.bin, ledger: join(base, "ledger") })
   const withOptions = Plugin.define({ id: plugin.id, setup: (ctx) => plugin.setup({ ...ctx, options: input.options ?? {} }) })
   const probes = new Map<string, Plugin.Context>()
   const probe = Plugin.define({
@@ -178,7 +161,6 @@ export async function startHost(input: HostInput = {}) {
     location,
     guest,
     boxd,
-    imports: prover.calls,
     model,
     probe: () => {
       const ctx = probes.get(location.directory)

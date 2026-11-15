@@ -3,6 +3,44 @@
 All notable changes to this project are documented here. The format is [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Breaking
+
+v0.1.0 redesigns the plugin and breaks compatibility on purpose: the tools, the result shapes, the ledger format, the
+options and the guest helper all change. Works that ran on v0.0.x are imported, not stranded.
+[docs/v1-design.md](docs/v1-design.md) is the design.
+
+- Tools: `boxd_image` is replaced by `boxd_golden`; `boxd_read`, `boxd_exec` and `boxd_reassign` are new; every
+  result has `state`, and list forms return `{ state, counts, results }`.
+- `proof` is now `saved` (`fresh`, `stale`, `none`); `NOT_PROVEN` is `NOT_SAVED`; `SNAPSHOT_MISSING` is
+  `GOLDEN_MISSING`; `SNAPSHOT_EXISTS`, `PARENT_MISSING` and `GUEST_RUN_FAILED` are gone.
+- `boxd_submit`'s `queued` is replaced by `delivery` (`steer`, `queue`, `started`), and `mode` chooses it.
+- `vcpu` is now `size`; `wait` is now `"ready" | "created" | "none"` and defaults to `"ready"` (`"created"` for a list
+  of more than 50).
+- The ledger moves to `~/.local/share/opencode-boxd/v1/`; v0 records are imported once, all or nothing, and left
+  untouched apart from a `README-MOVED-TO-v1` note. **Going back to v0.0.6 is safe only before v0.1.0's first
+  change** (a submit, harvest, drop or reassign): after that, v0's drop could accept a stale proof.
+- Every change acts on the machine id the ledger recorded; a name that points at another machine is refused.
+- `boxd_golden` never saves a work's machine; `boxd_image`'s path is gone.
+- Notices go to the calling session on the model path only; a script names a session with `notify`.
+- The guest helper lives in `~/.opencode-boxd/` on the machine, not `/tmp`.
+- The option `snapshot` is now `goldenBase`; images are built by the plugin and named by OpenCode version and size.
+- **Model credentials are never baked into an image.** A base that holds `auth.json` is refused
+  (`GOLDEN_HAS_CREDENTIAL`), so v0's fallback of `opencode auth login` on the image builder is gone. Give works a key
+  as a sealed, host-bound `boxd env` secret, or sign in on one work's own machine after `boxd connect`.
+- Harvest never overwrites the last good export until the new one is verified.
+- **Cost and cleanup.** Every new work machine is created with auto-suspend off, auto-hibernate at 2 h and
+  `idle.ignore-outbound` off, at every `access` level. At `access: "all"` the plugin now harvests a finished work
+  and then hibernates it after 10 idle minutes, orphans included; at "ask-changes" and "read-only" only with
+  `automation: "on"`, which is the person's consent. It never drops anything by itself. `boxd_status` adds `cost` and
+  `cleanup`; `boxd_sleep`, `boxd_harvest` and `boxd_drop` take `select`; `/boxd-cleanup` is new and confirms each
+  action with a permission prompt only a person answers. A coordinator session gets one short fleet line at the end of
+  a request when the fleet changed; the system prompt is never changed, so the prompt cache holds. The new options are
+  `automation`, `leaseDays` and `budget`; the last two are off by default.
+- Fixed: a second harvest now replaces the laptop's copy of the transcript (F1); Stop now ends a tool call and its
+  processes (F2).
+
 ## [0.0.6] - 2026-11-15
 
 ### Added

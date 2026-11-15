@@ -79,7 +79,7 @@ describe("the status model", () => {
 
   test("counts a tool this version does not know, and names only plain names", () => {
     const status = buildStatus(facts({ tools: [...TOOLS.map((tool) => tool.id), "boxd_from_the_future", "bad name"] }))
-    expect(status.tools).toBe(11)
+    expect(status.tools).toBe(TOOLS.length + 2)
     expect(status.unknownCount).toBe(2)
     expect(status.unknownTools).toEqual(["boxd_from_the_future"])
   })
@@ -93,7 +93,7 @@ describe("the status model", () => {
     expect(labels).toEqual(["boxd CLI", "Connection", "Access", "Snapshot", "Guest", "Works", "Tools", "Agents without default rules", "OpenCode", "Next step"])
     expect(text.match(/- Next step:/g)).toHaveLength(1)
     expect(text).toContain("- Snapshot: opencode-golden")
-    expect(text).toContain("the 7 machine changes")
+    expect(text).toContain("the 9 machine changes")
   })
 
   test("the boxd CLI row comes first: signed in when the CLI answered, and the sign-in is the first next step when not", () => {

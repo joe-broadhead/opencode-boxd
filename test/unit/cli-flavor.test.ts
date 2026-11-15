@@ -1,11 +1,11 @@
 // The boxd CLI that runs inside a boxd machine takes `--vm <name>` where the laptop CLI takes the machine as an
 // argument. The plugin refuses it up front, from `--help`, instead of failing command by command and ending as
-// AWAKE_UNBOUND. The fakes below log every call, so a test sees that nothing but `--help` ran.
+// a refusal it cannot explain. The fakes below log every call, so a test sees that nothing but `--help` ran.
 import { afterAll, describe, expect, test } from "bun:test"
 import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { cliBoxd } from "../../src/cli-boxd.js"
+import { assertLaptopCli } from "../../src/cli-flavor.js"
 import { BoxdError } from "../../src/errors.js"
 
 const dir = mkdtempSync(join(realpathSync(tmpdir()), "boxd-flavor-"))
@@ -52,9 +52,8 @@ Commands:
   machine    Create, inspect, and control machines [aliases: m]
   snapshots  Save machine state and spin up fast copies from it
 `
-const MACHINE = JSON.stringify({ name: "oc-demo", status: "running", sharing: "private", isolated: "no" })
 
-/** A fake CLI that logs its arguments to `<name>.log`, answers `--help` as `help` says, and a machine read with MACHINE. */
+/** A fake CLI that logs its arguments to `<name>.log` and answers `--help` as `help` says. */
 function fakeCli(name: string, help: "in-vm" | "laptop" | "fails" | "hangs" | "region-only" | "local-only"): { bin: string; calls: () => string[] } {
   const bin = join(dir, name)
   const log = join(dir, `${name}.log`)
@@ -68,7 +67,6 @@ case "$1" in
     ${help === "fails" ? 'echo "error: the boxd API answered 503 Service Unavailable" >&2; exit 1' : help === "hangs" ? "sleep 30" : `cat <<'EOF_HELP'\n${text}EOF_HELP`}
     exit 0 ;;
 esac
-echo '${MACHINE}'
 `,
   )
   chmodSync(bin, 0o755)
@@ -82,43 +80,40 @@ const failure = (promise: Promise<unknown>) =>
   )
 
 describe("the boxd CLI the plugin finds on the PATH", () => {
-  test("the in-VM CLI is refused as BOXD_MISSING, naming the laptop CLI, before any command that changes a machine", async () => {
+  test("the in-VM CLI is refused as BOXD_MISSING, naming the laptop CLI, and nothing but --help runs", async () => {
     const { bin, calls } = fakeCli("in-vm", "in-vm")
-    const port = cliBoxd(bin)
-    for (const attempt of [() => port.get("oc-demo"), () => port.list(), () => port.holdAwake("oc-demo"), () => port.wake("oc-demo"), () => port.saveSnapshot("oc-demo", "image")]) {
-      const error = await failure(attempt())
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const error = await failure(assertLaptopCli(bin))
       expect(error).toBeInstanceOf(BoxdError)
       expect((error as BoxdError).code).toBe("BOXD_MISSING")
       expect((error as BoxdError).what).toBe(
         "The boxd CLI on the PATH is the one that runs inside a boxd machine. This plugin drives remote machines from the laptop's boxd CLI, and the in-VM CLI is not supported.",
       )
     }
-    // Nothing ran but the read-only help.
     expect(new Set(calls())).toEqual(new Set(["--help"]))
   })
 
   test("the laptop CLI passes, and its flavour is read once", async () => {
     const { bin, calls } = fakeCli("laptop", "laptop")
-    const port = cliBoxd(bin)
-    expect((await port.get("oc-demo")).status).toBe("running")
-    expect((await port.get("oc-demo")).status).toBe("running")
+    await assertLaptopCli(bin)
+    await assertLaptopCli(bin)
     expect(calls().filter((line) => line === "--help")).toHaveLength(1)
   })
 
   test("a help with only one of the in-VM phrases is not refused, either way round", async () => {
     for (const help of ["region-only", "local-only"] as const) {
       const { bin } = fakeCli(help, help)
-      expect((await cliBoxd(bin).get("oc-demo")).status).toBe("running")
+      expect(await failure(assertLaptopCli(bin))).toBeUndefined()
     }
   })
 
   test("a CLI that cannot answer --help is not refused: the command that follows reports its own result", async () => {
     const { bin } = fakeCli("broken-help", "fails")
-    expect((await cliBoxd(bin).get("oc-demo")).status).toBe("running")
+    expect(await failure(assertLaptopCli(bin))).toBeUndefined()
   })
 
   test("a binary that is not there stays BOXD_MISSING for its own reason", async () => {
-    const error = await failure(cliBoxd(join(dir, "no-such-boxd")).get("oc-demo"))
+    const error = await failure(assertLaptopCli(join(dir, "no-such-boxd")))
     expect((error as BoxdError).code).toBe("BOXD_MISSING")
     expect((error as BoxdError).what).toContain("could not be run")
   })

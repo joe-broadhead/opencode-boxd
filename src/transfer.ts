@@ -39,7 +39,7 @@ export function order(transfers: readonly Transfer[]): Transfer[] {
     for (const transfer of ready.sort((a, b) => a.info.id.localeCompare(b.info.id))) {
       const parent = transfer.info.parentID
       if (parent && !byId.has(parent)) {
-        throw boxdError("PARENT_MISSING", `Session ${transfer.info.id} names parent ${parent}, which was not in the export.`)
+        throw boxdError("EXPORT_INVALID", `Session ${transfer.info.id} names parent ${parent}, which was not in the export.`)
       }
       pending.delete(transfer.info.id)
       ordered.push(transfer)
@@ -54,7 +54,7 @@ export function rewrite(transfer: Transfer, imported: ReadonlyMap<string, string
   const parent = copy.info.parentID
   if (!parent) return copy
   const mapped = imported.get(parent)
-  if (!mapped) throw boxdError("PARENT_MISSING", `Cannot import ${copy.info.id} until parent ${parent} has an id on the destination.`)
+  if (!mapped) throw boxdError("EXPORT_INVALID", `Cannot import ${copy.info.id} until parent ${parent} has an id on the destination.`)
   copy.info.parentID = mapped
   return copy
 }

@@ -3,16 +3,40 @@ import { COMMAND_STEM, DISPLAY_NAME, PLUGIN_ID, TESTED_HOSTS } from "./constants
 import { isSupportedHost, type HostCheck } from "./host-version.js"
 import { defaultRules, unguardedAgents, type Access, type Rule } from "./permissions.js"
 import { cut, shortReason } from "./redact.js"
-import { failureText, nextStepFor, type RunOutcome } from "./outcome.js"
+import { failureText, nextStepFor } from "./outcome.js"
+import type { MachineStatus, RunOutcome, SecretInfo } from "./ports.js"
 import { TOOLS } from "./tools.js"
-import type { FleetStatus, WorkSummary } from "./fleet.js"
 import { VERSION } from "./version.js"
 
 export { shortReason }
 
 /** The status labels (S9) in machine form; the report shows `failed` and `connected` as written. */
 type State = "connected" | "failed"
-export type { WorkSummary }
+
+/** One work as the v0 status model reports it. Package D replaces this model with the v1 fleet view. */
+export interface WorkSummary {
+  readonly workId: string
+  readonly machine: string
+  readonly sessionId: string | null
+  readonly proof: "fresh" | "stale" | "missing"
+  readonly dirty: boolean
+  readonly machineStatus: MachineStatus | null
+  readonly warnings: readonly string[]
+  readonly outcome: RunOutcome | null
+  readonly error?: string
+  readonly asleepBy?: "boxd_sleep" | "idle_or_cli"
+  readonly sleptAt?: string
+}
+
+/** What the ledger read gives status. */
+export interface FleetStatus {
+  readonly snapshot: string
+  readonly snapshotPresent: boolean | null
+  readonly works: readonly WorkSummary[]
+  readonly orphans: readonly string[]
+  readonly cli: { readonly signedIn: true } | { readonly signedIn: false; readonly reason: string }
+  readonly credentials?: { readonly secrets: readonly SecretInfo[] } | { readonly error: string }
+}
 
 /** What status is built from. The TUI fills what it can see; fields it cannot see stay undefined. */
 export interface StatusFacts {
@@ -90,7 +114,7 @@ const LISTED_UNKNOWN = 20
 // A tool name comes from the host; list only plain names.
 const SAFE_NAME = /^[a-z][a-z0-9_]{0,63}$/
 const STATUS_LIMIT = 160
-const CLASS_OF = new Map(TOOLS.map((tool) => [tool.id, tool.class]))
+const CLASS_OF = new Map<string, string>(TOOLS.map((tool) => [tool.id, tool.class]))
 const RULES_NOT_ADDED = "RULES_NOT_ADDED:"
 
 export function buildStatus(facts: StatusFacts): Status {

@@ -55,7 +55,7 @@ for (const version of TESTED_HOSTS) {
         const id = `ses_prover${version.replaceAll(".", "")}`
         const prover = cliProver(run!)
         expect(await prover.importTransfer(transcript(id, work), work)).toEqual({ id })
-        // The second import is a conflict, not a new session: the prover must report the same id, not NOT_PROVEN.
+        // The second import is a conflict, not a new session: the prover must report the same id, not IMPORT_FAILED.
         expect(await prover.importTransfer(transcript(id, work), work)).toEqual({ id })
         writeFileSync(join(root, "marker"), "proven")
       } finally {

@@ -19,6 +19,7 @@ const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.ur
   jelly: {
     title: string
     summary: string
+    cost: string
     icon: string
     tools: Tool[]
     skills: string[]
@@ -45,9 +46,21 @@ describe("the jelly declaration", () => {
     expect(docProblems(ROOT)).toEqual([])
   })
 
+  test("equals the registry: the twelve tools in its order, each with its true readOnly (design §3.14)", () => {
+    expect(jelly.tools.map((tool) => [tool.permission, tool.readOnly])).toEqual(TOOLS.map((tool) => [tool.id, tool.readOnly]))
+    expect(jelly.tools).toHaveLength(12)
+    expect(jelly.tools.filter((tool) => tool.readOnly).map((tool) => tool.permission)).toEqual(["boxd_status", "boxd_job", "boxd_read"])
+  })
+
+  test("the cost line says what boxd bills, the golden builder, and when automation hibernates (design §3.14, §C.3)", () => {
+    expect(jelly.cost).toContain("boxd bills each machine the plugin makes")
+    expect(jelly.cost).toContain("boxd_golden and boxd_ensure may make a short-lived builder.")
+    expect(jelly.cost).toContain('At access Allowed, finished works are harvested and hibernated after 10 idle minutes; else only with automation "on".')
+  })
+
   test("declares every known tool once, with the effect the default rules give it", () => {
     for (const tool of TOOLS) {
-      expect(byPermission.get(tool.id)).toMatchObject({ effect: "allow", readOnly: tool.class === "read" })
+      expect(byPermission.get(tool.id)).toMatchObject({ effect: "allow", readOnly: tool.readOnly })
     }
     expect(jelly.tools).toHaveLength(TOOLS.length)
     expect([...byPermission.keys()].sort()).toEqual(TOOLS.map((tool) => tool.id).sort())

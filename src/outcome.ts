@@ -3,9 +3,7 @@
 // already holds: never from a model call, and never by asking the guest to run anything.
 import { shortReason } from "./redact.js"
 import { CODES } from "./errors.js"
-
-/** The three states the plugin reports. */
-export type RunOutcome = "completed" | "failed" | "aborted"
+import type { RunOutcome } from "./ports.js"
 
 export interface GuestRun {
   readonly outcome: RunOutcome | null
@@ -72,13 +70,13 @@ export function isCredentialFailure(run: GuestRun): boolean {
  * The code a failed run reports, from the one table: a credential failure has its own next step, because the image
  * needs a working sign-in before another prompt can succeed.
  */
-export function failureCode(run: GuestRun): "GUEST_AUTH_FAILED" | "GUEST_RUN_FAILED" {
-  return isCredentialFailure(run) ? "GUEST_AUTH_FAILED" : "GUEST_RUN_FAILED"
+export function failureCode(run: GuestRun): "GUEST_AUTH_FAILED" | "RUN_FAILED" {
+  return isCredentialFailure(run) ? "GUEST_AUTH_FAILED" : "RUN_FAILED"
 }
 
 /** The one next step for a failed run, as the code's next step and the harvest's. */
 export function nextStepFor(run: GuestRun): string {
-  return CODES[failureCode(run)]
+  return CODES[failureCode(run)].next
 }
 
 /** The sentence a failed run puts in front of a status or a tool result. */

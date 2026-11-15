@@ -41,7 +41,7 @@ export const PLUGIN_ID = BOXD_PLUGIN_ID
 
 /**
  * boxd has no MCP server, so no method comes from one. Every method is plugin-owned and built where it has the plugin's
- * context (its own `permission.assert`), in `ownedMethods`: the two reads and the seven machine changes, each with its
+ * context (its own `permission.assert`), in `ownedMethods`: the three reads and the nine changes, each with its
  * class. That table is the one list the tools, `describe`, status and the tests share; this export is the block's
  * declaration that nothing is external.
  */

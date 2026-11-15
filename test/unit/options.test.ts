@@ -1,25 +1,97 @@
 import { describe, expect, test } from "bun:test"
-import { parseOptions } from "../../src/options.js"
+import { DEFAULT_OPTIONS, parseOptions, type Options } from "../../src/options.js"
 import { isSupportedHost, isTestedHost, checkHost, checkGuest, parseVersion } from "../../src/host-version.js"
 import { SUPPORTED_HOST, TESTED_HOSTS } from "../../src/constants.js"
 
+const DEFAULTS: Options = {
+  access: "all",
+  allowedRoots: [],
+  allowUntestedHost: false,
+  region: "auto",
+  keepFree: { fra: 0, nyc: 0 },
+  size: "2x8",
+  goldenPrefix: "oc-golden",
+  goldenBase: "stock",
+  buildGolden: "auto",
+  notices: "wake",
+  autoHibernateMinutes: 120,
+  automation: "auto",
+  autoSleepMinutes: 10,
+  orphanHours: 12,
+  leaseDays: 0,
+  costContext: true,
+  idleCheck: true,
+}
+
 describe("plugin options", () => {
-  test("defaults to the golden snapshot, a tested host and access all", () => {
-    expect(parseOptions(undefined)).toEqual({ snapshot: "opencode-golden", allowUntestedHost: false, access: "all", allowedRoots: [] })
-    expect(parseOptions({})).toEqual({ snapshot: "opencode-golden", allowUntestedHost: false, access: "all", allowedRoots: [] })
+  test("every option is optional, with the design's defaults", () => {
+    expect(parseOptions(undefined)).toEqual(DEFAULTS)
+    expect(parseOptions({})).toEqual(DEFAULTS)
+    expect(DEFAULT_OPTIONS).toEqual(DEFAULTS)
   })
 
-  test("takes a snapshot name, the opt-in and each access value", () => {
-    expect(parseOptions({ snapshot: "opencode-next", allowUntestedHost: true })).toEqual({ snapshot: "opencode-next", allowUntestedHost: true, access: "all", allowedRoots: [] })
+  test("takes every documented value", () => {
     for (const access of ["all", "ask-changes", "read-only"]) expect(parseOptions({ access })).toMatchObject({ access })
-    expect(parseOptions({ allowedRoots: ["/srv/work"] })).toMatchObject({ allowedRoots: ["/srv/work"] })
-    expect(() => parseOptions({ allowedRoots: ["relative/path"] })).toThrow(/^OPTIONS_INVALID: /)
+    for (const region of ["auto", "fra", "nyc"]) expect(parseOptions({ region })).toMatchObject({ region })
+    for (const size of ["1x4", "2x8", "4x16", "8x32"]) expect(parseOptions({ size })).toMatchObject({ size })
+    for (const notices of ["wake", "queue", "off"]) expect(parseOptions({ notices })).toMatchObject({ notices })
+    for (const buildGolden of ["auto", "never"]) expect(parseOptions({ buildGolden })).toMatchObject({ buildGolden })
+    expect(parseOptions({ keepFree: { fra: 4 } })).toMatchObject({ keepFree: { fra: 4, nyc: 0 } })
+    expect(parseOptions({ git: { name: "Review Bot", email: "bot@example.invalid" } })).toMatchObject({ git: { name: "Review Bot", email: "bot@example.invalid" } })
+    expect(parseOptions({ goldenPrefix: "team-golden", goldenBase: "opencode-golden", goldenSetup: "/srv/setup.sh" })).toMatchObject({
+      goldenPrefix: "team-golden",
+      goldenBase: "opencode-golden",
+      goldenSetup: "/srv/setup.sh",
+    })
+    expect(parseOptions({ allowedRoots: ["/srv/work"], allowUntestedHost: true })).toMatchObject({ allowedRoots: ["/srv/work"], allowUntestedHost: true })
+    for (const automation of ["auto", "on", "off"]) expect(parseOptions({ automation })).toMatchObject({ automation })
+    expect(parseOptions({ autoHibernateMinutes: 30, autoSleepMinutes: 0, orphanHours: 1, leaseDays: 3 })).toMatchObject({ autoHibernateMinutes: 30, autoSleepMinutes: 0, orphanHours: 1, leaseDays: 3 })
+    expect(parseOptions({ budget: { daily: 50, action: "refuse" } })).toMatchObject({ budget: { daily: 50, action: "refuse" } })
+    expect(parseOptions({ costContext: false, idleCheck: false })).toMatchObject({ costContext: false, idleCheck: false })
   })
 
-  test("refuses an unknown option, a bad snapshot name and a non-boolean, each as OPTIONS_INVALID", () => {
-    for (const raw of [{ snapshott: "x" }, { snapshot: "Not A Snapshot" }, { snapshot: "x".repeat(80) }, { allowUntestedHost: "yes" }, { access: "write" }, [], "x"]) {
-      expect(() => parseOptions(raw)).toThrow(/^OPTIONS_INVALID: .*Next step: /)
-    }
+  test("refuses every value outside its rule, each as OPTIONS_INVALID with a next step", () => {
+    const bad = [
+      { regionn: "fra" },
+      { region: "ams" },
+      { size: "16x64" },
+      { size: 4 },
+      { keepFree: { ams: 1 } },
+      { keepFree: { fra: -1 } },
+      { keepFree: { fra: 1.5 } },
+      { keepFree: 3 },
+      { git: { name: "x" } },
+      { git: { name: "", email: "a@b.c" } },
+      { git: { name: "x", email: "not an email" } },
+      { goldenPrefix: "Not A Prefix" },
+      { goldenPrefix: "x".repeat(40) },
+      { goldenBase: "Not A Snapshot" },
+      { goldenSetup: "relative/setup.sh" },
+      { buildGolden: "always" },
+      { notices: "loud" },
+      { autoHibernateMinutes: 29 },
+      { autoHibernateMinutes: 1441 },
+      { automation: "yes" },
+      { autoSleepMinutes: -1 },
+      { orphanHours: 0 },
+      { leaseDays: 1.5 },
+      { budget: { daily: 50 } },
+      { budget: { daily: 0, action: "warn" } },
+      { budget: { daily: 50, action: "block" } },
+      { budget: { dailyUsd: 50, action: "warn" } },
+      { costContext: "no" },
+      { idleCheck: 1 },
+      { allowUntestedHost: "yes" },
+      { access: "write" },
+      { allowedRoots: ["relative/path"] },
+      [],
+      "x",
+    ]
+    for (const raw of bad) expect(() => parseOptions(raw)).toThrow(/^OPTIONS_INVALID: .*Next step: /)
+  })
+
+  test("the removed snapshot option names its replacement", () => {
+    expect(() => parseOptions({ snapshot: "opencode-golden" })).toThrow(/"snapshot" is now "goldenBase"/)
   })
 })
 

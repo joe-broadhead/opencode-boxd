@@ -1,6 +1,6 @@
 // The Code Mode path on the stock host: a model turn runs a program through the host's `execute` tool, which is how a
-// model reaches a plugin's tools. A read runs, an inner write asks and is refused when declined, and an unknown method
-// is denied. The tools RPC path is `boxd.test.ts`; this file is the other half of that proof.
+// model reaches a plugin's tools. A read and a change run by default, a change asks under an agent that asks and runs
+// nothing when declined, and an unknown method is denied. The tools RPC path is `boxd.test.ts`; this file is the other half of that proof.
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { startHost, until } from "./harness.js"
 
@@ -23,24 +23,20 @@ async function code(host: Awaited<ReturnType<typeof startHost>>, program: string
 }
 
 describe("the Code Mode path", () => {
-  test("a read runs inside a program, and a change runs by default but not under an agent that asks", async () => {
+  test("a read and a change run inside a program by default, and a change asks under an agent that asks", async () => {
     const host = await startHost({ model: true })
     try {
-      const before = host.boxd.calls().length
-
-      const read = await code(host, "const r = await tools.boxd.status({}); return JSON.stringify(r)", '\"snapshotPresent\"')
+      const read = await code(host, "const r = await tools.boxd.status({}); return JSON.stringify(r)", "NOT_IMPLEMENTED")
       expect(read.text).toContain("after-tool:")
-      expect(host.boxd.calls().slice(before).filter((line) => line.startsWith("machine new"))).toEqual([])
-
-      // A change is allowed by default too, so the program creates the machine with no prompt.
-      const wrote = await code(host, `return await tools.boxd.ensure({ workId: "review-api", directory: ${JSON.stringify(host.location.directory)} })`, "oc-review-api")
-      expect(wrote.text).toContain("after-tool:")
-      expect(host.boxd.calls().slice(before).filter((line) => line.startsWith("machine new oc-review-api")).length).toBe(1)
       expect(await host.probe().permission.list({ sessionID: read.sessionID })).toEqual([])
+
+      // A change is allowed by default too, so the program reaches the tool with no prompt.
+      const wrote = await code(host, `const r = await tools.boxd.ensure({ workId: "review-api" }); return "ensure:" + r.error`, "ensure:NOT_IMPLEMENTED")
+      expect(wrote.text).toContain("after-tool:")
+      expect(await host.probe().permission.list({ sessionID: wrote.sessionID })).toEqual([])
 
       // An agent that asks for the tool still asks, and a decline runs nothing.
       const asking = await host.client.session.create({ location: { directory: host.location.directory }, agent: "build", permissions: [{ action: "boxd_drop", resource: "*", effect: "ask" }] })
-      const created = host.boxd.calls().length
       await host.client.session.prompt({
         sessionID: asking.id,
         text: `[[mock:tool:execute:${JSON.stringify({ code: 'return await tools.boxd.drop({ workId: "review-api" })' })}]]`,
@@ -48,8 +44,7 @@ describe("the Code Mode path", () => {
       const question = await until("the drop asks", async () => (await host.probe().permission.list({ sessionID: asking.id })).find((entry) => entry.action === "boxd_drop"), 30_000)
       await host.probe().permission.reply({ sessionID: asking.id, requestID: question.id, decision: "reject", message: "not now" })
       await until("the turn ends", async () => (await host.client.session.get({ sessionID: asking.id })).outcome !== undefined, 30_000)
-      expect(host.boxd.calls().slice(created)).toEqual([])
-      expect(host.boxd.machines()["oc-review-api"]?.status).not.toBe("destroyed")
+      expect(host.boxd.calls()).toEqual([])
     } finally {
       await host.close()
     }

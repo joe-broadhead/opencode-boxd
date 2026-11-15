@@ -23,10 +23,10 @@ export function cliProver(bin = "opencode") {
         const text = `${result.stdout}\n${result.stderr}`
         // Stock 2.2.x prints this on stderr and exits 0, with no id in the message, because the id already exists.
         if (result.code === 0 && /Session already exists/i.test(text)) return { id: transfer.info.id }
-        if (result.code !== 0) throw boxdError("NOT_PROVEN", `The laptop's import failed: ${firstLine(text)}.`)
+        if (result.code !== 0) throw boxdError("IMPORT_FAILED", `The laptop's import failed: ${firstLine(text)}.`)
         // Session ids are `ses_...`; a bare `/ses[a-z]+/` would also match the word "session" in the CLI's own message.
         const id = /ses_[A-Za-z0-9_-]+/.exec(text)?.[0]
-        if (!id) throw boxdError("NOT_PROVEN", "The laptop's import printed no session id.")
+        if (!id) throw boxdError("IMPORT_FAILED", "The laptop's import printed no session id.")
         return { id }
       } finally {
         await rm(dir, { recursive: true, force: true })
