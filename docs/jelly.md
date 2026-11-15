@@ -13,6 +13,10 @@ what a Jelly may call.
   `boxd auth login`, and Jelly cannot show that sign-in on the card. `/boxd-status` shows it as its first row, **boxd
   CLI**, with `boxd auth login` as the next step when the CLI does not answer.
 - **`icon`** — `assets/icon.svg`, boxd's own mark: boxd.sh's `favicon.svg`, unchanged, on a rounded tile in boxd.sh's page colour #0a0c12 (`opencode.vendor.mark` is `true`).
+- **`cost`** — the line Jelly shows on the plugin's review before it installs, in the plugin's own words, saying what it
+  costs with boxd: "boxd bills your boxd account or organisation for each machine the plugin creates: compute and disk
+  while it runs, disk only while it hibernates, until boxd_drop destroys it. An idle machine hibernates, and boxd_job
+  never wakes one." It changes nothing Jelly allows.
 - **`contributes`** — one setting, `access`, the option of the same name, as a choice of three: **Allowed** (`all`, the
   default), **Ask before changes** (`ask-changes`) and **Read only** (`read-only`), with Jelly's own line for each.
   Jelly draws it as a choice and saves only one of the three; a Jelly that does not know declared choices yet refuses

@@ -72,6 +72,7 @@
     "title": "boxd",
     "summary": "Run an OpenCode session on a private boxd machine and keep the transcript on your laptop.",
     "icon": "assets/icon.svg",
+    "cost": "boxd bills your boxd account or organisation for each machine the plugin creates: compute and disk while it runs, disk only while it hibernates, until boxd_drop destroys it. An idle machine hibernates, and boxd_job never wakes one.",
     "tools": [
       {
         "name": "boxd.status",
