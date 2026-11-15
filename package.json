@@ -1,6 +1,6 @@
 {
   "name": "@joe-broadhead/opencode-boxd",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "private": true,
   "description": "Unofficial OpenCode plugin for boxd: run a session on a private boxd machine and keep the transcript on your laptop",
   "keywords": [
@@ -72,6 +72,7 @@
     "title": "boxd",
     "summary": "Run an OpenCode session on a private boxd machine and keep the transcript on your laptop.",
     "icon": "assets/icon.svg",
+    "cost": "boxd bills your boxd account or organisation for each machine the plugin creates: compute and disk while it runs, disk only while it hibernates, until boxd_drop destroys it. An idle machine hibernates, and boxd_job never wakes one.",
     "tools": [
       {
         "name": "boxd.status",

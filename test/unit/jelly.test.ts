@@ -64,7 +64,7 @@ describe("the jelly declaration", () => {
   })
 
   test("uses only the keys Jelly reads: its contracts strip any other", () => {
-    expect(Object.keys(jelly).sort()).toEqual(["contributes", "icon", "rpc", "signIns", "skills", "summary", "title", "tools", "views"])
+    expect(Object.keys(jelly).sort()).toEqual(["contributes", "cost", "icon", "rpc", "signIns", "skills", "summary", "title", "tools", "views"])
     // The one setting is the family's access option, with the default the plugin ships and Jelly's own words for its
     // three values.
     expect(jelly.contributes).toEqual({
