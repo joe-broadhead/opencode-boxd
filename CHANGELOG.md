@@ -3,7 +3,7 @@
 All notable changes to this project are documented here. The format is [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.0.5] - 2026-11-15
 
 ### Added
 
@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SESSION_BUSY`'s next step is to make the call again once `boxd_job` reports idle, and `MACHINE_STARTING`'s names
   `wait: true`.
 
+- The host range is unchanged: `>=2.2.3 <2.4.0`, tested on 2.2.3, 2.2.4, 2.2.5, 2.2.6, 2.2.7 and 2.3.0.
 ### Fixed
 
 - A harvest reports the guest's git remote without its user information, so a remote such as
