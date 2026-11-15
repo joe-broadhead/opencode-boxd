@@ -32,7 +32,7 @@ Only for development. Install the package into an OpenCode project from the fold
 { "plugins": ["./opencode-boxd"] }
 ```
 
-A published install is `opencode plugin add github:joe-broadhead/opencode-boxd#v0.0.5`.
+A published install is `opencode plugin add github:joe-broadhead/opencode-boxd#v0.0.6`.
 
 ## Rules
 
@@ -168,5 +168,5 @@ Each release has its own tag, and a Git install does not update by itself. To mo
 Or add the plugin to `opencode.json` instead, with the same spec:
 
 ```json
-{ "plugins": [{ "package": "github:joe-broadhead/opencode-boxd#v0.0.5" }] }
+{ "plugins": [{ "package": "github:joe-broadhead/opencode-boxd#v0.0.6" }] }
 ```

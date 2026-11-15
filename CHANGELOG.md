@@ -3,13 +3,17 @@
 All notable changes to this project are documented here. The format is [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.0.6] - 2026-11-15
 
 ### Added
 
 - **For jelly:** `jelly.cost`, the line jelly shows on the plugin's review before it installs: "boxd bills your boxd
   account or organisation for each machine the plugin creates: compute and disk while it runs, disk only while it
   hibernates, until boxd_drop destroys it. An idle machine hibernates, and boxd_job never wakes one."
+
+### Changed
+
+- The host range is unchanged: `>=2.2.3 <2.4.0`, tested on 2.2.3, 2.2.4, 2.2.5, 2.2.6, 2.2.7 and 2.3.0.
 
 ## [0.0.5] - 2026-11-15
 
