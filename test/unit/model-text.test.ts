@@ -23,6 +23,12 @@ const STALE: [string, RegExp][] = [
   ["says the writes are off", /\b(?:the )?(?:machine )?changes? (?:are|stay) off\b/i],
 ]
 
+/**
+ * Jelly's shared block is jelly's own text, word for word (the kit's drift check holds it byte for byte); it states what
+ * asks at each access level, so it is not this page's claim about the default.
+ */
+const withoutFamilyBlock = (text: string) => text.replace(/<!-- family-block:start -->[\s\S]*?<!-- family-block:end -->/, "")
+
 /** A sentence that names a restricting value describes that value, not the default. */
 const atAll = (text: string) =>
   text
@@ -61,7 +67,7 @@ describe("the model-facing text at access all", () => {
   const all = {
     "the Code Mode namespace": NAMESPACE_DESCRIPTION,
     "the Jelly summary": jellySummary(),
-    "the Jelly page": read("docs/jelly.md"),
+    "the Jelly page": withoutFamilyBlock(read("docs/jelly.md")),
     "the /boxd-status text": formatStatus(defaultStatus()),
     "the boxd skill": read("skills/boxd/SKILL.md"),
   }

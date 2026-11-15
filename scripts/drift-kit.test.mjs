@@ -24,7 +24,7 @@ import {
   Skip,
   writeFixture,
 } from "./capture-tools.mjs"
-import { accountValuesIn, ageInDays, canonical, checkDrift, driftReport, FIXTURE_SCHEMA, maskCaptureWording, objectKeys, permissionOf, referencesIn, reportLines, sha256, toolsDigest } from "./check-drift.mjs"
+import { accountValuesIn, ageInDays, canonical, checkDrift, driftReport, FAMILY_BLOCK, FAMILY_BLOCK_END, FAMILY_BLOCK_START, familyContradictions, FIXTURE_SCHEMA, maskCaptureWording, objectKeys, permissionOf, referencesIn, reportLines, sha256, toolsDigest } from "./check-drift.mjs"
 
 const SCRIPTS = fileURLToPath(new URL(".", import.meta.url))
 const scratch = mkdtempSync(join(tmpdir(), "drift-kit-test-"))
@@ -251,6 +251,125 @@ describe("check-drift: the capture's own words and the forbidden-word check", ()
     assert.equal(mask("test/fixtures/live-tools.json", "other-rule", line), line)
     assert.equal(mask("docs/notes.md", "house-words", line), line)
     assert.equal(maskCaptureWording(folder())("test/fixtures/live-tools.json", "house-words", line), line, "no registry, no exemption")
+  })
+})
+
+describe("check-drift: jelly's shared block in docs/jelly.md", () => {
+  const pkg = { jelly: { tools: [tool("search")] } }
+  const capture = fixture([served("search", true)])
+  const doc = (body) => `# In Jelly\n\n## Tools and permissions\n\n1 tools are declared (1 read-only).\n\n${body}\n\n## Skills\n`
+  const block = (jellyDoc) => run({ pkg, fixture: capture, jellyDoc }).filter((finding) => finding.kind.startsWith("family"))
+
+  test("the kit vendors jelly's twelve sentences between the markers, with where they come from", () => {
+    const lines = FAMILY_BLOCK.split("\n")
+    assert.deepEqual([lines[0], lines.at(-1), lines.length], [FAMILY_BLOCK_START, FAMILY_BLOCK_END, 14])
+    assert.equal(lines.slice(1, -1).every((line) => line.startsWith("- ")), true)
+    assert.match(readFileSync(join(SCRIPTS, "jelly-family-block.md"), "utf8"), /docs\/guides\/plugin-authors\.md lines 701-714 at commit 875026118/)
+    assert.match(FAMILY_BLOCK, /- A declared `effect` of `allow` changes nothing: the tool follows the access choice and its `readOnly`\./)
+  })
+
+  test("passes the block word for word, once; fails it missing, changed, twice or unclosed", () => {
+    assert.deepEqual(block(doc(FAMILY_BLOCK)), [])
+    assert.match(block(doc("No block here."))[0].detail, /carries 0 start and 0 end markers/)
+    const changed = block(doc(FAMILY_BLOCK.replace("whatever its `effect`", "whatever its effect")))
+    assert.deepEqual([changed[0].level, changed[0].kind, changed[0].line], ["fail", "family-block", 8])
+    assert.match(changed[0].detail, /differs from jelly's/)
+    assert.match(block(doc(`${FAMILY_BLOCK}\n\n${FAMILY_BLOCK}`))[0].detail, /carries 2 start and 2 end markers/)
+    assert.match(block(doc(FAMILY_BLOCK.replace(FAMILY_BLOCK_END, "")))[0].detail, /carries 1 start and 0 end markers/)
+    assert.deepEqual(run({ pkg, fixture: capture, jellyDoc: null }).filter((finding) => finding.kind === "family-block").map((finding) => finding.level), ["warn"], "a plugin with a declaration and no docs/jelly.md")
+  })
+
+  test("fails a sentence that says an effect of allow makes a tool run, and warns on looser matches", () => {
+    const failing = familyContradictions("A tool's `effect: allow` makes it run without asking.")
+    assert.deepEqual(failing.map((item) => item.level), ["fail"])
+    assert.deepEqual(familyContradictions("Setting effect to allow lets the tool run at Read only.").map((item) => item.level), ["fail"])
+    assert.deepEqual(familyContradictions("Each tool with the `allow` effect runs without asking.").map((item) => item.level), ["warn"])
+    assert.deepEqual(familyContradictions("Every write asks first at Allowed.").map((item) => item.level), ["warn"])
+    assert.deepEqual(familyContradictions("A tool declared deny is off at Allowed.").map((item) => item.level).sort(), ["warn", "warn"])
+    assert.deepEqual(familyContradictions("A tool this plugin does not declare runs at Read only.").map((item) => item.level), ["warn"])
+  })
+
+  test("fails a tool declared allow said to run: the family's own wording before the rollout (github, linear, slack)", () => {
+    // github's docs/jelly.md:16-21, linear's :26 and slack's :22 at origin/master on 15 Nov 2026, word for word.
+    const github = "100 tools are declared (62 read-only). Jelly's agents have no base \"allow everything\" rule, so the\nplugin's own default rules, which it puts after that rule, never reach them. Jelly writes each\ndeclared `ask` or `deny` as that tool's default instead (the person's own choice replaces it), and\ndenies a read-only helper every tool not marked `readOnly`. Every tool is declared `allow`, so a\nJelly agent runs what the plugin's own default allows; declare a `deny` or an `ask` here, or set\nthe plugin's `access` option, to restrict one.\n"
+    const found = familyContradictions(github)
+    assert.deepEqual(found.map((item) => [item.level, item.line]), [["fail", 4]])
+    assert.match(found[0].sentence, /^Every tool is declared `allow`, so a Jelly agent runs/)
+    const linearSlack = "- Ask: none. Every tool is declared `allow`, so a Jelly agent runs what the plugin's own default allows.\n- Off: none. To make one ask or stop, declare `ask` or `deny` for it, or set the plugin's `access` option in the agent's options.\n"
+    assert.deepEqual(familyContradictions(linearSlack).map((item) => item.level), ["fail"])
+    assert.deepEqual(familyContradictions("A tool declared allow runs without asking.").map((item) => item.level), ["warn"])
+    assert.deepEqual(familyContradictions("Every tool is declared `allow`, which changes nothing: a Jelly agent runs it as the access level says.").map((item) => item.level), [])
+  })
+
+  test("leaves the family's own true sentences, code and the block itself alone", () => {
+    for (const sentence of [
+      "It falls under `browse_*`, in Jelly's access level and in the plugin's own rules alike: it runs at Allowed, asks at Ask before changes and is denied at Read only.",
+      "Every declared effect is `allow`, because that is what the default rules give each tool in OpenCode at the default `access: \"all\"`: every tool is allowed, and `access` is how a user restricts them.",
+      "102 tools are declared (58 read-only), and every declared effect is `allow`: the 51 reads and the 6 DM and public-key reads.",
+      "```js\n// effect: allow makes it run\n```",
+    ]) assert.deepEqual(familyContradictions(sentence), [], sentence)
+    assert.deepEqual(block(doc(FAMILY_BLOCK)).filter((item) => item.kind === "family-contradiction"), [], "the block's own sentences are not read as contradictions")
+    const outside = block(doc(`${FAMILY_BLOCK}\n\nHere an \`effect\` of \`allow\` makes the tool run.`))
+    assert.deepEqual(outside.map((item) => [item.level, item.kind]), [["fail", "family-contradiction"]])
+  })
+})
+
+// The declaration test kit, test/support/jelly-kit.ts (a family copy, pinned in check-copies.mjs), knows Jelly's optional
+// top-level `cost` (1 to 300 characters) and `admin` (1 to 200), as hey-jelly's PluginDeclarationSchema declares them
+// (protocol/contracts/src/plugin-contract.ts, `z.string().trim().min(1).max(n)`). Node imports the TypeScript copy as it is.
+describe("jelly-kit.ts: the declaration's cost and admin lines", () => {
+  const KIT = join(SCRIPTS, "..", "test", "support", "jelly-kit.ts")
+  const skip = existsSync(KIT) ? false : "this repository has no test/support/jelly-kit.ts"
+  const load = () => import(KIT)
+
+  test("cost and admin are keys Jelly knows, and optional", { skip }, async () => {
+    const { DECLARATION_KEYS, lineProblems } = await load()
+    assert.ok(DECLARATION_KEYS.includes("cost") && DECLARATION_KEYS.includes("admin"))
+    assert.deepEqual(lineProblems("cost", undefined, 300), [])
+    assert.deepEqual(lineProblems("admin", undefined, 200), [])
+  })
+
+  test("takes one line of 1 to 300 (cost) or 200 (admin) characters, with no space at either end", { skip }, async () => {
+    const { lineProblems } = await load()
+    assert.deepEqual(lineProblems("cost", "Most calls cost money with X; each result says what it cost.", 300), [])
+    assert.deepEqual(lineProblems("cost", "x".repeat(300), 300), [])
+    assert.deepEqual(lineProblems("admin", "turn on MCP Server in Ashby's admin settings", 200), [])
+    assert.deepEqual(lineProblems("admin", "x".repeat(200), 200), [])
+  })
+
+  test("refuses a 301-character cost, a 201-character admin, a line break, padding, an empty line and a non-string", { skip }, async () => {
+    const { lineProblems } = await load()
+    assert.deepEqual(lineProblems("cost", "x".repeat(301), 300), ["jelly.cost is longer than 300 characters"])
+    assert.deepEqual(lineProblems("admin", "x".repeat(201), 200), ["jelly.admin is longer than 200 characters"])
+    for (const broken of ["two\nlines", "two\r\nlines", "two\rlines", "two\u2028lines"]) assert.deepEqual(lineProblems("cost", broken, 300), ["jelly.cost is more than one line"], JSON.stringify(broken))
+    assert.deepEqual(lineProblems("admin", " padded", 200), ["jelly.admin has a space at either end"])
+    assert.deepEqual(lineProblems("admin", "padded ", 200), ["jelly.admin has a space at either end"])
+    assert.deepEqual(lineProblems("cost", "padded\n", 300), ["jelly.cost has a space at either end", "jelly.cost is more than one line"])
+    assert.deepEqual(lineProblems("cost", ` ${"x".repeat(300)}`, 300), ["jelly.cost has a space at either end"], "the length is Jelly's, after trimming")
+    assert.deepEqual(lineProblems("cost", ` ${"x".repeat(301)}`, 300), ["jelly.cost has a space at either end", "jelly.cost is longer than 300 characters"])
+    assert.deepEqual(lineProblems("cost", "", 300), ["jelly.cost is empty"])
+    assert.deepEqual(lineProblems("admin", "   ", 200), ["jelly.admin is empty"])
+    assert.deepEqual(lineProblems("cost", 7, 300), ["jelly.cost is not a string"])
+    assert.deepEqual(lineProblems("cost", null, 300), ["jelly.cost is not a string"])
+  })
+
+  test("declarationProblems checks both lines, and no longer calls them unknown keys", { skip }, async () => {
+    const { declarationProblems } = await load()
+    const root = mkdtempSync(join(tmpdir(), "jelly-kit-lines-"))
+    try {
+      const declare = (lines) => {
+        const jelly = { title: "Kit test", summary: "Kit test's records.", icon: "assets/icon.svg", tools: [{ name: "kit.read", permission: "kit_read", effect: "allow", readOnly: true }], ...lines }
+        writeFileSync(join(root, "package.json"), JSON.stringify({ name: "@joe-broadhead/opencode-kit-test", version: "0.0.1", files: ["assets"], jelly }))
+        mkdirSync(join(root, "assets"), { recursive: true })
+        writeFileSync(join(root, "assets", "icon.svg"), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M0 0h24v24H0z"/></svg>')
+        return declarationProblems(new URL(`file://${root}/`), { effectOf: () => "allow" })
+      }
+      assert.deepEqual(declare({ cost: "Each call costs credits with the vendor.", admin: "turn on the vendor's API access" }), [])
+      assert.deepEqual(declare({ cost: "x".repeat(301), admin: " x" }), ["jelly.cost is longer than 300 characters", "jelly.admin has a space at either end"])
+      assert.deepEqual(declare({ costs: "x" }), ["jelly.costs is not a key Jelly knows"])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })
 

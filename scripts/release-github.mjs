@@ -6,7 +6,8 @@
 //           it (the master push run of ci.yml, with a successful job on every runner its push matrix names, macOS too;
 //           a pull request's run, Linux only, never counts), a version or CHANGELOG not ready, a leftover release branch, a release that does not move forward, a
 //           native run that is wrong, or one given to a plugin that is not native. Finds a tag left by a run that failed
-//           after tagging (mode resume). Writes version, tag, hosts, native, mode, commit, ci_run and manifest_sha256 (the
+//           after tagging (mode resume). A plugin that declares sources needs an npm "conformance" script. Writes version,
+//           tag, hosts, native, sources (true when package.json declares sources), mode, commit, ci_run and manifest_sha256 (the
 //           vetted native manifest's, which the commit job requires byte for byte) to GITHUB_OUTPUT.
 //   commit  --files <dir> --parent <P> --tag <tag> --native <true|false> [--manifest-sha256 <the plan's>]
 //           Makes the release commit on the temporary branch release/<tag>, with GraphQL createCommitOnBranch and the
@@ -21,6 +22,17 @@
 //   native  --dir <dir> --commit <C>
 //           Checks the staged Release files against C's manifest/native.json: each native file's size and sha256, each
 //           gzip's executable, nothing unpinned, nothing missing, and only SHA256SUMS and one tarball besides.
+//   conformance --dir <dir> --commit <C>
+//           Checks the staged conformance report against C's package.json: present, once, ok and for C's version when it
+//           declares sources; absent when it does not.
+//   kept    --dir <dir> --sha256 <digest>
+//           Checks that the staged tarball is the pack job's: outside native/, besides SHA256SUMS and the conformance
+//           report, there is one file, a .tgz, with the sha256 the pack job recorded before any dependency was installed.
+//           The stage job runs it after every download.
+//   take-conformance --from <dir> --dir <dir>
+//           Takes the conformance job's report into the staged folder: <from> (the downloaded artifact) must hold exactly
+//           one regular file, conformance-report.json, of at most CONFORMANCE_MAX_BYTES; only that file is copied, and
+//           only when the staged folder has none yet.
 //   sums    --dir <dir> --sums-sha256 <digest>
 //           Checks that the staged SHA256SUMS has the digest the approver saw in the run summary, and every staged
 //           Release file against it.
@@ -29,7 +41,7 @@
 // publish-release.mjs and attach-native.mjs, goes through ghOutput (scripts/release-rules.mjs), which allows only the
 // kit's own calls: never approving or rejecting a deployment, environments, rulesets, bypasses or branch protection.
 import { spawnSync } from "node:child_process"
-import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { appendFileSync, constants, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { gunzipSync } from "node:zlib"
 import { basename, join, relative } from "node:path"
@@ -44,6 +56,11 @@ import {
   ciJobsProblems,
   ciMatrix,
   COMMIT_MUTATION,
+  CONFORMANCE_ASSET,
+  CONFORMANCE_MAX_BYTES,
+  conformanceReportProblems,
+  conformanceSetupProblems,
+  declaresSources,
   commitIdentityProblems,
   fetchReleases,
   ghOutput,
@@ -116,6 +133,8 @@ export function plan({ sha, nativeRun, manifestOut, env, gh, cwd }) {
   if (versionRefusal) refuse(versionRefusal)
   const tag = tagFor(pkg.version)
   if (!pkg.scripts?.build) refuse('package.json has no "build" script: the release builds with npm run build')
+  const conformanceRefusals = conformanceSetupProblems(pkg)
+  if (conformanceRefusals.length) refuse(conformanceRefusals.join("; "))
   const changelogPath = join(cwd, "CHANGELOG.md")
   if (!existsSync(changelogPath)) refuse("there is no CHANGELOG.md: the release notes come from it")
   const changelog = changelogProblems(readFileSync(changelogPath, "utf8"), pkg.version)
@@ -207,7 +226,7 @@ export function plan({ sha, nativeRun, manifestOut, env, gh, cwd }) {
   } catch (error) {
     refuse(error.message)
   }
-  return { version: pkg.version, tag, hosts: JSON.stringify(hosts), native: String(native), mode, commit, ci_run: String(ci.run.id), previous: order.previous ?? "", manifest_sha256: manifestText ? sha256(manifestText) : "" }
+  return { version: pkg.version, tag, hosts: JSON.stringify(hosts), native: String(native), sources: String(declaresSources(pkg)), mode, commit, ci_run: String(ci.run.id), previous: order.previous ?? "", manifest_sha256: manifestText ? sha256(manifestText) : "" }
 }
 
 /** Every file under a folder, as repository paths, refusing anything that is not a regular file or a folder. */
@@ -443,12 +462,12 @@ export function sumsProblems(dir, { sumsSha256 } = {}) {
  * undefined for a plugin that is not native). The publish job runs it after the approval, where no repository or
  * dependency code has run: every file under native/ is one the manifest pins, with its size and sha256, every gzip
  * decompresses to the executable the manifest pins (size and sha256), every pinned file is there, and outside native/
- * there is only SHA256SUMS and one tarball.
+ * there is only SHA256SUMS and one tarball (and the conformance report, which conformanceAssetProblems checks).
  */
 export function nativeAssetProblems({ dir, manifest }) {
   const problems = []
   const files = walkFiles(dir)
-  const outside = files.filter((path) => !path.startsWith("native/") && path !== "SHA256SUMS")
+  const outside = files.filter((path) => !path.startsWith("native/") && path !== "SHA256SUMS" && path !== CONFORMANCE_ASSET)
   if (outside.length !== 1 || !/^[^/]+\.tgz$/.test(outside[0])) problems.push(`outside native/ the staged files must be SHA256SUMS and one tarball, and they are ${outside.join(", ") || "none"}`)
   const native = files.filter((path) => path.startsWith("native/"))
   if (!manifest) {
@@ -485,6 +504,59 @@ export function nativeAssetProblems({ dir, manifest }) {
     }
   }
   return problems
+}
+
+/**
+ * The staged conformance report against the release commit's package.json: a plugin that declares sources has the
+ * report, named CONFORMANCE_ASSET at the top of the staged folder, ok and for this package's version; a plugin without
+ * sources has none. The stage job runs it before SHA256SUMS is written, and the publish job again after the approval.
+ */
+export function conformanceAssetProblems({ dir, pkg }) {
+  const staged = walkFiles(dir).filter((path) => path.split("/").pop() === CONFORMANCE_ASSET)
+  if (!declaresSources(pkg)) return staged.length ? [`a conformance report is staged (${staged.join(", ")}), and the release commit's package.json declares no sources`] : []
+  if (staged.length !== 1 || staged[0] !== CONFORMANCE_ASSET) return [`the release commit's package.json declares sources, and the staged files hold ${staged.length ? staged.join(", ") : "no conformance report"}: it must be ${CONFORMANCE_ASSET}, once, beside SHA256SUMS`]
+  return conformanceReportProblems(readFileSync(join(dir, CONFORMANCE_ASSET), "utf8"), pkg)
+}
+
+/**
+ * The problems with the staged tarball against the sha256 the pack job recorded when it packed the release commit, before
+ * any dependency was installed: outside native/, besides SHA256SUMS and the conformance report, the staged folder holds
+ * exactly one file, a .tgz at its top, with that sha256. Nothing a later download brings can replace or add a tarball.
+ */
+export function keptTarballProblems({ dir, sha256: expected }) {
+  if (!/^[0-9a-f]{64}$/.test(expected ?? "")) return ["the sha256 the pack job recorded for the kept tarball was not given"]
+  const outside = walkFiles(dir).filter((path) => !path.startsWith("native/") && path !== "SHA256SUMS" && path !== CONFORMANCE_ASSET)
+  if (outside.length !== 1 || !/^[^/]+\.tgz$/.test(outside[0])) return [`outside native/ the staged files must be one tarball (and SHA256SUMS and the conformance report), and they are ${outside.join(", ") || "none"}`]
+  const actual = sha256(readFileSync(join(dir, outside[0])))
+  return actual === expected ? [] : [`${outside[0]} has the sha256 ${actual}, not ${expected}, the one the pack job recorded: it is not the kept tarball`]
+}
+
+/**
+ * Takes the conformance job's report from `from` (its downloaded artifact) into the staged folder `dir`. `from` must hold
+ * exactly one entry, a regular file named CONFORMANCE_ASSET of at most CONFORMANCE_MAX_BYTES, and `dir` no report yet:
+ * anything else the artifact holds (another file, a folder, a symlink) refuses it, and nothing but that file is copied.
+ */
+export function takeConformanceReport({ from, dir }) {
+  if (typeof from !== "string" || typeof dir !== "string" || !from || !dir) refuse("take-conformance needs --from <the downloaded artifact> and --dir <the staged folder>")
+  const entries = readdirSync(from)
+  if (entries.length !== 1 || entries[0] !== CONFORMANCE_ASSET) refuse(`the conformance artifact must hold only ${CONFORMANCE_ASSET}, and it holds ${entries.join(", ") || "nothing"}`)
+  const source = join(from, CONFORMANCE_ASSET)
+  const stat = lstatSync(source)
+  if (!stat.isFile()) refuse(`the conformance artifact's ${CONFORMANCE_ASSET} is not a regular file`)
+  if (stat.size > CONFORMANCE_MAX_BYTES) refuse(`the conformance artifact's ${CONFORMANCE_ASSET} has ${stat.size} bytes, over ${CONFORMANCE_MAX_BYTES}`)
+  const target = join(dir, CONFORMANCE_ASSET)
+  if (present(target)) refuse(`${CONFORMANCE_ASSET} is already staged: the report is taken once, from the conformance job's artifact`)
+  copyFileSync(source, target, constants.COPYFILE_EXCL)
+  return { bytes: stat.size }
+}
+
+const present = (path) => {
+  try {
+    lstatSync(path)
+    return true
+  } catch {
+    return false
+  }
 }
 
 const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
@@ -539,7 +611,20 @@ function main(argv) {
     const problems = nativeAssetProblems({ dir: flags.dir, manifest })
     if (problems.length) refuse(`the staged Release files are not the ones the release commit pins: ${problems.join("; ")}`)
     console.log(manifest ? `native: every staged native file is the one ${MANIFEST_PATH} pins, executables included` : "native: no native files, as the release commit has no manifest")
-  } else refuse(`unknown command ${command ?? "(none)"}: plan, commit, tag, cleanup, sums or native`)
+  } else if (command === "conformance") {
+    if (!SHA1.test(flags.commit ?? "")) refuse("--commit must be the release commit's full sha")
+    const pkg = JSON.parse(gitIn(cwd, ["show", `${flags.commit}:package.json`]))
+    const problems = conformanceAssetProblems({ dir: flags.dir, pkg })
+    if (problems.length) refuse(`the staged conformance report is not releasable: ${problems.join("; ")}`)
+    console.log(declaresSources(pkg) ? `conformance: ${CONFORMANCE_ASSET} is staged, ok, for ${pkg.name} ${pkg.version}` : "conformance: no sources, and no report, as the release commit declares none")
+  } else if (command === "kept") {
+    const problems = keptTarballProblems({ dir: flags.dir, sha256: flags.sha256 })
+    if (problems.length) refuse(`the staged tarball is not the one the pack job kept: ${problems.join("; ")}`)
+    console.log(`kept: the staged tarball is the pack job's, sha256 ${flags.sha256}`)
+  } else if (command === "take-conformance") {
+    const { bytes } = takeConformanceReport({ from: flags.from, dir: flags.dir })
+    console.log(`take-conformance: ${CONFORMANCE_ASSET} (${bytes} bytes) taken from the conformance job's artifact, and nothing else`)
+  } else refuse(`unknown command ${command ?? "(none)"}: plan, commit, tag, cleanup, sums, native, conformance, kept or take-conformance`)
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
