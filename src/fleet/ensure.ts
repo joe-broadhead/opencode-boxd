@@ -58,6 +58,7 @@ import type { FleetServices } from "../services.js"
 import type { CallContext } from "../tools.js"
 import { imageName, STILL_BUILDING, type Golden } from "./golden.js"
 import { runList, runOne, type ItemContext } from "./list.js"
+import { pause } from "./sessions-common.js"
 import { inUseOf, limitAtCreate, pickRegion, type InFlight, type InUse } from "./regions.js"
 
 /** A machine the plugin created, resized or renamed this recently may be rebooted once on its own (#14 §6). */
@@ -430,6 +431,9 @@ export interface Landed {
   readonly created: boolean
 }
 
+/** How long a create refused as taken waits before it reads the name again. */
+const TAKEN_REREAD_MS = 1_000
+
 /** boxd's refusal of a create whose name is taken in that region. */
 const TAKEN = /\balready exists\b/i
 const taken = (error: unknown) => error instanceof BoxdError && TAKEN.test(error.what)
@@ -455,6 +459,11 @@ async function land(machines: Machines, found: FetchedMachine, input: { readonly
   }
   if (found.sharing === "shared") throw boxdError("MACHINE_SHARED", `${found.name} in ${found.region} is shared with the organisation.`)
   if (found.isolated) throw boxdError("MACHINE_ISOLATED", `${found.name} in ${found.region} is isolated.`)
+  // A machine another open work records is that work's, whatever its name or labels say, even with adopt: true.
+  const holder = (await machines.services.ledger.list({}, op)).find((other) => other.workId !== input.workId && other.machineId === found.id)
+  if (holder) {
+    throw boxdError("NOT_OURS", `${found.name} in ${found.region} is machine ${found.id}, which the open work ${holder.workId} records, so it is not adopted, even with adopt: true. Rename it back to ${holder.machine}, or boxd_reassign.`, { region: found.region })
+  }
   // The port withholds `owned` for a machine without the labels; with adopt: true it is resolved to the id this get read.
   const owned = found.owned ?? (await machines.services.boxd.checkOwned(found.region, found.name as MachineName, found.id, op))
   return { info: found, owned, created: false }
@@ -508,11 +517,18 @@ export async function createAt(
       // A create that timed out may have landed: it stays counted as one.
       if (error instanceof BoxdError && error.code === "CREATE_UNCERTAIN") landed = true
       if (taken(error)) {
-        const found = await fetchIfThere(machines, input.region, name, op)
+        let found = await fetchIfThere(machines, input.region, name, op)
+        // boxd's get can lag its own refusal: read once more after a pause, when the call has room for it.
+        if (!found && context.room(TAKEN_REREAD_MS + TIMEOUTS.cliRead)) {
+          await pause(TAKEN_REREAD_MS, op.signal)
+          found = await fetchIfThere(machines, input.region, name, op)
+        }
         if (found && input.recordedId) {
           throw boxdError("NOT_OURS", `${name} in ${input.region} is machine ${found.id}, not the recorded ${input.recordedId}, and it appeared while this work's machine was being rebuilt; nothing was created.`)
         }
         if (found) return land(machines, found, input, op)
+        // Taken, but not shown yet: the same call again finds it (never BOXD_FAILED for a machine that is there).
+        throw new NotNow("creating", `boxd refused ${name} in ${input.region} because the name is taken, but its machine get does not show that machine yet`)
       }
       if (error instanceof BoxdError && error.code === "MACHINE_LIMIT") throw limitAtCreate(error, input.region, await boxd.machineLimit(op).catch(() => []), input.used, machines.inFlight)
       throw error
