@@ -200,9 +200,12 @@ export async function jobRun(services: FleetServices, raw: Record<string, unknow
       listing = await services.boxd.list({ maxAgeMs: TIMEOUTS.readListingMaxAgeMs }, op)
     } catch (error) {
       // The listing failed, not the works: each answers its last known phase, with nothing read and no failure counted.
-      if (error instanceof BoxdError && error.code === "CANCELLED") {
-        if (!input.list) throw error
-        return envelope(records.map((record) => ("format" in record ? refusal(error, { workId: record.workId }) : record)), true)
+      // A stop, or a signed-out or missing CLI (`BOXD_MISSING`), fails the call at once: only a transient failure
+      // (`BOXD_FAILED`, `TIMEOUT`) is answered from the last known phases.
+      const transient = error instanceof BoxdError && (error.code === "BOXD_FAILED" || error.code === "TIMEOUT")
+      if (!transient) {
+        if (!input.list || !(error instanceof BoxdError)) throw error
+        return envelope(records.map((record) => ("format" in record ? refusal(error, { workId: record.workId }) : record)), error.code === "CANCELLED")
       }
       listingFailed = reasonOf(error)
     }

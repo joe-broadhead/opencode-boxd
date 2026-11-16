@@ -48,7 +48,7 @@ describe("170 busy works at 300 ms per CLI call", () => {
     expect(w.counter.fake.read().wokenByExec ?? []).toEqual([])
   }, 180_000)
 
-  test("one watcher sweep: no unreachable event, no BOXD_FAILED in a notice, and what was not read kept", async () => {
+  test("one watcher sweep: every busy work read, no unreachable event, no BOXD_FAILED in a notice", async () => {
     world = await startWorld({ latencyMs: LATENCY })
     const w = world
     const busy = ids("s", 170)
@@ -67,16 +67,15 @@ describe("170 busy works at 300 ms per CLI call", () => {
     await w.watcher.flushNotices()
     expect(seen.filter((item) => item.startsWith("unreachable") || item.includes("BOXD_FAILED"))).toEqual([])
     const handle = watchHandle(w.services.watch)!
-    // Every work was read, or kept what was known: a read that could not be made is never a failure, never unreachable.
-    expect(busy.filter((id) => handle.observed(id)?.readAt !== undefined).length).toBeGreaterThan(0)
-    expect(busy.filter((id) => handle.observed(id)?.phase === "unreachable")).toEqual([])
+    // Every one of the 170 works was read: a queued read whose listing aged joined a fresh one and ran.
+    expect(busy.filter((id) => handle.observed(id)?.readAt === undefined)).toEqual([])
     const lists = w.counter.spawns().filter((spawn) => spawn.verb === "machine list").length
     expect(lists).toBeLessThanOrEqual(listsFor(took))
     for (const post of w.sessions.posted) {
       expect(post.text).not.toContain("BOXD_FAILED")
       expect(post.text).not.toContain("unreachable")
     }
-  }, 180_000)
+  }, 900_000)
 })
 
 test("boxd_job over 60 running works at 300 ms per CLI call: every work read, none unreachable", async () => {

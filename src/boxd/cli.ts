@@ -72,6 +72,8 @@ const USAGE_REFUSED = /\bowners? and admins? only\b|\bonly (?:org )?(?:owners|ad
 
 /** How often a read is retried on a fresh listing before its refusal is the caller's: it then reads as stale. */
 const READ_REFRESHES = 10
+/** The listing failures a read may wait out: boxd answered with an unknown failure, or not in time. */
+const TRANSIENT: ReadonlySet<string> = new Set(["BOXD_FAILED", "TIMEOUT"])
 const isListingAge = (error: unknown) => error instanceof BoxdError && error.details.rule === "listing-age"
 
 export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
@@ -145,10 +147,12 @@ export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
     try {
       return { ...target, listing: await list({ maxAgeMs: TIMEOUTS.readListingMaxAgeMs }, context) }
     } catch (error) {
-      if (error instanceof BoxdError && error.code === "CANCELLED") throw error
+      // Only a transient failure is a read to try again; a signed-out or missing CLI (`BOXD_MISSING`), or a stop, is
+      // the caller's error as it is, so it fails at once.
+      if (!(error instanceof BoxdError) || !TRANSIENT.has(error.code)) throw error
       // The listing failed, not the guest: nothing was read, and the caller may try again (`kind: "listing-failed"`).
-      const code = error instanceof BoxdError ? error.code : "BOXD_FAILED"
-      const reason = error instanceof BoxdError ? error.what : error instanceof Error ? error.message : String(error)
+      const code = error.code
+      const reason = error.what
       throw boxdError(code, `The machine listing a read of ${target.name} needs failed (${reason.replace(/\.$/, "")}); nothing was read.`, { kind: "listing-failed", retryable: true })
     }
   }
