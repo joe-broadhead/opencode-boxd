@@ -1,12 +1,15 @@
 // The independent review's probes for package E (PR #25), kept as regressions: each one first showed a fault, and now
 // asserts the fixed behaviour. P1 a sleep after a work moved on, P2 leases that followed the acting process's option,
 // P3 the idle check's 30-minute cap, P4 guest-like text in the lines, P5 the budget's arithmetic and a member's
-// currency, P6 a declined prompt per action.
+// currency, P6 a declined prompt per action. The re-review's probes (R1-R6) follow: R6 is the two locks.
 import { afterEach, describe, expect, test } from "bun:test"
-import { automation, startAutomation, type Automation } from "../../src/automation.js"
+import { existsSync } from "node:fs"
+import { join } from "node:path"
+import { automation, LEASE_LOCK, startAutomation, type Automation } from "../../src/automation.js"
 import { runCleanup } from "../../src/cleanup.js"
 import { burning, compactionText, fleetLine } from "../../src/cost/lines.js"
 import { costHooks } from "../../src/hooks.js"
+import { parseOptions } from "../../src/options.js"
 import { fakes, minutesAgo, record, T0, work, type Fakes } from "../support/cost-fakes.js"
 
 let open: Array<{ f: Fakes; loops: Automation[] }> = []
@@ -163,5 +166,180 @@ describe("P6: cleanup", () => {
     await runCleanup(ctx as never, f.services, "ses_p", "c1")
     expect(acted(f)).toEqual(["sleep a"])
     expect(asked.filter((entry) => entry.startsWith("assert"))).toEqual(["assert:boxd_cleanup:a:true", "assert:boxd_cleanup:s:true"])
+  })
+})
+
+// ── The re-review's probes (PR #25 at 078eb5d) ─────────────────────────────────────────────────────────────────────
+
+const renewals = (f: Fakes) => f.calls.filter((call) => call.startsWith("renewLease"))
+const leaseOf = (renewedHoursAgo: number, days: number) => lease(renewedHoursAgo, days)
+
+/** Another OpenCode process on the same ledger: the same fakes (records, watcher, CLI log), its own options and cost. */
+function process2(f: Fakes, options: Record<string, unknown>) {
+  const own = fakes({ options })
+  open.push({ f: own, loops: [] })
+  const services = { ...f.services, options: parseOptions(options), cost: own.services.cost } as never
+  const created = automation(services)
+  open.at(-1)!.loops.push(created)
+  return { loop: created, services, cost: own.services.cost }
+}
+
+describe("R1: the lease holder process changes between renewals", () => {
+  test("A (leaseDays 1, all) renews x with 7d and leaves; B (leaseDays 0, read-only) renews y with 3d, not x again", async () => {
+    const { f, loop } = setup({
+      options: { leaseDays: 1 },
+      works: [work("x", { phase: "busy", idleSince: undefined }), work("y", { phase: "busy", idleSince: undefined })],
+      records: [record("x", { lease: leaseOf(7, 7) }), record("y", { lease: leaseOf(1, 3) })],
+    })
+    const a = loop()
+    await a.tick()
+    expect(renewals(f)).toEqual(["renewLease vm_x 7d"])
+    await a.dispose()
+    f.clock.now = new Date(T0.getTime() + 5.5 * 3_600_000)
+    const b = process2(f, { leaseDays: 0, access: "read-only" })
+    await b.loop.tick()
+    expect(renewals(f)).toEqual(["renewLease vm_x 7d", "renewLease vm_y 3d"])
+    expect(acted(f)).toEqual([])
+    expect(f.records.get("x")!.lease!.days).toBe(7)
+  })
+
+  test("two live processes: only the lease.lock holder renews", async () => {
+    const { f, loop } = setup({ options: { leaseDays: 0 }, works: [work("x", { phase: "busy", idleSince: undefined })], records: [record("x", { lease: leaseOf(7, 2) })] })
+    const a = loop()
+    const b = process2(f, { leaseDays: 5, access: "ask-changes" })
+    await Promise.all([a.tick(), b.loop.tick()])
+    expect(renewals(f)).toEqual(["renewLease vm_x 2d"])
+  })
+})
+
+describe("R2: the harvest's answer decides the sleep", () => {
+  const run = async (answer: { state?: string; error?: string }) => {
+    const { f, loop } = setup({ works: [work("a", { idleSince: minutesAgo(T0, 11) })], records: [record("a")] })
+    f.actions.harvest = async (ids, context) => {
+      f.actions.calls.push({ method: "harvest", ids, context })
+      const item = answer.error ? { state: "refused", workId: "a", error: answer.error, message: "x", next: "" } : { state: answer.state, workId: "a" }
+      return { state: answer.error ? "failed" : answer.state === "saved" ? "done" : "partial", counts: {}, results: [item] } as never
+    }
+    await loop().tick()
+    return { f, warnings: (f.records.get("a")!.warnings ?? []).map((warning) => warning.code) }
+  }
+  test("partial: no sleep, no warning", async () => {
+    const { f, warnings } = await run({ state: "partial" })
+    expect(acted(f)).toEqual(["harvest a"])
+    expect(warnings).toEqual([])
+  })
+  test("SESSION_BUSY: no sleep", async () => {
+    expect(acted((await run({ error: "SESSION_BUSY" })).f)).toEqual(["harvest a"])
+  })
+  test("GUEST_VERSION and TIMEOUT: sleep, UNHARVESTED_SLEEP", async () => {
+    for (const code of ["GUEST_VERSION", "TIMEOUT"]) {
+      const { f, warnings } = await run({ error: code })
+      expect(acted(f)).toEqual(["harvest a", "sleep a"])
+      expect(warnings).toEqual(["UNHARVESTED_SLEEP"])
+    }
+  })
+  test("an unknown code: no sleep, AUTOMATION_BLOCKED", async () => {
+    const { f, warnings } = await run({ error: "WHATEVER" })
+    expect(acted(f)).toEqual(["harvest a"])
+    expect(warnings).toEqual(["AUTOMATION_BLOCKED"])
+  })
+})
+
+describe("R3: the idle gap across burn, no burn, burn", () => {
+  test("one note inside 30 minutes; a second only after the gap", async () => {
+    const { f } = setup({ options: { access: "ask-changes" } })
+    const hooks = costHooks(f.services)
+    const at = (minute: number) => (f.clock.now = new Date(T0.getTime() + minute * 60_000))
+    const idle = () => (f.watch.works = [work("a", { notify: "ses_c" })])
+    const busy = () => (f.watch.works = [work("a", { notify: "ses_c", phase: "busy", idleSince: undefined })])
+    for (let minute = 0; minute < 30; minute += 2) {
+      at(minute)
+      if (minute % 4 === 0) idle()
+      else busy()
+      await hooks.idle({ sessionID: "ses_c" })
+      f.contexts.get("ses_c")?.push({ type: "user" })
+    }
+    expect(f.synthetic.length).toBe(1)
+    at(31)
+    idle()
+    await hooks.idle({ sessionID: "ses_c" })
+    expect(f.synthetic.length).toBe(2)
+  })
+})
+
+describe("R4: which tails count as a turn's start", () => {
+  const req = (messages: unknown[]) => ({ sessionID: "ses_c", system: [], messages })
+  const lineIn = (request: { messages: unknown[] }) => request.messages.some((message) => JSON.stringify(message).includes("boxd: "))
+  const hooksFor = () => {
+    const { f } = setup()
+    f.watch.works = [work("a", { notify: "ses_c" })]
+    return costHooks(f.services)
+  }
+  test("a tool tail and an assistant tail: nothing; a user tail (a notice is a user message too): the line", () => {
+    const hooks = hooksFor()
+    const tool = req([{ role: "user", content: [] }, { role: "assistant", content: [] }, { role: "tool", content: [] }])
+    hooks.context(tool)
+    expect(lineIn(tool)).toBe(false)
+    const assistant = req([{ role: "user", content: [] }, { role: "assistant", content: [] }])
+    hooks.context(assistant)
+    expect(lineIn(assistant)).toBe(false)
+    const notice = req([{ role: "user", content: [] }, { role: "assistant", content: [] }, { role: "tool", content: [] }, { role: "user", content: [{ type: "text", text: "boxd notice: 1 work finished" }] }])
+    hooks.context(notice)
+    expect(notice.messages.length).toBe(5)
+  })
+  test("after a compaction, a tool tail still gets nothing; the turn's start gets the line and the ids once", () => {
+    const hooks = hooksFor()
+    hooks.compaction(req([{ role: "user", content: [] }]))
+    const tool = req([{ role: "user", content: [] }, { role: "assistant", content: [] }, { role: "tool", content: [] }])
+    hooks.context(tool)
+    expect(tool.messages.length).toBe(3)
+    const turn = req([{ role: "user", content: [] }])
+    hooks.context(turn)
+    expect(turn.messages.length).toBe(2)
+    expect(JSON.stringify(turn.messages.at(-1))).toContain("boxd works open: a (idle)")
+  })
+})
+
+describe("R5: no model figure", () => {
+  test("today has no models key", async () => {
+    const { f } = setup({ works: [work("a")] })
+    const block = await f.services.cost.block({ works: true, limit: 5 }, tag)
+    expect("models" in block.today).toBe(false)
+  })
+})
+
+describe("R6: a process without consent renews leases and never blocks one with consent", () => {
+  test("side by side: B (read-only) renews, A (all) harvests and sleeps, and B's idle check still speaks", async () => {
+    const { f, loop } = setup({
+      works: [work("fin", { idleSince: minutesAgo(T0, 30), notify: "ses_b" }), work("l", { phase: "busy", idleSince: undefined, notify: "ses_b" })],
+      records: [record("fin"), record("l", { lease: leaseOf(7, 3) })],
+    })
+    // B first: it takes lease.lock, renews, and never takes automation.lock.
+    const b = process2(f, { access: "read-only" })
+    await b.loop.tick()
+    expect(renewals(f)).toEqual(["renewLease vm_l 3d"])
+    expect(acted(f)).toEqual([])
+    expect(existsSync(join(f.services.ledgerRoot, "automation.lock"))).toBe(false)
+    expect(existsSync(join(f.services.ledgerRoot, LEASE_LOCK))).toBe(true)
+    expect(b.cost.automation()).toBe("off (access)")
+    // B's idle check: nothing B runs will sleep the idle work, so it speaks.
+    await costHooks(b.services).idle({ sessionID: "ses_b" })
+    expect(f.synthetic.map((note) => note.text)[0]).toStartWith("boxd: 1 idle work is running")
+    // A, with consent, takes automation.lock and cleans up; it leaves renewing to B.
+    const a = loop()
+    await a.tick()
+    expect(acted(f)).toEqual(["harvest fin", "sleep fin"])
+    expect(f.services.cost.automation()).toBe("on")
+    f.clock.now = new Date(T0.getTime() + 7 * 3_600_000)
+    await a.tick()
+    await b.loop.tick()
+    expect(renewals(f)).toEqual(["renewLease vm_l 3d", "renewLease vm_l 3d"])
+  })
+
+  test("A's own idle check stays silent while A acts", async () => {
+    const { f, loop } = setup({ works: [work("fin", { idleSince: minutesAgo(T0, 30), notify: "ses_a" })], records: [record("fin")] })
+    await loop().tick()
+    await costHooks(f.services).idle({ sessionID: "ses_a" })
+    expect(f.synthetic).toEqual([])
   })
 })

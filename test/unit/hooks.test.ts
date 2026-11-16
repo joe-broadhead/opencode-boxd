@@ -155,9 +155,12 @@ describe("the compaction hook", () => {
     expect(part.match(/\(idle\)/g)).toHaveLength(30)
     // About 100-300 tokens, once per compaction.
     expect(tokens(part)).toBeLessThanOrEqual(300)
-    // The first request after it carries the line and the ids once, whatever its tail (an overflow compaction drops
-    // the part above, and the compaction replaced the cached history anyway).
-    const after = request("ses_coord", "tool")
+    // A request mid tool loop after it still gets nothing: the turn-start rule holds.
+    const midLoop = request("ses_coord", "tool")
+    hooks.context(midLoop)
+    expect(midLoop.messages).toHaveLength(3)
+    // The first request that starts a turn carries the line and the ids once (an overflow compaction drops the part).
+    const after = request("ses_coord")
     hooks.context(after)
     expect(after.messages).toHaveLength(4)
     const carried = textOf(after.messages[3])

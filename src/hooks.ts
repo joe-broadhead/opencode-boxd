@@ -13,8 +13,8 @@
  *   and is never stored.
  * - **`compaction`**: for an owner session, one new trailing `user` message asking the summary to keep the open works
  *   (at most 30 ids with their phase); `system` untouched. A summariser may drop it (an overflow compaction always
- *   does), so the first request after a compaction carries the line and the same ids once, whatever its tail: the
- *   compaction has replaced the cached history anyway.
+ *   does), so the first request that starts a turn after a compaction carries the line and the same ids once, by the
+ *   same turn-start rule as the line.
  * - **`experimental.idle`**: speaks only when money burns and automation will not act; one note at most per 30 minutes
  *   per session, tagged `metadata: { boxd: "idle-check", id }`, silent while its fingerprint is unchanged and when the
  *   session's newest input is its own note. Experimental in OpenCode: if it fails to register, status says so and
@@ -117,12 +117,14 @@ export function costHooks(services: CostServices): CostHooks {
         const { works, owners: set } = fleet()
         if (!set.has(input.sessionID)) return
         const line = fleetLine({ works, rates: internals.rates(), automation: services.cost.automation(), budget: internals.cachedBudget() })
+        // Mid tool loop nothing is added, after a compaction too: it waits for the turn's start.
+        if (!startsTurn(input.messages)) return
         if (compacted.delete(input.sessionID)) {
           lines.set(input.sessionID, line.fingerprint)
           input.messages.push(userMessage(input.messages, `${line.text}\n${openWorks(works)}; boxd_status lists all.`))
           return
         }
-        if (lines.get(input.sessionID) === line.fingerprint || !startsTurn(input.messages)) return
+        if (lines.get(input.sessionID) === line.fingerprint) return
         lines.set(input.sessionID, line.fingerprint)
         input.messages.push(userMessage(input.messages, line.text))
       }),

@@ -1,6 +1,6 @@
 /**
  * Package E's automation loop (design §C.2, §C.3): auto-harvest then auto-sleep of finished and orphaned works, lease
- * renewal, under `automation.lock`, never a drop. Package E owns this file. `src/plugin.ts` starts it once and disposes
+ * renewal, under two locks, never a drop. Package E owns this file. `src/plugin.ts` starts it once and disposes
  * it with the plugin.
  *
  * - **Consent** (round 4, M-2): harvest and sleep run only when `consent(options)` is on: by default at `access: "all"`,
@@ -8,9 +8,12 @@
  * - **Leases protect work, at every access level.** A work's `lease` is the delete-after timer boxd enforces, set with the
  *   person's `leaseDays` when the work was made: that is the consent (§C.2). So every open record that holds a lease is
  *   renewed with its own `lease.days`, whatever this process's `leaseDays` is, while it is busy or not saved; a renewal
- *   never shortens a lease. The loop takes the lock whenever any open record holds one.
- * - **One owner:** only the process holding `automation.lock` (B's heartbeat lock) acts, and it checks the lock again just
- *   before each work's actions, so a work is never harvested twice at once by two OpenCode processes.
+ *   never shortens a lease.
+ * - **Two locks, two jobs** (B's heartbeat lock for both). `lease.lock`: any process may take it while an open record
+ *   holds a lease, whatever its consent, and its holder alone renews. `automation.lock`: only a process with consent ever
+ *   takes it, and its holder alone harvests and sleeps, so a process without consent that renews leases never keeps a
+ *   consenting one from cleaning up. Each holder checks its lock again just before each action, so a work is never
+ *   harvested or renewed twice at once by two OpenCode processes.
  * - **A finished work** (idle for `autoSleepMinutes`, or ready with no prompt for 30 minutes) and **an orphan** (its
  *   coordinator deleted, archived or re-parented, as the watcher marks it, or untouched for `orphanHours`) is harvested,
  *   then slept, one work at a time. Harvest's export checks the tree is idle in its own exec, so it is the one guest
@@ -58,6 +61,8 @@ export interface AutomationSeam {
   readonly tickMs?: number
   /** Where `automation.lock` lives; the ledger root by default. */
   readonly lockPath?: string
+  /** Where `lease.lock` lives; the ledger root by default. */
+  readonly leaseLockPath?: string
 }
 
 export interface Automation {
@@ -76,17 +81,47 @@ const codeOf = (item: unknown): Code => {
   return isCode(code) ? code : "RUN_FAILED"
 }
 
+/** The lease renewer's lock, beside `automation.lock` in the ledger root. */
+export const LEASE_LOCK = "lease.lock"
+
+/** One cross-process lock this loop may hold: taken without waiting, checked again before each action. */
+function holder(path: string, purpose: string, root: string, signal: AbortSignal) {
+  let lock: LockHandle | null = null
+  return {
+    /** Holds the lock now, taking it if it is free; false when another live process holds it. */
+    async hold(): Promise<boolean> {
+      if (lock && !lock.lost) return true
+      try {
+        await mkdir(root, { recursive: true, mode: 0o700 })
+        lock = await acquireLock(path, { purpose, waitMs: 0, signal })
+      } catch {
+        lock = null
+      }
+      return lock !== null
+    },
+    /** Still held, read from the lock folder now. */
+    async still(): Promise<boolean> {
+      return lock !== null && !lock.lost && !signal.aborted && (await lock.holds().catch(() => false))
+    },
+    async release(): Promise<void> {
+      const held = lock
+      lock = null
+      await held?.release().catch(() => undefined)
+    },
+  }
+}
+
 /** The loop itself, apart from its timer, so the unit tests drive each pass. */
 export function automation(services: CostServices, seam: AutomationSeam = {}): Automation {
   const { options, watch, ledger, boxd, actions, clock } = services
   const shared = sharedOf(services.cost)
   const consented = allowed(options)
-  const lockPath = seam.lockPath ?? join(services.ledgerRoot, LEDGER_PATHS.automationLock)
+  const controller = new AbortController()
+  const cleanupLock = holder(seam.lockPath ?? join(services.ledgerRoot, LEDGER_PATHS.automationLock), "automation", services.ledgerRoot, controller.signal)
+  const leaseLock = holder(seam.leaseLockPath ?? join(services.ledgerRoot, LEASE_LOCK), "lease", services.ledgerRoot, controller.signal)
   const log: { workId: string; why: Why; step: "harvest" | "sleep" | "renew" | "skip"; result: string }[] = []
   /** The last attempt per work: skipped until the work changes (a new idle start) or `RETRY_MS` passed. */
   const attempts = new Map<string, { readonly key: string; readonly at: number; readonly ok: boolean }>()
-  const controller = new AbortController()
-  let lock: LockHandle | null = null
   let calls = 0
 
   const tag = (): CallTag => ({ callId: `automation-${++calls}`, source: "automation" })
@@ -95,23 +130,18 @@ export function automation(services: CostServices, seam: AutomationSeam = {}): A
   const now = () => clock.now().getTime()
   const message = (error: unknown) => (error instanceof Error ? error.message.split("\n")[0]!.slice(0, 160) : String(error))
 
-  async function holdLock(): Promise<boolean> {
-    if (lock && !lock.lost) return true
-    try {
-      await mkdir(services.ledgerRoot, { recursive: true, mode: 0o700 })
-      lock = await acquireLock(lockPath, { purpose: "automation", waitMs: 0, signal: controller.signal })
-    } catch {
-      lock = null
-    }
-    shared.owner = lock ? "owner" : "not-owner"
-    return lock !== null
+  /** Holds `automation.lock` (consenting processes only); status's `not-owner` when another process holds it. */
+  async function holdCleanup(): Promise<boolean> {
+    const held = await cleanupLock.hold()
+    shared.owner = held ? "owner" : "not-owner"
+    return held
   }
 
-  /** Still the owner, read from the lock folder now: checked just before each work's actions. */
+  /** Still the cleanup owner, read from the lock folder now: checked just before each work's actions. */
   async function stillOwner(): Promise<boolean> {
-    const held = lock !== null && !lock.lost && (await lock.holds().catch(() => false))
+    const held = await cleanupLock.still()
     if (!held) shared.owner = "not-owner"
-    return held && !controller.signal.aborted
+    return held
   }
 
   /** Why automation should harvest and sleep this work now, or nothing. */
@@ -242,8 +272,11 @@ export function automation(services: CostServices, seam: AutomationSeam = {}): A
     }
   }
 
-  /** Renewals for busy or unsaved leased works, with each lease's own days, and a harvest before a lease ends (§C.2, L-2). */
-  async function leases(records: readonly WorkRecord[]): Promise<void> {
+  /**
+   * Renewals for busy or unsaved leased works, with each lease's own days, by the `lease.lock` holder (`renewing`); and a
+   * harvest before a lease ends, by the `automation.lock` holder (`cleaning`) only (§C.2, L-2).
+   */
+  async function leases(records: readonly WorkRecord[], renewing: boolean, cleaning: boolean): Promise<void> {
     const at = now()
     const snapshot = new Map(watch.snapshot().works.map((work) => [work.workId, work]))
     const other = records.filter((record) => record.lease!.days !== options.leaseDays)
@@ -261,8 +294,8 @@ export function automation(services: CostServices, seam: AutomationSeam = {}): A
       if (!record.region || !record.machineId || controller.signal.aborted) continue
       const work = snapshot.get(record.workId)
       const saved = ledger.saved(record)
-      if ((work?.phase === "busy" || saved !== "fresh") && at - Date.parse(record.lease!.renewedAt) >= LEASE_RENEW_MS) {
-        if (!(await stillOwner())) return
+      if (renewing && (work?.phase === "busy" || saved !== "fresh") && at - Date.parse(record.lease!.renewedAt) >= LEASE_RENEW_MS) {
+        if (!(await leaseLock.still())) return
         try {
           await renew(record.workId)
           log.push({ workId: record.workId, why: "lease", step: "renew", result: "ok" })
@@ -270,7 +303,7 @@ export function automation(services: CostServices, seam: AutomationSeam = {}): A
           log.push({ workId: record.workId, why: "lease", step: "renew", result: codeOfError(error) })
         }
       }
-      if (consented && work && work.phase === "idle" && saved !== "fresh" && Date.parse(record.lease!.expiresAt) - at <= LEASE_WARN_MS && shouldTry(work, at)) expiring.push(work)
+      if (cleaning && work && work.phase === "idle" && saved !== "fresh" && Date.parse(record.lease!.expiresAt) - at <= LEASE_WARN_MS && shouldTry(work, at)) expiring.push(work)
     }
     for (const work of expiring) {
       if (!(await stillOwner())) return
@@ -314,14 +347,15 @@ export function automation(services: CostServices, seam: AutomationSeam = {}): A
     try {
       if (options.budget) await services.cost.budget(tag()).catch(() => undefined)
       const holding = await leased()
-      if (!consented && !holding.length) {
+      // Only a process with consent ever takes automation.lock; any process may renew leases.
+      const cleaning = consented && (await holdCleanup())
+      if (cleaning) await sweep()
+      if (!holding.length) {
         services.report("lease", undefined)
         return
       }
-      if (!(await holdLock())) return
-      if (consented) await sweep()
-      if (holding.length) await leases(holding)
-      else services.report("lease", undefined)
+      const renewing = await leaseLock.hold()
+      if (renewing || cleaning) await leases(holding, renewing, cleaning)
     } catch (error) {
       if (controller.signal.aborted) return
       services.report("automation", `The automation pass failed: ${message(error)}`)
@@ -340,9 +374,7 @@ export function automation(services: CostServices, seam: AutomationSeam = {}): A
       // Stop first and let the pass in flight end, then give the lock up: no other process acts while this one does.
       controller.abort()
       await current
-      const held = lock
-      lock = null
-      await held?.release().catch(() => undefined)
+      await Promise.all([cleanupLock.release(), leaseLock.release()])
     },
   }
 }
