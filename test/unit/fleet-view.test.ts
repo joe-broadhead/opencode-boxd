@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { jobRun } from "../../src/fleet/job.js"
 import { fleetStatus, statusInput } from "../../src/fleet/status.js"
 import type { WorkRecord } from "../../src/ledger/types.js"
-import type { JobResult, ListResult, Refusal, StatusResult } from "../../src/results.js"
+import type { BudgetState, JobResult, ListResult, Refusal, StatusResult } from "../../src/results.js"
+import type { CostPort } from "../../src/services.js"
 import { budgetProblems, SPAWN_BUDGETS } from "../support/spawn-count.js"
 import { startWorld, type World } from "../support/fleet-world.js"
 
@@ -97,6 +98,31 @@ describe("boxd_status", () => {
     expect(answer.cost.today.unavailable).toContain("cost service is not available")
     expect(answer.cleanup).toEqual([])
     expect(answer.automation).toBe("on")
+  })
+
+  test("the budget: reached with warn is BUDGET_WARN, reached with refuse is only the budget block, unmeasurable is BUDGET_UNKNOWN", async () => {
+    const cost = (budget: BudgetState): CostPort => ({
+      block: async () => ({ currency: "EUR", perHour: { estimate: 0, running: 0, asleep: 0, basis: "x", ratesSource: "usage" }, today: { machines: 6, models: { currency: "USD", total: 0 }, complete: true } }),
+      cleanup: async () => [],
+      automation: () => "on",
+      budget: async () => budget,
+      assertBudget: async () => {},
+    })
+    const answer = async (budget: BudgetState) => {
+      await world.dispose()
+      world = await startWorld({ options: { budget: { daily: 5, action: budget.action } }, cost: cost(budget) })
+      return status()
+    }
+    const warn = await answer({ daily: 5, today: 6, action: "warn", state: "reached" })
+    expect(warn.warnings).toEqual(["BUDGET_WARN"])
+    expect(warn.budget).toEqual({ daily: 5, today: 6, action: "warn", state: "reached" })
+    // BUDGET_REACHED is the refusal of a call that would make a machine run (ensure, resume…), never a status warning.
+    const refuse = await answer({ daily: 5, today: 6, action: "refuse", state: "reached" })
+    expect(refuse.warnings).toBeUndefined()
+    expect(refuse.budget?.state).toBe("reached")
+    expect(JSON.stringify(refuse)).not.toContain("BUDGET_REACHED")
+    expect((await answer({ daily: 5, today: 4, action: "warn", state: "ok" })).warnings).toBeUndefined()
+    expect((await answer({ daily: 5, today: null, action: "refuse", state: "unknown" })).warnings).toEqual(["BUDGET_UNKNOWN"])
   })
 
   test("a listing that fails keeps the cached phases, marks them stale, and says the CLI did not answer", async () => {
