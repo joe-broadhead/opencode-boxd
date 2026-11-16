@@ -509,6 +509,6 @@ function laptopOpencode() {
       return
     }
     state.laptopSessions[id] = { title: exported.info.title ?? id, messages: exported.messages?.length ?? 0 }
-    process.stdout.write(`Imported session ${id}\n`)
+    process.stdout.write(`Imported session: ${id}\n`)
   })
 }

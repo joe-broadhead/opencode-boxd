@@ -1,9 +1,11 @@
-// Owner: package C2 (files in and out); package C1 imports it for `directory`. Its behaviour tests come back with C2.
+// Owner: package C2 (files in and out); package C1 imports it for `directory`. Tested through C2's runs
+// (`test/unit/sessions.test.ts`).
 // Laptop paths for the files a work moves in and out. A path must be inside the project or a root the user names, it
 // must not be a symlink, and it must stay inside the root once resolved: a plugin that writes a user's files is exactly
 // where a `..` or a symlinked folder would escape.
 import { createHash } from "node:crypto"
-import { lstat, readFile, realpath, stat, writeFile, mkdir, rename, unlink } from "node:fs/promises"
+import { createReadStream } from "node:fs"
+import { chmod, lstat, realpath, stat, rename, unlink } from "node:fs/promises"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { boxdError } from "./errors.js"
 
@@ -83,50 +85,55 @@ async function nearestExisting(path: string): Promise<string> {
   }
 }
 
-/** A laptop file, read once, with the size and digest the ledger records. */
-interface LoadedFile {
-  readonly path: string
-  readonly bytes: number
-  readonly sha256: string
-  readonly body: Buffer
-}
-
-export async function loadFile(path: string, roots: readonly string[]): Promise<LoadedFile> {
-  const real = await resolveLaptopPath(path, roots)
-  const info = await stat(real)
-  if (!info.isFile()) throw boxdError("PATH_REFUSED", `"${path}" is not a file.`)
-  if (info.size > FILE_LIMIT) throw boxdError("FILE_TOO_LARGE", `"${path}" is ${info.size} bytes; the limit is ${FILE_LIMIT}.`)
-  const body = await readFile(real)
-  return { path: real, bytes: body.byteLength, sha256: sha256(body), body }
-}
-
 /** The cap over a whole call: every file counted together. */
 export function assertTotal(files: readonly { bytes: number }[]): void {
   const total = files.reduce((sum, file) => sum + file.bytes, 0)
   if (total > TOTAL_LIMIT) throw boxdError("FILE_TOO_LARGE", `The files total ${total} bytes; the limit is ${TOTAL_LIMIT}.`)
 }
 
-export const sha256 = (body: Buffer) => createHash("sha256").update(body).digest("hex")
+/** A file's size and sha256, streamed, so a large file never sits whole on the server's thread (design §4.3). */
+export async function digestFile(path: string): Promise<{ readonly bytes: number; readonly sha256: string }> {
+  const hash = createHash("sha256")
+  let bytes = 0
+  for await (const chunk of createReadStream(path)) {
+    bytes += (chunk as Buffer).byteLength
+    hash.update(chunk as Buffer)
+  }
+  return { bytes, sha256: hash.digest("hex") }
+}
 
 /**
- * Writes a file the guest produced: a unique temp file beside it, then a rename, 0600. It refuses to replace a file whose
- * current digest differs from the one last harvested, so a local edit is never overwritten.
+ * A laptop file a submit copies up: inside a root, not a symlink, a regular file within `FILE_LIMIT`, with its size and
+ * streamed sha256. Its bytes are never read into the server; `machine cp` sends them.
  */
-export async function storeFile(path: string, body: Buffer, previous: string | undefined): Promise<void> {
-  const existing = await readFile(path).catch(() => undefined)
-  if (existing) {
-    const digest = sha256(existing)
-    if (digest !== sha256(body) && digest !== previous) {
+export async function laptopFile(path: string, roots: readonly string[]): Promise<{ readonly path: string; readonly bytes: number; readonly sha256: string }> {
+  const real = await resolveLaptopPath(path, roots)
+  const info = await stat(real)
+  if (!info.isFile()) throw boxdError("PATH_REFUSED", `"${path}" is not a file.`)
+  if (info.size > FILE_LIMIT) throw boxdError("FILE_TOO_LARGE", `"${path}" is ${info.size} bytes; the limit is ${FILE_LIMIT}.`)
+  const digest = await digestFile(real)
+  if (digest.bytes > FILE_LIMIT) throw boxdError("FILE_TOO_LARGE", `"${path}" is ${digest.bytes} bytes; the limit is ${FILE_LIMIT}.`)
+  return { path: real, ...digest }
+}
+
+/**
+ * Puts a file that came back from the guest in place: `temp` (already beside `path`, written by `machine cp`) is checked
+ * against the size limit, then renamed over `path`, 0600. A laptop file whose digest differs from both the new one and
+ * the one last harvested is a local edit, so it is kept and the temp file deleted (`FILE_CONFLICT`).
+ */
+export async function placeFile(temp: string, path: string, previous: string | undefined): Promise<{ readonly bytes: number; readonly sha256: string }> {
+  try {
+    const digest = await digestFile(temp)
+    if (digest.bytes > FILE_LIMIT) throw boxdError("FILE_TOO_LARGE", `"${path}" came back as ${digest.bytes} bytes; the limit is ${FILE_LIMIT}.`)
+    const existing = await digestFile(path).catch(() => undefined)
+    if (existing && existing.sha256 !== digest.sha256 && existing.sha256 !== previous) {
       throw boxdError("FILE_CONFLICT", `"${path}" changed since the last harvest, so it was not overwritten.`)
     }
-  }
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 })
-  const temp = `${path}.${process.pid}.${Date.now()}.tmp`
-  try {
-    await writeFile(temp, body, { mode: 0o600 })
+    await chmod(temp, 0o600)
     await rename(temp, path)
+    return digest
   } catch (error) {
     await unlink(temp).catch(() => undefined)
-    throw boxdError("LEDGER_FAILED", `"${path}" could not be written: ${error instanceof Error ? error.message : String(error)}`)
+    throw error
   }
 }

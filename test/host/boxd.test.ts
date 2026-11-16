@@ -2,7 +2,8 @@
 // inserts the default rules for each access value, asks for every change and never for a read, answers describe and
 // the status RPC, and runs nothing when a prompt is declined or a rule denies. Each tool's own behaviour is its
 // package's host suite (design §7.2): package C1's tools are in `machines.test.ts`; until a package fills a tool, the
-// tool answers NOT_IMPLEMENTED and runs no CLI.
+// tool answers NOT_IMPLEMENTED and runs no CLI. Package C2's tools are filled: for a work the ledger does not hold they
+// answer NOT_OURS, and also run no CLI.
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
@@ -23,6 +24,14 @@ const rule = (action: string, effect: Rule["effect"]): Rule => ({ action, resour
 const NOT_IMPLEMENTED = { state: "failed", error: "NOT_IMPLEMENTED" }
 /** The tools whose package has not filled them yet on this branch. */
 const UNBUILT = TOOLS.filter((tool) => tool.owner !== "C1")
+const NOT_OURS = { state: "refused", error: "NOT_OURS" }
+/** What a tool answers here for review-api, a work the ledger does not hold. */
+const unknownWork = (id: string, input: Record<string, unknown>) => {
+  const spec = TOOLS.find((tool) => tool.id === id)!
+  if (spec.owner !== "C2") return NOT_IMPLEMENTED
+  // boxd_read checks its input first: it needs a path or the log.
+  return id === "boxd_read" && input.path === undefined && input.log === undefined ? { state: "refused", error: "NAME_INVALID" } : NOT_OURS
+}
 
 type Host = Awaited<ReturnType<typeof startHost>>
 
@@ -76,7 +85,7 @@ describe("the plugin on a stock host", () => {
     }
   })
 
-  test("a read and a change run without asking by default; each answers NOT_IMPLEMENTED and runs no CLI", async () => {
+  test("a read and a change run without asking by default; each answers NOT_IMPLEMENTED (or NOT_OURS when built) and runs no CLI", async () => {
     const host = await startHost()
     try {
       const build = await session(host)
@@ -84,7 +93,7 @@ describe("the plugin on a stock host", () => {
       for (const tool of UNBUILT) {
         const input = tool.name === "reassign" ? { from: "spare-1", to: "review-api" } : tool.name === "exec" ? { workId: "review-api", command: ["true"] } : { workId: "review-api", text: "Add a health check." }
         const result = await attempt(host, build, "build", tool.id, "reject", input)
-        expect({ tool: tool.id, asked: result.asked, output: result.output }).toMatchObject({ tool: tool.id, asked: undefined, output: NOT_IMPLEMENTED })
+        expect({ tool: tool.id, asked: result.asked, output: result.output }).toMatchObject({ tool: tool.id, asked: undefined, output: unknownWork(tool.id, input) })
       }
       expect(host.boxd.calls().slice(before)).toEqual([])
     } finally {
@@ -100,7 +109,7 @@ describe("the plugin on a stock host", () => {
       expect(declined.asked).toBe("boxd_drop")
       expect(declined.ok).toBe(false)
       const allowed = await attempt(host, asking, "build", "boxd_drop", "once", { workId: "a" })
-      expect(allowed).toMatchObject({ asked: "boxd_drop", ok: true, output: NOT_IMPLEMENTED })
+      expect(allowed).toMatchObject({ asked: "boxd_drop", ok: true, output: NOT_OURS })
       expect(host.boxd.calls()).toEqual([])
     } finally {
       await host.close()
@@ -119,7 +128,7 @@ describe("the plugin on a stock host", () => {
         expect({ name: method.name, kind: method.kind, class: method.class, action: method.action }).toEqual({ name: method.name, kind: "plugin", class: spec.class, action: spec.id })
       }
 
-      expect((await rpcCall(host, "boxd_submit", { sessionID: build, input: { workId: "review-api", text: "Add a health check." } })).output).toMatchObject(NOT_IMPLEMENTED)
+      expect((await rpcCall(host, "boxd_submit", { sessionID: build, input: { workId: "review-api", text: "Add a health check." } })).output).toMatchObject(NOT_OURS)
 
       const denied = await session(host, "build", [rule("boxd_drop", "deny")])
       expect(await refusedCode(rpcCall(host, "boxd_drop", { sessionID: denied, input: { workId: "review-api" } }))).toBe("PERMISSION_DENIED")
@@ -169,7 +178,7 @@ describe("the access option (OD-29)", () => {
     const host = await startHost({ options: { access: "ask-changes" } })
     try {
       const build = await session(host)
-      for (const id of READ_TOOLS) expect((await rpcCall(host, id, { sessionID: build, input: { workId: "review-api" } })).output).toMatchObject(NOT_IMPLEMENTED)
+      for (const id of READ_TOOLS) expect((await rpcCall(host, id, { sessionID: build, input: { workId: "review-api" } })).output).toMatchObject(unknownWork(id, { workId: "review-api" }))
       for (const id of CHANGING_TOOLS) expect({ id, code: await refusedCode(rpcCall(host, id, { sessionID: build, input: { workId: "review-api" } })) }).toEqual({ id, code: "PERMISSION_DENIED" })
       expect(await effect(host, "build", "boxd_exec")).toBe("ask")
       expect(await effect(host, "build", "boxd_read")).toBe("allow")
@@ -189,7 +198,8 @@ describe("the access option (OD-29)", () => {
       expect(dry).toMatchObject({ asked: "boxd_drop", ok: false })
       // A script cannot answer a prompt, so its select is refused.
       expect(await refusedCode(rpcCall(host, "boxd_harvest", { sessionID: build, input: { select: "unsaved-finished" } }))).toBe("PERMISSION_DENIED")
-      expect(host.boxd.calls()).toEqual([])
+      // A select is resolved before the prompt, so the prompt names the works: that read is the only CLI call.
+      expect(host.boxd.calls().filter((line) => !line.startsWith("machine list --region all"))).toEqual([])
     } finally {
       await host.close()
     }
