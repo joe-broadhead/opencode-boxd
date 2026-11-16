@@ -2,6 +2,7 @@
 // real published ledger in a temp root, a fake host session API that records notices, and the watcher with no timer.
 import { cpSync } from "node:fs"
 import { join } from "node:path"
+import { createCost } from "../../src/cost/index.js"
 import { createImportV0 } from "../../src/import-v0.js"
 import { createLedger } from "../../src/ledger/index.js"
 import type { WorkRecord } from "../../src/ledger/types.js"
@@ -70,7 +71,14 @@ export interface World {
   dispose(): Promise<void>
 }
 
-export async function startWorld(options: { readonly options?: Record<string, unknown>; readonly cost?: CostPort; readonly latencyMs?: readonly [number, number] } = {}): Promise<World> {
+export async function startWorld(
+  options: {
+    readonly options?: Record<string, unknown>
+    /** A fake cost port, or "real" for package E's own `createCost` over this world. */
+    readonly cost?: CostPort | "real"
+    readonly latencyMs?: readonly [number, number]
+  } = {},
+): Promise<World> {
   const root = tempRoot("boxd-fleet-")
   const guest = startFakeGuest({ version: "2.2.6" })
   const counter = await startSpawnCounter({ guestPort: guest.port, ...(options.latencyMs ? { latencyMs: options.latencyMs } : {}) })
@@ -94,7 +102,8 @@ export async function startWorld(options: { readonly options?: Record<string, un
   const ledger = createLedger({ ...host, ...runtime, importV0 })
   const core: CoreServices = { ...host, ...runtime, importV0, ledger }
   const watcher = createWatch(core, { autoStart: false })
-  const services: FleetServices = { ...core, watch: watcher.watch, cost: options.cost ?? notBuilt<CostPort>("cost") }
+  const cost = options.cost === "real" ? createCost({ ...core, watch: watcher.watch }) : (options.cost ?? notBuilt<CostPort>("cost"))
+  const services: FleetServices = { ...core, watch: watcher.watch, cost }
   const context = (callId: string, source: CallTag["source"] = "boxd_status"): OpContext => ({ call: { callId, source } })
 
   async function record(workId: string, change: (record: WorkRecord) => WorkRecord): Promise<WorkRecord> {

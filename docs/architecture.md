@@ -77,7 +77,9 @@ the guest's own `/home/boxd/work/<work id>`. A laptop path is never sent to the 
 running, and whose last read is older than 60 s. Those reads run in the background lane, at most 8 s each and 20 s for
 the call; a work whose read misses the budget keeps its last phase, marked `stale`. An idle, ready or asleep work's guest
 is never read by status, because an inbound exec resets the machine's idle clock. An idle work's phase changes only by
-a change tool, which records it, or by its machine going to sleep, which the listing shows.
+a change tool, which records it, or by its machine going to sleep, which the listing shows. A `machine list` that fails
+is never a guest failure: the reads that needed it are not made (`kind: "listing-failed"`), each work keeps its last
+known phase, marked stale, and status, the watcher and `boxd_job` still answer.
 
 The answer is bounded: at most `limit` works in `attention` or `works`, worst first, with `more` for the rest, and more
 than 3 works that share a reason and a code fold into one `groups` line. `since` answers from `events.jsonl`, so it

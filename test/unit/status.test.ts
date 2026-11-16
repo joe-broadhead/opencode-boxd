@@ -84,7 +84,7 @@ describe("the status model", () => {
     const status = buildStatus(
       statusFacts({
         fleet: fleet({
-          cost: { currency: "EUR", perHour: { estimate: 0.41, running: 21, asleep: 10, basis: "x", ratesSource: "usage" }, today: { machines: 6.12, models: { currency: "USD", total: 48.3 }, complete: false } },
+          cost: { currency: "EUR", perHour: { estimate: 0.41, running: 21, asleep: 10, basis: "x", ratesSource: "usage" }, today: { machines: 6.12, complete: false } },
           cleanup: [{ action: "sleep", select: "finished", works: 9, savesPerHour: 0.33, call: 'boxd_sleep({ select: "finished" })' }],
         }),
       }),
@@ -94,11 +94,11 @@ describe("the status model", () => {
 
   test("the Cost row says why a figure is missing: a member's sign-in, or no cost service", () => {
     const member = buildStatus(
-      statusFacts({ fleet: fleet({ cost: { currency: "USD", perHour: { estimate: 0.2, running: 2, asleep: 0, basis: "x", ratesSource: "public" }, today: { machines: null, models: { currency: "USD", total: 0 }, complete: false } } }) }),
+      statusFacts({ fleet: fleet({ cost: { currency: "USD", perHour: { estimate: 0.2, running: 2, asleep: 0, basis: "x", ratesSource: "public" }, today: { machines: null, complete: false } } }) }),
     )
     expect(formatStatus(member)).toContain("~$0.20/h (an estimate) (today's machine cost needs an owner's or admin's boxd sign-in)")
     const none = buildStatus(
-      statusFacts({ fleet: fleet({ cost: { currency: "unknown", perHour: { estimate: 0, running: 0, asleep: 0, basis: "x", ratesSource: "public" }, today: { machines: null, models: { currency: "USD", total: 0 }, complete: false, unavailable: "The cost service is not available (not built)." } } }) }),
+      statusFacts({ fleet: fleet({ cost: { currency: "unknown", perHour: { estimate: 0, running: 0, asleep: 0, basis: "x", ratesSource: "public" }, today: { machines: null, complete: false, unavailable: "The cost service is not available (not built)." } } }) }),
     )
     expect(none.cost?.perHour).toBeNull()
     expect(formatStatus(none)).toContain("no estimate")

@@ -162,12 +162,12 @@ export function observe(answer: PhaseAnswer, previous: Observed | undefined, at:
 
 /**
  * True for a read that was not made, rather than one that failed: the read rule refused it (the machine is not running
- * in a fresh listing, `kind: "not-readable"`, or no listing young enough could be had, `kind: "listing-stale"`), or the
- * call stopped it. The work keeps its cached phase, marked stale (design §3.1 step 3); it is never a guest failure.
+ * in a fresh listing, `kind: "not-readable"`, or no listing young enough could be had, `kind: "listing-stale"`), the
+ * listing it needed failed (`kind: "listing-failed"`), or the call stopped it. The work keeps its cached phase, marked stale (design §3.1 step 3); it is never a guest failure.
  */
 export function notRead(error: unknown): boolean {
   if (!(error instanceof BoxdError)) return false
-  return error.code === "CANCELLED" || error.details.kind === "not-readable" || error.details.kind === "listing-stale"
+  return error.code === "CANCELLED" || ["not-readable", "listing-stale", "listing-failed"].includes(String(error.details.kind))
 }
 
 /**

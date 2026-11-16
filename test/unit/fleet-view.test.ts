@@ -102,7 +102,7 @@ describe("boxd_status", () => {
 
   test("the budget: reached with warn is BUDGET_WARN, reached with refuse is only the budget block, unmeasurable is BUDGET_UNKNOWN", async () => {
     const cost = (budget: BudgetState): CostPort => ({
-      block: async () => ({ currency: "EUR", perHour: { estimate: 0, running: 0, asleep: 0, basis: "x", ratesSource: "usage" }, today: { machines: 6, models: { currency: "USD", total: 0 }, complete: true } }),
+      block: async () => ({ currency: "EUR", perHour: { estimate: 0, running: 0, asleep: 0, basis: "x", ratesSource: "usage" }, today: { machines: 6, complete: true } }),
       cleanup: async () => [],
       automation: () => "on",
       budget: async () => budget,

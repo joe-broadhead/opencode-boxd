@@ -142,7 +142,15 @@ export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
   async function readable(target: ReadTarget, context: OpContext): Promise<ReadTarget> {
     target = newest(target)
     if (now() - target.listing.takenAt <= TIMEOUTS.readListingMaxAgeMs) return target
-    return { ...target, listing: await list({ maxAgeMs: TIMEOUTS.readListingMaxAgeMs }, context) }
+    try {
+      return { ...target, listing: await list({ maxAgeMs: TIMEOUTS.readListingMaxAgeMs }, context) }
+    } catch (error) {
+      if (error instanceof BoxdError && error.code === "CANCELLED") throw error
+      // The listing failed, not the guest: nothing was read, and the caller may try again (`kind: "listing-failed"`).
+      const code = error instanceof BoxdError ? error.code : "BOXD_FAILED"
+      const reason = error instanceof BoxdError ? error.what : error instanceof Error ? error.message : String(error)
+      throw boxdError(code, `The machine listing a read of ${target.name} needs failed (${reason.replace(/\.$/, "")}); nothing was read.`, { kind: "listing-failed", retryable: true })
+    }
   }
 
   async function exec(target: ReadTarget | ChangeTarget, command: string, settings: { readonly timeoutSeconds: number; readonly json: boolean; readonly stdin?: string }, context: OpContext) {

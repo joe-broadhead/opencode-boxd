@@ -419,7 +419,9 @@ How it reads, with a budget of about 3 CLI calls plus bounded guest reads:
    A read that waited in the queue past its listing's 2 s joins one fresh shared listing and waits at the front of the
    pool, so a queue of reads costs one more listing per 2 s window; only a machine that listing does not show running
    is refused (`kind: "not-readable"`), and that work too keeps its cached phase, marked stale: it is never counted as
-   a guest failure.
+   a guest failure. A listing that fails is the same: the reads it was for are not made (`kind: "listing-failed"`), each
+   work keeps its cached phase marked stale, status still answers with a note that the listing failed, the watcher
+   skips its sweep and tries again at the next interval, and `boxd_job` answers each work's last known phase.
    An `idle` work's phase changes only by a change tool, which records it, or by the machine going to sleep, which the
    listing shows.
 4. `include` adds one call each: `env list --json`, `manage usage --json --since <oldest open work>`, and

@@ -23,7 +23,7 @@ export function fleet(overrides: Partial<StatusResult> = {}): StatusResult {
     cursorExpired: false,
     orphans: [],
     fleet: {},
-    cost: { currency: "EUR", perHour: { estimate: 0, running: 0, asleep: 0, basis: "rates × resident GiB", ratesSource: "usage" }, today: { machines: 0, models: { currency: "USD", total: 0 }, complete: false } },
+    cost: { currency: "EUR", perHour: { estimate: 0, running: 0, asleep: 0, basis: "rates × resident GiB", ratesSource: "usage" }, today: { machines: 0, complete: false } },
     cleanup: [],
     automation: "on",
     cli: { signedIn: true, version: null },

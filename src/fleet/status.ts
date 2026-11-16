@@ -221,7 +221,7 @@ function unavailableCost(reason: string): CostBlock {
   return {
     currency: "unknown",
     perHour: { estimate: 0, running: 0, asleep: 0, basis: "not estimated: the cost service is not available", ratesSource: "public" },
-    today: { machines: null, models: { currency: "USD", total: 0 }, complete: false, unavailable: `The cost service is not available (${reason}).` },
+    today: { machines: null, complete: false, unavailable: `The cost service is not available (${reason}).` },
   }
 }
 
@@ -277,11 +277,22 @@ export async function fleetStatus(services: FleetServices, input: StatusInput, c
 
   // Guest reads: busy, starting or unknown works only, never an idle one, under the read rule and the call's budget.
   const stale = new Set<string>()
+  let relistError: string | undefined
   if (call.guestReads && listing) {
     const at = now().getTime()
     const wanted = open.filter((record) => wantsRead(record, listing!, handle?.observed(record.workId), at, TIMEOUTS.cachedReadMaxAgeMs))
-    if (wanted.length) {
-      if (Date.now() - listing.takenAt > TIMEOUTS.readListingMaxAgeMs) listing = await services.boxd.list({ maxAgeMs: TIMEOUTS.readListingMaxAgeMs }, op())
+    if (wanted.length && Date.now() - listing.takenAt > TIMEOUTS.readListingMaxAgeMs) {
+      // The guest reads need a listing at most 2 s old. When it fails, nothing is read: every work keeps its cached
+      // phase, the ones that wanted a read are stale, and the call still answers.
+      try {
+        listing = await services.boxd.list({ maxAgeMs: TIMEOUTS.readListingMaxAgeMs }, op())
+      } catch (error) {
+        if (error instanceof BoxdError && error.code === "CANCELLED") throw error
+        relistError = reasonOf(error)
+        for (const record of wanted) stale.add(record.workId)
+      }
+    }
+    if (wanted.length && relistError === undefined) {
       const budget = new AbortController()
       const signal = call.signal ? AbortSignal.any([call.signal, budget.signal]) : budget.signal
       const readOp: OpContext = { call: call.tag, signal, pool: "background" }
@@ -485,7 +496,11 @@ export async function fleetStatus(services: FleetServices, input: StatusInput, c
       loopLagMaxMs: health.loopLagMaxMs,
       children: { now: health.children.now, cap: health.children.cap },
       ...(watchHealth?.notices.length ? { notices: watchHealth.notices } : {}),
-      ...(watchHealth?.watcher ? { watcher: watchHealth.watcher } : listingError ? { watcher: `The machine listing failed (${listingError}); phases are the last ones seen.` } : {}),
+      ...(listingError || relistError
+        ? { watcher: `The machine listing failed (${listingError ?? relistError}), so no guest was read: each work shows its last known phase, and the ones a read would have refreshed are marked stale. Next: boxd_status again in a later turn.` }
+        : watchHealth?.watcher
+          ? { watcher: watchHealth.watcher }
+          : {}),
     },
     ...(imported.state === "complete" && (imported.works > 0 || imported.blocked.length > 0) ? { import: { works: imported.works, errors: imported.blocked.length } } : {}),
   }

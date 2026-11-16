@@ -11,7 +11,7 @@
 import { BoxdError, boxdError, type Code } from "../errors.js"
 import type { WorkRecord } from "../ledger/types.js"
 import { LIST_ITEM_CONCURRENCY, LIST_MAX_ITEMS, TIMEOUTS, type CallTag, type Listing, type OpContext } from "../ports.js"
-import { excerpt } from "../redact.js"
+import { excerpt, reasonOf } from "../redact.js"
 import type { JobResult, ListResult, Refusal, WorkCost } from "../results.js"
 import type { FleetServices } from "../services.js"
 import { refusal } from "../tools.js"
@@ -93,13 +93,22 @@ async function eachLimited<T, R>(items: readonly T[], limit: number, fn: (item: 
 }
 
 /** One work's answer: from a guest read when its machine runs and it has a session, else from the listing and the ledger. */
-async function jobOf(services: FleetServices, record: WorkRecord, listing: Listing, input: JobInput, costs: ReadonlyMap<string, WorkCost> | undefined, op: OpContext): Promise<JobResult> {
+async function jobOf(
+  services: FleetServices,
+  record: WorkRecord,
+  listing: Listing,
+  input: JobInput,
+  costs: ReadonlyMap<string, WorkCost> | undefined,
+  op: OpContext,
+  /** Why the call's listing failed: then nothing is read, and the work answers its last known phase. */
+  listingFailed?: string,
+): Promise<JobResult> {
   const handle = watchHandle(services.watch)
   const previous = handle?.observed(record.workId)
   let observed: Observed | undefined = previous
   let tail: JobResult["tail"]
   let read = false
-  const running = record.state === "open" && rowOf(record, listing)?.status === "running"
+  const running = listingFailed === undefined && record.state === "open" && rowOf(record, listing)?.status === "running"
   if (running && record.session?.rootId) {
     read = true
     try {
@@ -125,7 +134,7 @@ async function jobOf(services: FleetServices, record: WorkRecord, listing: Listi
     }
     if (read && observed) handle?.remember(record.workId, observed)
   }
-  const state = read && observed ? observed.phase : phaseOf(record, listing, observed)
+  const state = read && observed ? observed.phase : phaseOf(record, listingFailed === undefined ? listing : undefined, observed)
   const outcome = outcomeOf(record, observed)
   const code = state === "unreachable" ? (observed?.code ?? codeOf(record, observed)) : outcome === "failed" || observed?.code === "SESSION_MISSING" ? codeOf(record, observed) : undefined
   const saved = services.ledger.saved(record)
@@ -149,7 +158,10 @@ async function jobOf(services: FleetServices, record: WorkRecord, listing: Listi
     guestVersion: observed?.guestVersion ?? null,
     ...(cost ? { cost } : {}),
     ...(tail ? { tail } : {}),
-    next: nextOf(record, base),
+    next:
+      listingFailed === undefined
+        ? nextOf(record, base)
+        : `The machine listing failed (${listingFailed}), so nothing was read and this is the last known phase; ${one("boxd_job", record.workId)} again in a later turn`,
   }
 }
 
@@ -182,12 +194,17 @@ export async function jobRun(services: FleetServices, raw: Record<string, unknow
   const wanted = records.filter((record): record is WorkRecord => "format" in record)
   // One listing at most 2 s old: a guest read needs one, so a hibernated machine is never woken.
   let listing: Listing | undefined
+  let listingFailed: string | undefined
   if (wanted.some((record) => record.state === "open")) {
     try {
       listing = await services.boxd.list({ maxAgeMs: TIMEOUTS.readListingMaxAgeMs }, op)
     } catch (error) {
-      if (!input.list || !(error instanceof BoxdError)) throw error
-      return envelope(records.map((record) => ("format" in record ? refusal(error, { workId: record.workId }) : record)), error.code === "CANCELLED")
+      // The listing failed, not the works: each answers its last known phase, with nothing read and no failure counted.
+      if (error instanceof BoxdError && error.code === "CANCELLED") {
+        if (!input.list) throw error
+        return envelope(records.map((record) => ("format" in record ? refusal(error, { workId: record.workId }) : record)), true)
+      }
+      listingFailed = reasonOf(error)
     }
   }
   const empty: Listing = { takenAt: Date.now(), fresh: false, machines: [] }
@@ -204,7 +221,7 @@ export async function jobRun(services: FleetServices, raw: Record<string, unknow
     if (!("format" in record)) return record
     if (call.signal?.aborted) return refusal(boxdError("CANCELLED", "The call was stopped before this work was read."), { workId: record.workId })
     try {
-      return await jobOf(services, record, listing ?? empty, input, costs, op)
+      return await jobOf(services, record, listing ?? empty, input, costs, op, listingFailed)
     } catch (error) {
       if (!input.list || !(error instanceof BoxdError)) throw error
       return refusal(error, { workId: record.workId })
