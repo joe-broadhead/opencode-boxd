@@ -1,4 +1,5 @@
-// v0 module. Owner: package A, which replaces it with the runner in `src/exec/runner.ts` and deletes it.
+// v0 module, replaced by package A's runner (`src/exec/runner.ts`). Owner: package B, whose prover still spawns
+// through it: B removes this file once the prover runs through the runtime's laptop port.
 import { spawn } from "node:child_process"
 import { basename } from "node:path"
 import { boxdError } from "./errors.js"

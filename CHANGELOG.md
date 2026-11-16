@@ -19,7 +19,7 @@ options and the guest helper all change. Works that ran on v0.0.x are imported, 
 - `vcpu` is now `size`; `wait` is now `"ready" | "created" | "none"` and defaults to `"ready"` (`"created"` for a list
   of more than 50).
 - The ledger moves to `~/.local/share/opencode-boxd/v1/`; v0 records are imported once, all or nothing, and left
-  untouched apart from a `README-MOVED-TO-v1` note. **Going back to v0.0.6 is safe only before v0.1.0's first
+  untouched apart from a `README-MOVED-TO-v1/` note folder. **Going back to v0.0.6 is safe only before v0.1.0's first
   change** (a submit, harvest, drop or reassign): after that, v0's drop could accept a stale proof.
 - Every change acts on the machine id the ledger recorded; a name that points at another machine is refused.
 - `boxd_golden` never saves a work's machine; `boxd_image`'s path is gone.

@@ -32,7 +32,7 @@ Review: `reviews/wave-B/boxd-design.md` (3 HIGH, 9 MEDIUM, 8 LOW). Every finding
 | **M6** Notices went to script sessions and cost turns | Only a model-path call, or an explicit `notify: "<sessionID>"`, subscribes. A missing target is dropped and recorded in health. A coordinator gets at most one notice per 60 s. Q2 keeps `"wake"` as the recommendation, with the reviewer's `"queue"` recorded. | §3.5, §3.13, §10 |
 | **M7** `attention` was unbounded | `limit` (default 25), worst first, `more`, and `groups` for repeated causes. `lastText` is cut to 200 characters and labelled untrusted. | §3.1 |
 | **M8** Package boundaries blurred | D owns `boxd_status`, `boxd_job` and the watcher. A owns the stall test (fake spawn) and the spawn-count harness. Every tool owner asserts its §4.4 row. C is split into C1 and C2, and the lead owns the registry skeleton on Day 0. | §9.1 |
-| **M9** Going back to v0.0.6 is unsafe after v1 changes | The doc says so, v1 writes `works/README-MOVED-TO-v1`, and the CHANGELOG states the rule. | §6.1, §9.3 |
+| **M9** Going back to v0.0.6 is unsafe after v1 changes | The doc says so, v1 writes the folder `works/README-MOVED-TO-v1/`, and the CHANGELOG states the rule. | §6.1, §9.3 |
 | **L1** | The laptop CLI 0.3.5 has `machine label set`: `reassign` relabels, and upstream ask 12 is dropped. | §3.10, §8 |
 | **L2** | `boxd_exec` quotes each argument for the remote shell and uses non-`--json` mode. Plain secrets are visible to it. | §3.12 |
 | **L3** | Userinfo is stripped from git remotes, as v0.0.5 does. | §2.2 |
@@ -186,7 +186,7 @@ v1/
   complete                        the import's marker; present in every published v1/
 v1.importing-<pid>-<rand>/        an import run's own staging folder, only while that run is live (§6.1)
 import.lock/                      the import's cross-process lock, only while an import runs
-works/                            the v0 ledger, read by the import and never changed (apart from README-MOVED-TO-v1)
+works/                            the v0 ledger, read by the import and never changed (apart from the README-MOVED-TO-v1/ folder)
 ```
 
 `v1/` exists only once complete: it is published by one rename (H1). A plugin start that finds no `v1/` imports
@@ -929,7 +929,7 @@ asserts its row.
 | Call | v0.0.6 | v0.1.0 |
 |---|---|---|
 | `boxd_status`, 170 works | 170 `get` + up to 170 `exec` + list + snapshots + env | 1 list + 1 limit (cached) + guest reads only for busy, running works whose watcher read is older than 60 s |
-| `boxd_ensure`, new work, wait | 20–40 | 1 all-region listing (§3.4 step 2) + create + `setup` + polls (at most 5, with the limit and snapshot caches warm); adopting: listing + 1 `get` + `setup` + polls (at most 5) |
+| `boxd_ensure`, new work, wait | 20–40 | 1 all-region listing (§3.4 step 2) + create + `setup` + 1 fresh listing for the `serve` poll (a read, so the read rule needs it) + polls (at most 6, with the limit and snapshot caches warm); adopting: listing + 1 `get` + `setup` + fresh listing + polls (at most 6) |
 | `boxd_submit` | 6–8 | 1 listing (≤ 2 s) + 1 `get` (the by-id check, §4.1) + 1 prompt exec (+1 `cp` per file) |
 | `boxd_job` | 4–5 | 1 listing (≤ 2 s) + 1 read exec |
 | `boxd_harvest`, 1 session | 7–9 | 1 `get` + 1 export exec + 1 `cp` + 1 git exec + 1 patch `cp` + 2 laptop imports (delete, import) |
@@ -1332,8 +1332,10 @@ At start, and again on any tool call while no complete `v1/` exists:
    folder, **check that the lock still holds this run's token** (a run whose lock was taken over stops here and
    deletes its staging folder), then `rename(<staging>, v1)` in one step, then release the lock. A `rename` onto an
    existing non-empty `v1/` fails, so two runs can never both publish.
-8. **Leave a note for people:** write `works/README-MOVED-TO-v1` beside the v0 records. v0 ignores files it does not
-   know, so this is the only change to the v0 tree.
+8. **Leave a note for people:** make the folder `works/README-MOVED-TO-v1/` beside the v0 records, holding only
+   `README.md`. (Day 0) A folder, not a file: v0.0.6's `list()` reads `works/<entry>/work.json` for every entry, so a
+   file there fails with ENOTDIR and would break every v0 tool after a rollback, while a folder with no `work.json` is
+   skipped. This is the only change to the v0 tree.
 
 **Until step 7 has finished, no tool reads or writes a ledger.** Every tool, reads included, answers `LEDGER_IMPORTING`
 with `progress: { done, total }` and `next: "the same call in a few seconds"`. Nothing falls back to a partial ledger,
@@ -1440,7 +1442,8 @@ v0.2.0 too.
   the index refreshes by mtime; a crash between the temp write and the rename leaves the old record.
 - **v0 import:** fixtures for every v0 shape (v0.0.0, v0.0.3, v0.0.6 records; proven, stale, never prompted, dropped,
   `pendingCreate`, uploads and downloads, a corrupt file). Each field maps as §6.2 says; v0 files are byte-identical
-  afterwards (only `README-MOVED-TO-v1` is added); a second start does not import again.
+  afterwards (only the `README-MOVED-TO-v1/` folder is added, and v0.0.6's `list()` still reads the tree); a second
+  start does not import again.
 - **Import crash safety (H1):** kill the import (a child process) after N records for several N, then restart: the
   staging folder is discarded, the import reruns, and the published `v1/` holds every record. A tool call during the
   import answers `LEDGER_IMPORTING` and writes nothing; `ensure` for a not-yet-imported id answers `LEDGER_IMPORTING`,
@@ -1658,6 +1661,13 @@ A list the owner can forward:
   ids its selector matched (which the run then acts on), and an ambiguous selection is `NAME_INVALID` before anything
   runs. `ChangeTarget` is a branded type that only the boxd port's `checkOwned` makes. `sleep`, `resume`, `harvest`
   and `drop` list items are a work id or an object.
+- **One event shape.** `WorkEvent` (`src/ports.ts`) is the event: `events.jsonl` holds one per line (`EventLine` is the
+  same type), the watcher's subscribers get the same object after the append, and `eventsSince` pages them with the
+  newest `seq` as the next cursor and `cursorExpired`. A failed run is `to: "idle"` with `outcome: "failed"` and its
+  code.
+- **Staged writes.** Harvest never writes a ledger path itself: `LedgerPort.stageFile`/`commitFile` replace an export or
+  `patch.diff`, and `stageFolder`/`commitFolder` swap `untracked/` in with one rename after checking every file;
+  `discard` drops a staged copy that failed.
 - **Disposal.** The runtime, the ledger and the import port each have `dispose()`. The plugin's cleanup stops, in order:
   the registrations and E's loops, the watcher, the ledger and the import (heartbeats stopped, locks released), and the
   runtime last (`runner.dispose()` aborts every in-flight child, a long `boxd_exec` included). Each stop is bounded at
@@ -1724,7 +1734,7 @@ Removed: `snapshot` (it becomes `goldenBase`).
 - `vcpu` is now `size`; `wait` is now `"ready" | "created" | "none"` and defaults to `"ready"` (`"created"` for a list
   of more than 50).
 - The ledger moves to `~/.local/share/opencode-boxd/v1/`; v0 records are imported once, all or nothing, and left
-  untouched apart from a `README-MOVED-TO-v1` note. **Going back to v0.0.6 is safe only before v0.1.0's first
+  untouched apart from a `README-MOVED-TO-v1/` note folder. **Going back to v0.0.6 is safe only before v0.1.0's first
   change** (a submit, harvest, drop or reassign): after that, v0's drop could accept a stale proof.
 - Every change acts on the machine id the ledger recorded; a name that points at another machine is refused.
 - `boxd_golden` never saves a work's machine; `boxd_image`'s path is gone.

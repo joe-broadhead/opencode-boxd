@@ -67,6 +67,11 @@ export interface HostServices {
   /** The ledger's root, `~/.local/share/opencode-boxd` unless a test says otherwise. */
   readonly ledgerRoot: string
   readonly boxdBin: string
+  /**
+   * The laptop's `opencode` binary, for the laptop port's session delete and import: resolved once from the server's
+   * PATH when the plugin starts (an absolute path when found there), or the test seam's. Nothing else defaults to PATH.
+   */
+  readonly opencodeBin: string
   readonly clock: Clock
   readonly sessions: SessionAccess
   /** Records a problem for status under its area (one per area; undefined clears it). Never throws. */

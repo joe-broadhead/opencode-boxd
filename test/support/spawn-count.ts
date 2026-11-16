@@ -136,15 +136,16 @@ export const SPAWN_BUDGETS: readonly BudgetRow[] = [
     call: "boxd_ensure",
     scenario: "a new work from an existing golden image, wait ready, limit and snapshot caches warm",
     owner: "C1",
-    max: { "machine list": 1, "machine new": 1, "machine exec": 3 },
-    total: 5,
+    // The all-region listing of §3.4 step 2, and a fresh one for the serve poll, which is a read (the read rule).
+    max: { "machine list": 2, "machine new": 1, "machine exec": 3 },
+    total: 6,
   },
   {
     call: "boxd_ensure",
     scenario: "adopting an existing labelled oc-<id>, wait ready",
     owner: "C1",
-    max: { "machine list": 1, "machine get": 1, "machine exec": 3 },
-    total: 5,
+    max: { "machine list": 2, "machine get": 1, "machine exec": 3 },
+    total: 6,
   },
   {
     call: "boxd_submit",

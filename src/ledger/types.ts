@@ -16,7 +16,7 @@
  * - **Remotes** are stored without their userinfo.
  * - The folder is 0700 and its files 0600.
  */
-import type { Delivery, MachineId, MachineName, Region, RunOutcome, Size } from "../ports.js"
+import type { Delivery, MachineId, MachineName, Region, RunOutcome, Size, WorkEvent } from "../ports.js"
 import type { WarningCode } from "../errors.js"
 
 export const LEDGER_FORMAT = 1
@@ -38,7 +38,13 @@ export const LEDGER_PATHS = {
   automationLock: "automation.lock",
   /** The v0 ledger, read by the import and never changed, apart from the note below. */
   v0Works: "works",
+  /**
+   * The note for people: a **folder** `works/README-MOVED-TO-v1/` holding only `README.md`. A folder, not a file:
+   * v0.0.6's `list()` reads `works/<entry>/work.json` for every entry, so a file there fails with ENOTDIR and breaks
+   * every v0 tool after a rollback, while a folder with no `work.json` is skipped. Never put a `work.json` in it.
+   */
   v0Note: "works/README-MOVED-TO-v1",
+  v0NoteFile: "works/README-MOVED-TO-v1/README.md",
 } as const
 
 /** A work's files, relative to `v1/works/<workId>/`. */
@@ -180,17 +186,8 @@ export interface LedgerIndex {
   readonly works: Readonly<Record<string, IndexEntry>>
 }
 
-/** One line of `events.jsonl`: a phase change with its sequence number, which is `boxd_status`'s cursor. */
-export interface EventLine {
-  readonly seq: number
-  readonly at: string
-  readonly workId: string
-  readonly phase: Phase | "failed"
-  readonly outcome?: RunOutcome | null
-  /** A §5 code only; any other string is `RUN_FAILED` before it is written (L-f). */
-  readonly code?: string
-  readonly asleepBy?: SleptBy | "idle-or-cli"
-}
+/** One line of `events.jsonl`: exactly one `WorkEvent` (`src/ports.ts`), the one event shape, as JSON. */
+export type EventLine = WorkEvent
 
 /** `import-v0.json`: each v0 record's result, and the blocked ids. */
 export interface ImportReport {

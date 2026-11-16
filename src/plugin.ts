@@ -3,8 +3,9 @@
  * module per package, and registers the tools, rules, skill, status, hooks and commands. Packages fill their entry
  * modules; this file stays as it is.
  */
+import { accessSync, constants } from "node:fs"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { delimiter, isAbsolute, join } from "node:path"
 import { Plugin } from "@opencode/plugin"
 import { startAutomation } from "./automation.js"
 import { registerCleanupCommand } from "./cleanup.js"
@@ -30,8 +31,25 @@ import { registerToolsRpc } from "./host/tools-rpc.js"
 /** Internal seam: the host tests point the plugin at a fake boxd CLI, their own ledger root and their own skills. */
 interface BoxdSeam {
   readonly boxdBin?: string
+  readonly opencodeBin?: string
   readonly ledger?: string
   readonly skillsDir?: string
+}
+
+/** A binary's absolute path on the server's PATH, found once at start; the bare name when PATH has none. */
+function resolveBin(name: string): string {
+  if (isAbsolute(name)) return name
+  for (const dir of (process.env.PATH ?? "").split(delimiter)) {
+    if (!dir) continue
+    const candidate = join(dir, name)
+    try {
+      accessSync(candidate, constants.X_OK)
+      return candidate
+    } catch {
+      // Not here; try the next folder.
+    }
+  }
+  return name
 }
 
 /** Where the ledger lives, unless the seam says otherwise. */
@@ -55,6 +73,7 @@ export function createBoxdPlugin(seam: BoxdSeam = {}) {
         projectDirectory: ctx.location.directory,
         ledgerRoot: seam.ledger ?? ledgerRoot(),
         boxdBin: seam.boxdBin ?? "boxd",
+        opencodeBin: seam.opencodeBin ?? resolveBin("opencode"),
         clock: { now: () => new Date() },
         sessions: ctx.session,
         report,

@@ -15,7 +15,9 @@ and keeps the transcript on the laptop. It has no MCP server: its twelve tools a
 - **One written exception, until v0.2.0: the v0 import.** v0.1.0 imports the v0 ledger once, so the works that ran on
   v0.0.x are not stranded (docs/v1-design.md §6). The exception is narrow and time-limited:
   - `src/import-v0.ts` (package B) is the only code that reads the v0 format or touches a v0 guest. It runs the import
-    only until a complete `v1/` ledger exists, and it never changes a v0 file (it only adds `works/README-MOVED-TO-v1`).
+    only until a complete `v1/` ledger exists, and it never changes a v0 file. It only adds the folder
+    `works/README-MOVED-TO-v1/` with a `README.md` in it: a folder, because v0.0.6 reads `works/<entry>/work.json` for
+    every entry and a stray file there would break it after a rollback.
   - It also holds the two v0 things a running v1 needs: the read of a v0 guest through v0's own `phase` action, and
     `adopt`, a plain `machine exec` that takes a running v0 guest's password over. Both are behind `ImportV0Port` in
     `src/ports.ts`. The guest port and `guest/guest.py` know nothing of v0.

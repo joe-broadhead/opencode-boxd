@@ -18,7 +18,7 @@
  *   while waiting for a lock, a golden build, a poll interval or another pool.
  */
 
-import type { EventLine, Phase, SavedState, WorkRecord } from "./ledger/types.js"
+import type { Phase, SavedState, SleptBy, WorkRecord } from "./ledger/types.js"
 
 // ── Vocabulary ────────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -546,16 +546,24 @@ export interface LaptopPort {
 
 // ── The watcher's event stream (design §9.1, round 4 L-5): package D emits it, package E consumes it ───────────────
 
-/** One phase change the watcher saw, also appended to `events.jsonl` with the same `seq`. */
+/**
+ * One phase change: **the one event shape.** The ledger appends it to `events.jsonl` as one JSON line (`EventLine` is
+ * this type), assigning `seq`; the watcher's subscribers get the same object, with the same `seq`, after the append.
+ * `seq` is `boxd_status`'s cursor: strictly increasing, never reused, kept across rotation.
+ */
 export interface WorkEvent {
   readonly seq: number
   readonly at: string
   readonly workId: string
-  readonly from: Phase
+  /** Null for a work's first event (its create or import). */
+  readonly from: Phase | null
   readonly to: Phase
+  /** With `to: "idle"`: how the last run ended. A failed run is `outcome: "failed"` with its `code`. */
   readonly outcome?: RunOutcome | null
-  /** A §5 code only (L-f). */
+  /** A §5 code only; any other string is `RUN_FAILED` before it is written (L-f). */
   readonly code?: string
+  /** With `to: "asleep"`: who put it to sleep, when the plugin knows. */
+  readonly asleepBy?: SleptBy | "idle-or-cli"
   readonly needsInput?: "form" | "permission"
   readonly reading?: Reading
 }
@@ -588,18 +596,50 @@ export interface FleetSnapshot {
 
 /** The watcher's face to other packages: its events, and the fleet as it last saw it. */
 export interface FleetWatch {
-  /** Calls `listener` for every phase change, in `seq` order; returns the unsubscribe. */
+  /** Calls `listener` for every phase change after the ledger appended it, in `seq` order; returns the unsubscribe. */
   subscribe(listener: (event: WorkEvent) => void): () => void
   snapshot(): FleetSnapshot
 }
 
 // ── The ledger port (package B: `src/ledger/*`) ─────────────────────────────────────────────────────────────────────
 
-/** One page of `events.jsonl` after a cursor. `cursorExpired` when the cursor is older than the oldest kept event. */
+/**
+ * The events after a cursor, oldest first. `cursor` is the newest `seq` returned (the input cursor when nothing is
+ * newer): the value to pass as `since` next time. `cursorExpired` is true when the input cursor is older than the
+ * oldest kept event; `events` then starts at the oldest kept one, and status answers the full view.
+ */
 export interface EventPage {
-  readonly events: readonly EventLine[]
+  readonly events: readonly WorkEvent[]
   readonly cursor: number
   readonly cursorExpired: boolean
+}
+
+/** A ledger file a harvest replaces, relative to the work's folder: one session's export, or the tracked-changes patch. */
+export type LedgerFile = `exports/${string}.json` | "patch.diff"
+
+/**
+ * A staged write the ledger handed out: an empty temp file or folder beside the one it will replace, in the same
+ * folder, which the caller fills (with `machine cp`) and then commits or discards. The caller never names a ledger
+ * path itself.
+ */
+export interface StagedFile {
+  readonly workId: string
+  readonly final: LedgerFile
+  /** The absolute temp path to write: `<final>.<rand>.tmp` beside `final`. */
+  readonly path: string
+}
+
+export interface StagedFolder {
+  readonly workId: string
+  readonly final: "untracked"
+  /** The absolute temp folder to fill: `untracked.<rand>.tmp/` beside `untracked/`. */
+  readonly path: string
+}
+
+/** What a staged file must hold, from the guest helper's report. */
+export interface Expected {
+  readonly bytes: number
+  readonly sha256: string
 }
 
 /**
@@ -626,16 +666,34 @@ export interface LedgerPort {
   ): Promise<T>
   /** `saved`, computed: `fresh` when `saved.complete && saved.at >= lastSubmit.at`, `stale` when older or partial, else `none`. */
   saved(record: WorkRecord): SavedState
-  /** Appends one phase change with the next `seq`, and returns it. */
-  appendEvent(event: Omit<EventLine, "seq">, context: OpContext): Promise<EventLine>
+  /** Appends one event with the next `seq`, and returns it as written; the watcher then hands it to its subscribers. */
+  appendEvent(event: Omit<WorkEvent, "seq">, context: OpContext): Promise<WorkEvent>
   eventsSince(cursor: number, context: OpContext): Promise<EventPage>
-  /** A work's folder in the ledger, for exports, `patch.diff` and `untracked/`. */
-  workFolder(workId: string): string
   /**
-   * Puts a verified file in place: `temp` (written beside `final`) must have `bytes` and `sha256`, is fsynced and renamed
-   * over `final`; otherwise it is deleted, `final` is left as it was, and `EXPORT_INVALID` is thrown.
+   * A work's folder in the ledger, to read from only (a resume copies the stored exports up from it). Every write goes
+   * through `stageFile`/`stageFolder` and their commit.
    */
-  commitFile(temp: string, final: string, expected: { readonly bytes: number; readonly sha256: string }): Promise<void>
+  workFolder(workId: string): string
+  /** A fresh, empty temp file beside `final` in the work's folder, for the caller to fill. */
+  stageFile(workId: string, final: LedgerFile, context: OpContext): Promise<StagedFile>
+  /**
+   * Puts a staged file in place: it must have `expected`'s size and a streamed sha256 equal to it; then it is fsynced
+   * and renamed over `final` (a hard link to an older file is broken, never written through). Otherwise the temp file
+   * is deleted, `final` is left byte for byte as it was, and `EXPORT_INVALID` is thrown.
+   */
+  commitFile(staged: StagedFile, expected: Expected, context: OpContext): Promise<void>
+  /** A fresh, empty temp folder beside `untracked/` in the work's folder, for the caller to fill. */
+  stageFolder(workId: string, final: "untracked", context: OpContext): Promise<StagedFolder>
+  /**
+   * Swaps a staged folder in with one rename (design §3.6 step 5): it must hold exactly the files `expected` names
+   * (relative paths, no `..`, no symlinks), each with its size and sha256. Every file and the folder are fsynced, the
+   * staged folder is renamed to `untracked`, and the old folder is removed afterwards. On any difference the staged
+   * folder is deleted, the old `untracked/` is left as it was, and `EXPORT_INVALID` is thrown, so a cut-off copy never
+   * leaves a half-replaced set.
+   */
+  commitFolder(staged: StagedFolder, expected: Readonly<Record<string, Expected>>, context: OpContext): Promise<void>
+  /** Deletes a staged file or folder that will not be committed (a failed or cancelled copy). Never throws. */
+  discard(staged: StagedFile | StagedFolder): Promise<void>
   /**
    * On plugin disposal or reload: stops every lock heartbeat and releases the work locks this process holds, so another
    * process does not wait for a stale takeover. A write in flight finishes or leaves the old file (copy-on-write).
