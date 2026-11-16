@@ -362,10 +362,11 @@ export function isChangeTarget(target: ReadTarget | ChangeTarget): target is Cha
 }
 
 /**
- * The plugin's ownership labels (design §3.4 step 2): `owner=opencode-boxd`, or v0's `role=session` with `work=<id>`
- * whose `oc-<id>` is the machine's name.
+ * The plugin's ownership labels (design §3.4 step 2): `owner=opencode-boxd`, or v0's `role=session`, either one with
+ * `work=<id>` whose `oc-<id>` is the machine's name. A machine renamed by hand keeps the `work` label of the work it
+ * belonged to, so its name no longer matches and it gets no adoption target.
  */
 export function ownsLabels(info: Pick<MachineInfo, "name" | "labels">): boolean {
-  if (info.labels.owner === WORK_LABELS.owner) return true
-  return info.labels.role === WORK_LABELS.role && typeof info.labels.work === "string" && info.name === `oc-${info.labels.work}`
+  const named = typeof info.labels.work === "string" && info.name === `oc-${info.labels.work}`
+  return named && (info.labels.owner === WORK_LABELS.owner || info.labels.role === WORK_LABELS.role)
 }

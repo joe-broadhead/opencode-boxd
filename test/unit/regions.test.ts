@@ -3,7 +3,7 @@
 // and answers MACHINE_LIMIT with every region's numbers.
 import { describe, expect, test } from "bun:test"
 import { BoxdError, boxdError } from "../../src/errors.js"
-import { headroom, InFlight, limitAtCreate, pickRegion, PREFER_IMAGE_MARGIN } from "../../src/fleet/regions.js"
+import { headroom, InFlight, inUseOf, limitAtCreate, pickRegion, PREFER_IMAGE_MARGIN, type InUse } from "../../src/fleet/regions.js"
 import type { Region, RegionLimit } from "../../src/ports.js"
 
 const limits = (fra: [number, number], nyc: [number, number]): RegionLimit[] => [
@@ -11,8 +11,10 @@ const limits = (fra: [number, number], nyc: [number, number]): RegionLimit[] => 
   { region: "nyc", limit: nyc[0], inUse: nyc[1], free: nyc[0] - nyc[1] },
 ]
 const none = new Set<Region>()
+/** What a listing taken at `since` shows in use: the machines the limits say are in use. */
+const usedBy = (rows: readonly RegionLimit[], since = 0): InUse => ({ counts: { fra: rows[0]!.inUse, nyc: rows[1]!.inUse }, since })
 const pick = (input: Partial<Parameters<typeof pickRegion>[0]> & { limits: RegionLimit[] }) =>
-  pickRegion({ choice: "auto", keepFree: { fra: 0, nyc: 0 }, inFlight: new InFlight(), withImage: none, ...input })
+  pickRegion({ choice: "auto", keepFree: { fra: 0, nyc: 0 }, inFlight: new InFlight(), withImage: none, used: usedBy(input.limits), ...input })
 
 function refusal(run: () => unknown): BoxdError {
   try {
@@ -38,15 +40,30 @@ describe("auto", () => {
     expect(pick({ limits: limits([300, 295], [300, 299]), keepFree: { fra: 5, nyc: 0 } })).toBe("nyc")
   })
 
-  test("counts this process's creates still in flight, and stops counting one when it lands or fails", () => {
+  test("counts this process's creates in flight, and a failed one no more once it ends", () => {
     const inFlight = new InFlight()
-    const releases = Array.from({ length: 30 }, () => inFlight.reserve("fra"))
+    const ends = Array.from({ length: 30 }, () => inFlight.reserve("fra"))
     expect(pick({ limits: limits([300, 260], [300, 270]), inFlight })).toBe("nyc")
-    for (const release of releases) release()
-    // Releasing twice does nothing more.
-    releases[0]!()
-    expect(inFlight.of("fra")).toBe(0)
+    for (const end of ends) end(false)
+    // Ending twice does nothing more.
+    ends[0]!(true)
+    expect(inFlight.of("fra", 0)).toBe(0)
     expect(pick({ limits: limits([300, 260], [300, 270]), inFlight })).toBe("fra")
+  })
+
+  test("a landed create stays counted until a listing asked for after it shows it (MEDIUM-3)", () => {
+    let clock = 1_000
+    const inFlight = new InFlight(() => clock)
+    // The listing was asked for at 1000; three creates land in fra after it.
+    for (let index = 0; index < 3; index++) {
+      clock += 10
+      inFlight.reserve("fra")(true)
+    }
+    const stale = inUseOf([{ region: "fra" }, { region: "fra" }], 1_000)
+    expect(headroom([{ region: "fra", limit: 5, inUse: 0, free: 5 }, { region: "nyc", limit: 5, inUse: 0, free: 5 }], stale, inFlight)[0]).toEqual({ region: "fra", limit: 5, inUse: 5, free: 0 })
+    // A listing asked for after they landed shows them itself: they are not counted twice.
+    const fresh = inUseOf([{ region: "fra" }, { region: "fra" }, { region: "fra" }, { region: "fra" }, { region: "fra" }], clock + 1)
+    expect(headroom([{ region: "fra", limit: 5, inUse: 0, free: 5 }, { region: "nyc", limit: 5, inUse: 0, free: 5 }], fresh, inFlight)[0]).toEqual({ region: "fra", limit: 5, inUse: 5, free: 0 })
   })
 
   test("prefers the region that has the golden image, unless the other has 50 or more free machines more", () => {
@@ -93,7 +110,8 @@ describe("a named region", () => {
 
 describe("boxd's own limit refusal at create", () => {
   test("carries every region's numbers, with the refusing region at zero free", () => {
-    const error = limitAtCreate(boxdError("MACHINE_LIMIT", "your org has reached its machine limit"), "fra", limits([300, 290], [300, 100]), new InFlight())
+    const rows = limits([300, 290], [300, 100])
+    const error = limitAtCreate(boxdError("MACHINE_LIMIT", "your org has reached its machine limit"), "fra", rows, usedBy(rows), new InFlight())
     expect(error.code).toBe("MACHINE_LIMIT")
     expect(error.details.limit).toEqual([
       { region: "fra", limit: 300, inUse: 290, free: 0 },
@@ -103,7 +121,7 @@ describe("boxd's own limit refusal at create", () => {
   })
 
   test("headroom reports a region boxd did not list as having no room", () => {
-    expect(headroom([{ region: "fra", limit: 5, inUse: 1, free: 4 }], new InFlight())).toEqual([
+    expect(headroom([{ region: "fra", limit: 5, inUse: 1, free: 4 }], { counts: { fra: 1, nyc: 0 }, since: 0 }, new InFlight())).toEqual([
       { region: "fra", limit: 5, inUse: 1, free: 4 },
       { region: "nyc", limit: 0, inUse: 0, free: 0 },
     ])

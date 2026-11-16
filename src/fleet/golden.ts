@@ -88,7 +88,7 @@ export interface Golden {
   run(input: Record<string, unknown>, call: CallContext): Promise<GoldenResult>
 }
 
-export function createGolden(services: FleetServices, settings: { readonly boundMs?: number; readonly now?: () => number } = {}): Golden {
+export function createGolden(services: FleetServices, settings: { readonly bound?: () => number; readonly now?: () => number } = {}): Golden {
   const { boxd, guest, runner, options } = services
   const now = settings.now ?? Date.now
   const flights = new Map<string, Flight>()
@@ -130,9 +130,10 @@ export function createGolden(services: FleetServices, settings: { readonly bound
       )
       try {
         await runner.withMachineLock({ id: created.id }, context, async () => {
-          step = "check the builder"
-          const target = await boxd.checkOwned(region, builder as MachineName, created.id, context)
+          // The builder's target is the id its own create answered.
+          const target = created.owned.target
           if (base !== "stock") {
+            step = "read the builder's size"
             const info = await boxd.get(region, created.id, context)
             if (info.size !== size) {
               step = "resize the builder"
@@ -173,7 +174,7 @@ export function createGolden(services: FleetServices, settings: { readonly bound
   async function removeBuilder(region: Region, name: MachineName, id: MachineId, call: OpContext["call"]): Promise<void> {
     const context: OpContext = { call }
     try {
-      await runner.withMachineLock({ id }, context, async () => boxd.remove(await boxd.checkOwned(region, name, id, context), context))
+      await runner.withMachineLock({ id }, context, async () => boxd.remove((await boxd.checkOwned(region, name, id, context)).target, context))
     } catch (error) {
       services.report("golden", `The golden builder ${name} in ${region} was not removed (${error instanceof Error ? error.message : String(error)}); its ${BUILDER_LEASE} timer removes it.`)
     }
@@ -256,7 +257,7 @@ export function createGolden(services: FleetServices, settings: { readonly bound
     await services.ledger.ready(context)
     if (input.prune === true) return prune(regions, context)
 
-    return runOne({ signal: call.signal, ...(settings.boundMs !== undefined ? { boundMs: settings.boundMs } : {}), now }, async (item: ItemContext) => {
+    return runOne({ signal: call.signal, ...(settings.bound ? { boundMs: settings.bound() } : {}), now }, async (item: ItemContext) => {
       const name = imageName(options.goldenPrefix, services.hostVersion, size as Size)
       const present = await images(context)
       const wanted = regions.map((where) => ({ region: where, exists: present.some((row) => row.region === where && row.name === name) }))

@@ -7,10 +7,12 @@
  *   build in flight) it calls `context.waiting(fn)` or `context.poll(check)`, which give its item slot back for the
  *   wait, so 300 waiting items never keep a new active item from starting.
  * - **One shared poll loop.** Every waiting item of a call joins one `Poller`, which runs each item's check every
- *   `POLL_INTERVAL_MS`. A check is one short process (a listing or a `serve` read) through the runner's ordinary slots.
+ *   `POLL_INTERVAL_MS`. A check is one short process (a listing or a `serve` read) through the runner's ordinary slots,
+ *   and a tick runs at most `CAPS.shared` checks at once, so 300 waiting items never queue 300 reads in the runner.
  * - **The bound `B`** (`CALL_BOUND_MS`). Every wait stops at `context.deadline`, and the item answers its real state
- *   (`creating`, `starting`). An item that never started when the bound passed answers `cancelled` with
- *   `started: false`. Every item still pending (the `pendingStates`, and the ones never started) gets the same `next`:
+ *   (`creating`, `starting`). Before each active step an item asks `context.room(stepBoundMs)`: when the step's own
+ *   bound would run past the deadline, or the item got no slot back after a wait, it answers its state now instead of
+ *   starting the step. An item that never started when the bound passed answers `cancelled` with `started: false`. Every item still pending (the `pendingStates`, and the ones never started) gets the same `next`:
  *   the list call for exactly those ids, so calling it again only waits and converges.
  * - **Stop.** The call's signal reaches every item. Items not started answer `CANCELLED` with `started: false`; an
  *   item stopped mid-write answers the `CANCELLED` its port raised, with `uncertain: true`.
@@ -18,7 +20,7 @@
  *   item's refusal; any other error is a bug and is thrown once every item has settled.
  */
 import { BoxdError } from "../errors.js"
-import { CALL_BOUND_MS, LIST_ITEM_CONCURRENCY, POLL_INTERVAL_MS, type MachineName } from "../ports.js"
+import { CALL_BOUND_MS, CAPS, LIST_ITEM_CONCURRENCY, POLL_INTERVAL_MS, type MachineName } from "../ports.js"
 import type { ListResult, Refusal } from "../results.js"
 import { refusal } from "../tools.js"
 
@@ -28,7 +30,15 @@ export interface ItemContext {
   readonly signal: AbortSignal
   /** `Date.now()` value at which the call stops waiting: `B`. */
   readonly deadline: number
-  /** Runs `fn` without holding an item slot: for a wait on something another flight does (a golden build). */
+  /**
+   * Whether an active step bounded by `stepBoundMs` may start now: the item holds its slot, and the step's bound ends
+   * before the deadline. When it answers false, the item answers its real state with its `next` instead.
+   */
+  room(stepBoundMs: number): boolean
+  /**
+   * Runs `fn` without holding an item slot: for a wait on something another flight does (a golden build). The slot is
+   * taken back afterwards, but never past the deadline: `room` then answers false.
+   */
   waiting<T>(fn: () => Promise<T>): Promise<T>
   /**
    * Waits in the call's shared poll loop, holding no item slot, until `check` answers a value, the deadline passes
@@ -54,16 +64,21 @@ export interface ListOptions<I, T extends { readonly state: string }> {
   readonly now?: () => number
 }
 
-/** One shared poll loop: each tick runs every waiter's check at once, and ends the waits that have an answer. */
+/**
+ * One shared poll loop: each tick runs every waiter's check once, at most `perTick` at a time (the runner's shared
+ * slots by default), and ends the waits that have an answer.
+ */
 export class Poller {
   readonly #waiters = new Set<Waiter>()
   readonly #intervalMs: number
+  readonly #perTick: number
   readonly #now: () => number
   #timer: ReturnType<typeof setTimeout> | undefined
   #ticking = false
 
-  constructor(options: { readonly intervalMs?: number; readonly now?: () => number } = {}) {
+  constructor(options: { readonly intervalMs?: number; readonly perTick?: number; readonly now?: () => number } = {}) {
     this.#intervalMs = options.intervalMs ?? POLL_INTERVAL_MS
+    this.#perTick = options.perTick ?? CAPS.shared
     this.#now = options.now ?? Date.now
   }
 
@@ -113,8 +128,11 @@ export class Poller {
     this.#timer = undefined
     this.#ticking = true
     try {
-      await Promise.all(
-        [...this.#waiters].map(async (waiter) => {
+      const queue = [...this.#waiters]
+      const worker = async () => {
+        for (let waiter = queue.shift(); waiter; waiter = queue.shift()) {
+          // A wait that ended meanwhile (its deadline, a Stop) is not checked again.
+          if (!this.#waiters.has(waiter)) continue
           try {
             const value = await waiter.check()
             if (value !== undefined) waiter.settle({ value })
@@ -122,8 +140,9 @@ export class Poller {
           } catch (error) {
             waiter.settle({ error })
           }
-        }),
-      )
+        }
+      }
+      await Promise.all(Array.from({ length: Math.min(this.#perTick, queue.length) }, worker))
     } finally {
       this.#ticking = false
     }
@@ -165,9 +184,8 @@ class Slots {
       }
       const grant = () => done(true)
       const onAbort = () => done(false)
-      // No timer for an open-ended wait: a timeout above 2^31 ms would fire at once.
-      const expiry = Number.isFinite(until) ? setTimeout(() => done(false), Math.max(0, until - now())) : undefined
-      expiry?.unref?.()
+      const expiry = setTimeout(() => done(false), Math.max(0, until - now()))
+      expiry.unref?.()
       signal.addEventListener("abort", onAbort, { once: true })
       this.#queue.push(grant)
     })
@@ -204,6 +222,7 @@ export async function runList<I, T extends { readonly state: string }>(
     const context: ItemContext = {
       signal,
       deadline,
+      room: (stepBoundMs) => held && !signal.aborted && deadline - now() >= stepBoundMs,
       async waiting(fn) {
         if (held) {
           held = false
@@ -212,8 +231,8 @@ export async function runList<I, T extends { readonly state: string }>(
         try {
           return await fn()
         } finally {
-          // Back to active work: a slot again, or none when the call is over (the item answers its state).
-          held = await slots.acquire(signal, Number.POSITIVE_INFINITY, now)
+          // Back to active work: a slot again, or none once the deadline passed (the item answers its state).
+          held = await slots.acquire(signal, deadline, now)
         }
       },
       poll(check, until = deadline) {
@@ -259,6 +278,7 @@ export async function runOne<T extends { readonly state: string }>(
   const context: ItemContext = {
     signal: options.signal,
     deadline,
+    room: (stepBoundMs) => !options.signal.aborted && deadline - now() >= stepBoundMs,
     waiting: (fn) => fn(),
     poll: (check, until = deadline) => poller.wait(check, Math.min(until, deadline), options.signal),
   }

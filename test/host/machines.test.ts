@@ -6,7 +6,7 @@ import { MEASURE_DEBUG, MEASURE_MINUTES as MEASURE } from "./measure-env.js"
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { join } from "node:path"
 import { TOOLS_RPC_ID } from "../../src/host/tools-rpc.js"
-import { attempt, cleanup, session, startHost, until, type Host } from "./harness.js"
+import { attempt, cleanup, HOST_VERSION, session, startHost, until, type Host } from "./harness.js"
 
 setDefaultTimeout(120_000)
 afterAll(cleanup)
@@ -77,18 +77,36 @@ describe("package C1's tools on a stock host", () => {
 })
 
 /**
- * The longest call a host lets a tool run (§7.2): a probe tool sleeps on its signal for each duration, called from a
- * model turn through Code Mode (the model's path to plugin tools on these hosts), and the answer says whether it
- * finished or the host ended it. The shortest limit found, less 30 s, is the list bound B; with no limit B stays
- * CALL_BOUND_MS. It takes as long as its longest duration on every host, so it runs only when asked:
- * BOXD_MEASURE_CALL_MINUTES="2,5,10,20". The tools RPC path is not measured here.
+ * The longest call a host lets a call run (§7.2), on both paths a coordinator uses: a model turn through Code Mode (the
+ * model's path to plugin tools on these hosts) and a script's RPC call. A probe tool and a probe RPC method each sleep
+ * on their signal for every duration, all at once, and each answer says whether it finished or the host ended it. The
+ * shortest limit found, less 30 s, is the list bound B; with no limit B stays CALL_BOUND_MS. It takes as long as its
+ * longest duration on every host, so it runs only when asked: BOXD_MEASURE_CALL_MINUTES="2,5,10".
  */
+const MeasureRpc = {
+  id: "boxd.host-test.measure",
+  methods: {
+    sleep: {
+      input: { type: "object", properties: { ms: { type: "number" } }, required: ["ms"] },
+      output: { type: "object", required: ["finished"], properties: { finished: { type: "boolean" } } },
+    },
+  },
+  events: {},
+} as const
+
+/** Sleeps `ms`, or until `signal` stops it: true when it slept the whole time. */
+const sleepOn = (ms: number, signal: AbortSignal | undefined) =>
+  new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => resolve(true), ms)
+    signal?.addEventListener("abort", () => (clearTimeout(timer), resolve(false)), { once: true })
+  })
+
 describe.skipIf(MEASURE.length === 0)("the longest call the host allows (B)", () => {
-  test("a model turn's tool call that sleeps on its signal finishes each duration, or the host ends it", async () => {
+  test("a call that sleeps on its signal finishes each duration, or the host ends it, from Code Mode and from the RPC", async () => {
     const host = await startHost({ model: true })
-    const findings: Array<{ minutes: number; finished: boolean; ms: number }> = []
     try {
-      await host.probe().tool.transform((editor) => {
+      const ctx = host.probe()
+      await ctx.tool.transform((editor) => {
         editor.namespace({ name: "measure", description: "A probe that sleeps, to measure how long a call may run." })
         editor.add({
           name: "sleep",
@@ -97,16 +115,17 @@ describe.skipIf(MEASURE.length === 0)("the longest call the host allows (B)", ()
           input: { type: "object", properties: { ms: { type: "number" } }, required: ["ms"] },
           output: { type: "object" },
           execute: async (value, context) => {
-            const ms = (value as { ms: number }).ms
-            const finished = await new Promise<boolean>((resolve) => {
-              const timer = setTimeout(() => resolve(true), ms)
-              context.signal.addEventListener("abort", () => (clearTimeout(timer), resolve(false)), { once: true })
-            })
+            const finished = await sleepOn((value as { ms: number }).ms, context.signal)
             return { output: { finished }, content: finished ? "measure:finished" : "measure:stopped" }
           },
         })
       })
-      for (const minutes of MEASURE) {
+      await (ctx.rpc.register as unknown as (definition: object, handlers: object) => Promise<unknown>)(MeasureRpc, {
+        sleep: async (input: { ms: number }, call: { signal?: AbortSignal }) => ({ finished: await sleepOn(input.ms, call?.signal) }),
+      })
+      const rpc = (host.client.rpc as unknown as (definition: object) => { sleep: (input: object, options: object) => Promise<{ finished: boolean }> })(MeasureRpc)
+
+      const codeMode = async (minutes: number) => {
         const ms = Math.round(minutes * 60_000)
         const turn = await host.client.session.create({ location: { directory: host.location.directory }, agent: "build" })
         const started = Date.now()
@@ -123,10 +142,20 @@ describe.skipIf(MEASURE.length === 0)("the longest call the host allows (B)", ()
           ms + 5 * 60_000,
         )
         if (MEASURE_DEBUG) console.log(text)
-        findings.push({ minutes, finished: text.includes("measure:finished"), ms: Date.now() - started })
+        return { path: "code-mode", minutes, finished: text.includes("measure:finished"), ms: Date.now() - started }
       }
-      console.log(`[measure] ${JSON.stringify(findings)}`)
-      expect(findings).toHaveLength(MEASURE.length)
+      const script = async (minutes: number) => {
+        const ms = Math.round(minutes * 60_000)
+        const started = Date.now()
+        const finished = await rpc.sleep({ ms }, { location: host.location }).then(
+          (answer) => answer.finished === true,
+          (error: unknown) => (MEASURE_DEBUG && console.log(error), false),
+        )
+        return { path: "rpc", minutes, finished, ms: Date.now() - started }
+      }
+      const findings = await Promise.all(MEASURE.flatMap((minutes) => [codeMode(minutes), script(minutes)]))
+      console.log(`[measure] ${HOST_VERSION} ${JSON.stringify(findings)}`)
+      expect(findings).toHaveLength(MEASURE.length * 2)
     } finally {
       await host.close()
     }

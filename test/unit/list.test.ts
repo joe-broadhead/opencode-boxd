@@ -92,6 +92,36 @@ describe("work, not waiting, holds a slot (M5)", () => {
     expect(result).toMatchObject({ state: "done", counts: { ready: 301 } })
   })
 
+  test("a tick runs at most the runner's shared slots of checks at once (review 5b)", async () => {
+    const poller = new Poller({ intervalMs: 10 })
+    const signal = new AbortController().signal
+    let running = 0
+    let peak = 0
+    let open = false
+    const waits = Array.from({ length: 60 }, () =>
+      poller.wait(async () => {
+        running += 1
+        peak = Math.max(peak, running)
+        await Bun.sleep(5)
+        running -= 1
+        return open ? true : undefined
+      }, Date.now() + 5_000, signal),
+    )
+    await Bun.sleep(80)
+    open = true
+    await Promise.all(waits)
+    expect(peak).toBe(12)
+  })
+
+  test("after a wait past the deadline, the item gets no slot back and room() says no", async () => {
+    const result = await runList(items(1), { ...options(), boundMs: 100 }, async (item, context) => {
+      expect(context.room(10)).toBe(true)
+      await context.waiting(() => Bun.sleep(150))
+      return { state: context.room(1) ? ("ready" as const) : ("starting" as const), workId: item.workId, next: "unused" }
+    })
+    expect(result.results[0]).toMatchObject({ state: "starting" })
+  })
+
   test("one shared loop runs each waiter's check once per tick", async () => {
     const poller = new Poller({ intervalMs: 15 })
     const signal = new AbortController().signal

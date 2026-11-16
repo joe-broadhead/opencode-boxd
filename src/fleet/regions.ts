@@ -6,8 +6,11 @@
  *   `PREFER_IMAGE_MARGIN` or more free machines than it.
  * - A named region is used as asked; `keepFree` is for `auto` only. It still answers `MACHINE_LIMIT` when the region is
  *   full, naming the other region when that has room.
- * - `MACHINE_LIMIT` carries `limit`, `inUse` and `free` per region, from boxd's machine limit (cached 60 s), with this
- *   process's creates in flight already taken off `free`.
+ * - **What is in use** comes from the all-region listing the caller took in this call, not from the machine-limit
+ *   answer, which boxd's port caches for 60 s and which a create does not refresh. The listing shows every machine that
+ *   landed before it was asked for; this process's creates still in flight, and those that landed after the listing
+ *   was asked for, are added on top. So a list of creates never counts a landed machine as free again.
+ * - `MACHINE_LIMIT` carries `limit`, `inUse` and `free` per region: boxd's limit, and that count.
  */
 import { boxdError, BoxdError } from "../errors.js"
 import type { RegionChoice } from "../options.js"
@@ -16,24 +19,52 @@ import { REGIONS, type Region, type RegionLimit } from "../ports.js"
 /** `auto` gives up the region with the image only for one with at least this many more free machines. */
 export const PREFER_IMAGE_MARGIN = 50
 
-/** This process's creates in flight per region: a create counts from before its CLI call until it lands or fails. */
-export class InFlight {
-  readonly #count = new Map<Region, number>()
+/** How long a landed create is remembered: far longer than any listing a caller could still be holding. */
+const LANDED_MEMORY_MS = 10 * 60_000
 
-  of(region: Region): number {
-    return this.#count.get(region) ?? 0
+/**
+ * This process's creates per region: those in flight (from before the CLI call until it answers), and those that
+ * landed, with when, so a listing asked for before a create landed does not miss it.
+ */
+export class InFlight {
+  readonly #flying = new Map<Region, number>()
+  #landed: Array<{ readonly region: Region; readonly at: number }> = []
+  readonly #now: () => number
+
+  constructor(now: () => number = Date.now) {
+    this.#now = now
   }
 
-  /** Counts one create in `region`; the returned function stops counting it (call it once, in a `finally`). */
-  reserve(region: Region): () => void {
-    this.#count.set(region, this.of(region) + 1)
-    let released = false
-    return () => {
-      if (released) return
-      released = true
-      this.#count.set(region, Math.max(0, this.of(region) - 1))
+  /** Creates in `region` that a listing asked for at `since` cannot show: in flight, or landed at or after `since`. */
+  of(region: Region, since: number): number {
+    const floor = this.#now() - LANDED_MEMORY_MS
+    this.#landed = this.#landed.filter((entry) => entry.at >= floor)
+    return (this.#flying.get(region) ?? 0) + this.#landed.filter((entry) => entry.region === region && entry.at >= since).length
+  }
+
+  /** Counts one create in `region`; the returned function ends it, as landed or not (call it once, in a `finally`). */
+  reserve(region: Region): (landed: boolean) => void {
+    this.#flying.set(region, (this.#flying.get(region) ?? 0) + 1)
+    let ended = false
+    return (landed) => {
+      if (ended) return
+      ended = true
+      this.#flying.set(region, Math.max(0, (this.#flying.get(region) ?? 0) - 1))
+      if (landed) this.#landed.push({ region, at: this.#now() })
     }
   }
+}
+
+/** The machines in use per region, from an all-region listing, and when that listing was asked for. */
+export interface InUse {
+  readonly counts: Readonly<Record<Region, number>>
+  readonly since: number
+}
+
+/** Counts a listing's machines per region; `since` is when the caller asked for it. */
+export function inUseOf(machines: ReadonlyArray<{ readonly region: Region }>, since: number): InUse {
+  const counts = Object.fromEntries(REGIONS.map((region) => [region, machines.filter((machine) => machine.region === region).length])) as Record<Region, number>
+  return { counts, since }
 }
 
 export interface RegionInput {
@@ -41,23 +72,24 @@ export interface RegionInput {
   readonly limits: readonly RegionLimit[]
   readonly keepFree: Readonly<Record<Region, number>>
   readonly inFlight: InFlight
+  /** What is in use now, from this call's all-region listing. */
+  readonly used: InUse
   /** The regions that hold the golden image this work needs. */
   readonly withImage: ReadonlySet<Region>
 }
 
-/** One region's headroom, as the refusal reports it: boxd's numbers, less this process's creates in flight. */
-export function headroom(limits: readonly RegionLimit[], inFlight: InFlight): RegionLimit[] {
+/** Each region's headroom, as the refusal reports it: boxd's limit, the listing's machines and this process's creates. */
+export function headroom(limits: readonly RegionLimit[], used: InUse, inFlight: InFlight): RegionLimit[] {
   return REGIONS.map((region) => {
-    const known = limits.find((entry) => entry.region === region)
-    const pending = inFlight.of(region)
-    if (!known) return { region, limit: 0, inUse: pending, free: 0 }
-    return { region, limit: known.limit, inUse: known.inUse + pending, free: Math.max(0, known.free - pending) }
+    const limit = limits.find((entry) => entry.region === region)?.limit ?? 0
+    const inUse = used.counts[region] + inFlight.of(region, used.since)
+    return { region, limit, inUse, free: Math.max(0, limit - inUse) }
   })
 }
 
 /** Picks the region for a new work, or throws `MACHINE_LIMIT` with every region's numbers. */
 export function pickRegion(input: RegionInput): Region {
-  const rows = headroom(input.limits, input.inFlight)
+  const rows = headroom(input.limits, input.used, input.inFlight)
   const free = (region: Region) => rows.find((row) => row.region === region)!.free
   if (input.choice !== "auto") {
     if (free(input.choice) > 0) return input.choice
@@ -95,7 +127,7 @@ function limitError(rows: readonly RegionLimit[], message: string): BoxdError {
  * boxd's own limit refusal at create time, as `MACHINE_LIMIT` with every region's numbers (the cached ones, which the
  * refusal has just shown to be optimistic for `region`).
  */
-export function limitAtCreate(error: BoxdError, region: Region, limits: readonly RegionLimit[], inFlight: InFlight): BoxdError {
-  const rows = headroom(limits, inFlight).map((row) => (row.region === region ? { ...row, free: 0 } : row))
+export function limitAtCreate(error: BoxdError, region: Region, limits: readonly RegionLimit[], used: InUse, inFlight: InFlight): BoxdError {
+  const rows = headroom(limits, used, inFlight).map((row) => (row.region === region ? { ...row, free: 0 } : row))
   return limitError(rows, `boxd refused a new machine in ${region}: ${error.what} (${describe(rows)}).${otherAdvice(rows, region)}`)
 }
