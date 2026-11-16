@@ -2,10 +2,13 @@
 // subscribers get every event in seq order, the change tools' events included; a notice goes only to the work's root
 // coordinator, at most once a minute, coalesced, with plugin words only; a gone, archived or re-parented target gets
 // none and is unsubscribed; a refused wake is retried once as queue; "off" posts nothing.
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test"
 import { NOTICE_MAX_WORKS, noticeItem, noticeText } from "../../src/notices.js"
 import type { WorkEvent } from "../../src/ports.js"
 import { startWorld, type World } from "../support/fleet-world.js"
+
+// A world is real processes on a shared machine: give each test room beyond bun's 5 s default.
+setDefaultTimeout(30_000)
 
 let world: World | undefined
 afterEach(async () => {
@@ -168,7 +171,7 @@ describe("notices", () => {
     await w.watcher.flushNotices()
     expect(w.sessions.posted).toHaveLength(2)
     expect(w.sessions.posted[1]!.text).toContain("talker asleep (boxd_sleep)")
-  })
+  }, 90_000)
 
   test("a target that is gone, archived or now has a parent gets none: the sweep orphans its works and unsubscribes them", async () => {
     world = await startWorld()

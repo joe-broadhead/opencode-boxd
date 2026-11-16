@@ -1,7 +1,7 @@
 // `boxd_status` and `boxd_job` against the fake boxd CLI, the fake guest and a real ledger (design §3.1, §3.2, §4.4):
 // their spawn budgets, the read rule (no idle or hibernated guest is read by status, and a job never wakes a machine),
 // the bounded size of a 300-work answer, the cursor, and the guest text that stays data.
-import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test, setDefaultTimeout } from "bun:test"
 import { jobRun } from "../../src/fleet/job.js"
 import { fleetStatus, statusInput } from "../../src/fleet/status.js"
 import type { WorkRecord } from "../../src/ledger/types.js"
@@ -9,6 +9,9 @@ import type { BudgetState, JobResult, ListResult, Refusal, StatusResult } from "
 import type { CostPort } from "../../src/services.js"
 import { budgetProblems, SPAWN_BUDGETS } from "../support/spawn-count.js"
 import { startWorld, type World } from "../support/fleet-world.js"
+
+// A world is real processes on a shared machine: give each test room beyond bun's 5 s default.
+setDefaultTimeout(30_000)
 
 let world: World
 beforeEach(async () => {

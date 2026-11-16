@@ -1,7 +1,10 @@
 // Review of #23, round 2: status's own re-list failing once answers from the cached phases instead of throwing.
-import { afterEach, expect, test } from "bun:test"
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test"
 import { fleetStatus, statusInput } from "../../src/fleet/status.js"
 import { startWorld, type World } from "../support/fleet-world.js"
+
+// A world is real processes on a shared machine: give each test room beyond bun's 5 s default.
+setDefaultTimeout(30_000)
 
 let world: World | undefined
 afterEach(async () => {

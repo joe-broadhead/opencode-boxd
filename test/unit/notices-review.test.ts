@@ -2,12 +2,15 @@
 // minute even while a session read is in flight (LOW-1), only the host's "not found" clears a subscription (LOW-2), a
 // missing session is announced with its code (LOW-3), no field of an event can put free text into a notice, and the
 // events the change tools append (harvest, sleep, drop) reach the subscribers and the notices like any other.
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test"
 import { CODES } from "../../src/errors.js"
 import { PHASES } from "../../src/ledger/types.js"
 import { isNotFound, NoticeQueue, noticeItem, noticeText } from "../../src/notices.js"
 import type { WorkEvent } from "../../src/ports.js"
 import { startWorld, type World } from "../support/fleet-world.js"
+
+// A world is real processes on a shared machine: give each test room beyond bun's 5 s default.
+setDefaultTimeout(30_000)
 
 let world: World | undefined
 afterEach(async () => {

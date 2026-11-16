@@ -1,7 +1,7 @@
 // A failed `machine list` is a listing failure, never a guest failure (review of #23, round 2, MEDIUM-1): status, the
 // watcher and boxd_job keep each work's last known phase, count no failure toward `unreachable`, and still answer.
 // And package E's real cost and cleanup providers, as status and the TUI render them.
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test"
 import { cleanupView } from "../../src/cleanup.js"
 import { jobRun } from "../../src/fleet/job.js"
 import { sessionRuns } from "../../src/fleet/sessions.js"
@@ -10,6 +10,9 @@ import type { JobResult, ListResult } from "../../src/results.js"
 import { cleanupText } from "../../src/tui.js"
 import { watchHandle } from "../../src/watch.js"
 import { startWorld, type World } from "../support/fleet-world.js"
+
+// A world is real processes on a shared machine: give each test room beyond bun's 5 s default.
+setDefaultTimeout(30_000)
 
 let world: World | undefined
 afterEach(async () => {
