@@ -30,7 +30,8 @@ run("git", ["init", "--quiet", work], root)
 afterAll(() => rmSync(work, { recursive: true, force: true }), { timeout: 120_000 })
 
 const MAX_FILES = 30
-const MAX_PACKED_BYTES = 100 * 1024
+// The v0.1.0 redesign's runner, ledger, import and guest v1; still catches an accidentally bundled dependency. Re-checked at integration.
+const MAX_PACKED_BYTES = 160 * 1024
 const DIST = ["dist/index.js", "dist/tui.js"]
 const SERVER_HOST_MODULES = [/^node:/, /^@opencode\/plugin(?:\/|$)/]
 const TUI_HOST_MODULES = [/^node:/, /^@opencode\/plugin(?:\/|$)/, /^@opentui\//, /^solid-js(?:\/|$)/]
@@ -114,7 +115,7 @@ describe("package tarball", () => {
     const expected = ["package.json", ...pkg.files.flatMap(whitelisted)].sort()
     expect(paths).toEqual(expected)
     expect(entryCount).toBeLessThan(MAX_FILES)
-    expect(size).toBeLessThanOrEqual(MAX_PACKED_BYTES)
+    if (size > MAX_PACKED_BYTES) throw new Error(`The packed tarball is ${size} bytes, over the ${MAX_PACKED_BYTES}-byte budget.`)
     expect(paths.filter((path) => path.includes("node_modules/") || /\.(?:tsx|jsx)$/.test(path))).toEqual([])
     for (const target of Object.values(pkg.exports)) expect(paths).toContain(target.replace(/^\.\//, ""))
     expect(paths.filter((path) => path.endsWith(".d.ts"))).toEqual([])

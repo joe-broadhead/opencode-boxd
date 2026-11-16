@@ -360,7 +360,8 @@ async function rerunBlocked(options: ImportOptions, ledger: Ledger): Promise<voi
     for (const workId of report.blocked) {
       if (locks.disposed) return
       const folder = join(root, LEDGER_PATHS.v0Works, workId)
-      const present = WORK_ID.test(workId) && (await exists(join(folder, "work.json")))
+      // An unreadable folder counts as present: mapping it fails again, and the id stays blocked with the reason.
+      const present = WORK_ID.test(workId) && (await exists(join(folder, "work.json")).catch(() => true))
       // A v0 record removed since frees its id; a fixed one is imported; one that still fails stays blocked.
       let result: ImportReport["results"][number] = { workId, result: "blocked", reason: "its v0 record was removed, so the id is free" }
       let unblock = !present
@@ -430,10 +431,18 @@ async function readInputs(root: string): Promise<Inputs> {
   for (const name of names.sort()) {
     if (name === noteName()) continue
     const folder = join(works, name)
-    if (!(await stat(folder)).isDirectory()) continue
-    if (!(await exists(join(folder, "work.json")))) continue
-    folders.push(name)
-    for await (const file of walk(folder)) files.push(relative(works, file))
+    try {
+      if (!(await stat(folder)).isDirectory()) continue
+      if (!(await exists(join(folder, "work.json")))) continue
+      const inside: string[] = []
+      for await (const file of walk(folder)) inside.push(relative(works, file))
+      folders.push(name)
+      files.push(...inside)
+    } catch {
+      // A folder that cannot be read is still a record to report: mapping it fails, so it blocks only its own id.
+      folders.push(name)
+      files.push(`${name}/`)
+    }
   }
   return { folders, digest: createHash("sha256").update(files.sort().join("\n")).digest("hex") }
 }

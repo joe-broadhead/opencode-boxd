@@ -16,7 +16,7 @@ import { boxdError, BoxdError } from "../errors.js"
 import { EventLog } from "./events.js"
 import type { Expected, LedgerFile, StagedFile, StagedFolder } from "../ports.js"
 import { commitFile, copyFileAtomic, type Digest, digestFile, ensureDir, errnoOf, exists, FILE_MODE, fsyncDir, randomPart, remove, writeJsonAtomic } from "./fsx.js"
-import { LockSet, type LockHandle } from "./lock.js"
+import { alive, LockSet, type LockHandle } from "./lock.js"
 import {
   LEDGER_FORMAT,
   LEDGER_PATHS,
@@ -302,7 +302,7 @@ export class Ledger {
   async stageFile(workId: string, final: LedgerFile): Promise<StagedFile> {
     const target = this.ledgerFile(workId, final)
     await ensureDir(dirname(target))
-    const path = `${target}.${randomPart()}.tmp`
+    const path = `${target}.${stageId()}.tmp`
     await (await open(path, "wx", FILE_MODE)).close()
     return { workId, final, path }
   }
@@ -320,7 +320,7 @@ export class Ledger {
 
   /** A fresh, empty temp folder `untracked.<rand>.tmp/` beside `untracked/`, for the caller to fill. */
   async stageFolder(workId: string): Promise<StagedFolder> {
-    const path = join(this.workDir(workId), `${WORK_FILES.untracked}.${randomPart()}.tmp`)
+    const path = join(this.workDir(workId), `${WORK_FILES.untracked}.${stageId()}.tmp`)
     await mkdir(path, { recursive: true, mode: 0o700 })
     return { workId, final: "untracked", path }
   }
@@ -342,7 +342,7 @@ export class Ledger {
       throw error
     }
     await this.withWork(staged.workId, async () => {
-      await this.recoverUntracked(staged.workId, staged.path)
+      await this.recoverUntracked(staged.workId)
       const aside = join(this.workDir(staged.workId), `${WORK_FILES.untracked}.old-${randomPart()}`)
       const had = await exists(dir)
       try {
@@ -384,9 +384,11 @@ export class Ledger {
 
   /**
    * Repairs an untracked swap a crash cut short: with no `untracked/` and an old set aside, the old set goes back; an
-   * old set left beside a new one is removed; staged sets that were never committed are removed, except `keep`.
+   * old set left beside a new one is removed. A staged set is removed only when it is abandoned (its process is gone,
+   * or it is a day old): another harvest of the same work may be filling its own set right now, and a commit never
+   * touches any staged set but its own.
    */
-  async recoverUntracked(workId: string, keep?: string): Promise<void> {
+  async recoverUntracked(workId: string): Promise<void> {
     await this.withWork(workId, async () => {
       const dir = this.workDir(workId)
       let names: string[]
@@ -405,12 +407,12 @@ export class Ledger {
         } else await remove(join(dir, name))
       }
       for (const name of names) {
-        if (name.startsWith(`${WORK_FILES.untracked}.`) && name.endsWith(".tmp") && join(dir, name) !== keep) await remove(join(dir, name))
+        if (name.startsWith(`${WORK_FILES.untracked}.`) && name.endsWith(".tmp") && (await abandoned(join(dir, name)))) await remove(join(dir, name))
       }
     })
   }
 
-  /** Removes temp files a crash left in a work's folder and `exports/`, staged untracked sets included. */
+  /** Removes abandoned temp files (their process is gone, or a day old) from a work's folder and `exports/`. */
   async sweepTemps(workId: string): Promise<void> {
     await this.withWork(workId, async () => {
       for (const dir of [this.workDir(workId), join(this.workDir(workId), WORK_FILES.exports)]) {
@@ -420,7 +422,7 @@ export class Ledger {
         } catch {
           continue
         }
-        for (const name of names) if (name.endsWith(".tmp")) await remove(join(dir, name))
+        for (const name of names) if (name.endsWith(".tmp") && (await abandoned(join(dir, name)))) await remove(join(dir, name))
       }
     })
   }
@@ -433,10 +435,10 @@ export class Ledger {
     return join(this.workDir(workId), final)
   }
 
-  /** A staged path must be the one the ledger handed out: `<final>.<rand>.tmp` in the same folder, resolved. */
+  /** A staged path must be the one the ledger handed out: `<final>.<pid>-<rand>.tmp` in the same folder, resolved. */
   private assertStagedBeside(path: string, final: string, folder: boolean): void {
     const resolved = resolve(path)
-    const ok = dirname(resolved) === dirname(final) && new RegExp(`^${escape(basename(final))}\\.[0-9a-f]{12}\\.tmp$`).test(basename(resolved))
+    const ok = dirname(resolved) === dirname(final) && new RegExp(`^${escape(basename(final))}\\.[0-9]+-[0-9a-f]{12}\\.tmp$`).test(basename(resolved))
     if (!ok || resolved.includes(`${sep}..${sep}`)) throw boxdError("LEDGER_FAILED", `${path} is not a ${folder ? "folder" : "file"} the ledger staged for ${basename(final)}.`)
   }
 
@@ -553,5 +555,28 @@ async function verifyFolder(root: string, expected: Readonly<Record<string, Expe
     } finally {
       await handle.close()
     }
+  }
+}
+
+/** Each stage's own id: this process's pid, so a crash's leftovers can be told from a live stage, and a random part. */
+const stageId = () => `${process.pid}-${randomPart()}`
+
+/** How old a temp file or staged set from another host's process must be before a sweep removes it. */
+const ABANDONED_AFTER_MS = 24 * 60 * 60_000
+
+/**
+ * A temp file or staged set no live stage owns: its pid (from `stageId` or `tempBeside`) is a process that no longer
+ * exists on this host, or it is older than a day. One of this process's own is never abandoned.
+ */
+async function abandoned(path: string): Promise<boolean> {
+  const pid = /\.([0-9]+)[.-][0-9a-f]{12}\.tmp$/.exec(basename(path))?.[1]
+  if (pid !== undefined) {
+    if (Number(pid) === process.pid) return false
+    if (!alive(Number(pid))) return true
+  }
+  try {
+    return Date.now() - (await lstat(path)).mtimeMs > ABANDONED_AFTER_MS
+  } catch {
+    return false
   }
 }
