@@ -3,13 +3,62 @@
 All notable changes to this project are documented here. The format is [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.0] - 2026-11-16
 
 ### Breaking
 
 v0.1.0 redesigns the plugin and breaks compatibility on purpose: the tools, the result shapes, the ledger format, the
 options and the guest helper all change. Works that ran on v0.0.x are imported, not stranded.
 [docs/v1-design.md](docs/v1-design.md) is the design.
+
+**Upgrading from v0.0.6.** Remove the old entry and add the new tag:
+`opencode plugin remove github:joe-broadhead/opencode-boxd#v0.0.6`, then
+`opencode plugin add github:joe-broadhead/opencode-boxd#v0.1.0`. If you set the option `snapshot`, rename it to
+`goldenBase` first: a left-over `snapshot` stops the plugin with `OPTIONS_INVALID`, which names the replacement. Keep
+the boxd CLI signed in: the import below needs it.
+
+**What the first start does.** It imports the v0 ledger, `~/.local/share/opencode-boxd/works/`, once into a new
+`~/.local/share/opencode-boxd/v1/`:
+
+- **Every tool waits for it.** Until the import is complete every tool, reads included, answers `LEDGER_IMPORTING`
+  with `progress: { done, total }`, and the same call again in a few seconds goes through. Nothing reads a partial
+  ledger. A second OpenCode process on the laptop does not import: it answers `LEDGER_IMPORTING` until the first one
+  has finished.
+- **It reads boxd once.** One fresh `boxd machine list --region all` finds each work's region, and one `machine get`
+  per machine found records its id. If the listing fails (signed out, offline), no `v1/` is made: every tool answers
+  `IMPORT_V0_FAILED` with the CLI's reason, and the next tool call after 30 s, or a restart, tries again. A work whose
+  machine is in no region reads as `gone`.
+- **Crash-safe, all or nothing.** The import builds the whole ledger in a staging folder of its own,
+  `v1.importing-<pid>-<random>/`, and publishes it as `v1/` in one rename, after it has written its `complete` marker. A
+  crash, a quit or a reload before that leaves no `v1/`: the next start deletes the staging folder and imports again,
+  from the untouched v0 records. Exports, patches and untracked files are copied, never linked, so the import needs the
+  disk space of one more copy of them.
+- **A bad record blocks only its own work.** A v0 record that cannot be read or mapped is listed with its reason in
+  `v1/import-v0.json`, its file is left as it is, and that work id alone answers `IMPORT_V0_FAILED`. Fix or remove the
+  file and restart OpenCode: the id is imported into `v1/` then.
+- **The v0 records are not changed.** The one addition is a folder, `works/README-MOVED-TO-v1/`, holding only a
+  `README.md` that says the works moved and when going back is safe. It is a folder, not a file, so v0.0.6 skips it.
+- **After the import.** A laptop copy of a transcript harvested twice under v0 may be the older one (F1): every imported
+  work with a harvest is marked as an unverified laptop copy, `boxd_status` lists them under `laptop-copy`, and
+  `boxd_harvest({ works })` replaces them in one call. A running v0 machine keeps running, busy or not: reads use its
+  own v0 helper, read-only, and the first change tool for it copies its server password to `~/.opencode-boxd/`. A v0
+  machine whose `/tmp` a reboot cleared answers `GUEST_FAILED` until `boxd_ensure({ workId })` sets it up again.
+
+**Going back to v0.0.6** is safe **only before v0.1.0's first change** (a submit, harvest, drop or reassign). After
+one, the v0 records still carry their old proof, and v0's drop could accept a proof that a later prompt made stale and
+destroy work that was never harvested. To go back: `opencode plugin remove github:joe-broadhead/opencode-boxd#v0.1.0`,
+then `opencode plugin add github:joe-broadhead/opencode-boxd#v0.0.6`, and take out every option v0.0.6 does not know
+(it accepts only `snapshot`, `allowUntestedHost`, `allowedRoots` and `access`). What it keeps: v0.0.6 reads `works/`
+exactly as it was before the upgrade. It sees nothing in `v1/`: no work v0.1.0 created, and none of its submits,
+harvests, drops or reassigns. The machines v0.1.0 created stay, and bill until destroyed: boxd hibernates each after
+its idle timeout (2 h by default), and `boxd machine remove oc-<work id> -y` destroys one. `v1/` stays on disk;
+upgrading again uses it as it is and imports nothing new, so a work v0.0.6 created after the rollback is not in it.
+
+**Renamed and removed, at a glance.** The tool `boxd_image` is gone; `boxd_golden` builds images instead, and never
+saves a work's machine. The option `snapshot` is now `goldenBase`. Inputs and fields: `vcpu` is `size`, `queued` is
+`delivery`, `pending` is `waiting`, `proof` is `saved`; the phases `empty` and `missing` are gone. The codes
+`NOT_PROVEN`, `SNAPSHOT_MISSING`, `GUEST_RUN_FAILED`, `PARENT_MISSING` and `SNAPSHOT_EXISTS` are renamed or gone, as
+below. The details:
 
 - **Tools.** `boxd_image` is replaced by `boxd_golden`; `boxd_read`, `boxd_exec` and `boxd_reassign` are new, so there
   are twelve. Every result has `state`, a refusal too (`refused`, `failed`, `unreachable`, `busy`, `starting`, `gone`,
@@ -35,9 +84,9 @@ options and the guest helper all change. Works that ran on v0.0.x are imported, 
 - **`boxd_job`.** `pending` is replaced by `waiting: { steer, queue }`; `tail` takes 1 to 20; `cost` adds the work's
   machine and model cost. It answers a hibernated work from the listing and the ledger, and never wakes it.
 - **The ledger** moves to `~/.local/share/opencode-boxd/v1/`; v0 records are imported once, all or nothing, and left
-  untouched apart from a `works/README-MOVED-TO-v1/` note folder. Until the import is complete every tool answers
-  `LEDGER_IMPORTING`. **Going back to v0.0.6 is safe only before v0.1.0's first change** (a submit, harvest, drop or
-  reassign): after that, v0's drop could accept a stale proof and destroy unharvested work.
+  untouched apart from a `works/README-MOVED-TO-v1/` note folder (above). Until the import is complete every tool
+  answers `LEDGER_IMPORTING`. **Going back to v0.0.6 is safe only before v0.1.0's first change** (a submit, harvest,
+  drop or reassign): after that, v0's drop could accept a stale proof and destroy unharvested work.
 - **By id.** Every change acts on the machine id the ledger recorded; a name that now points at another machine is
   refused with `NOT_OURS`, and no adoption takes a machine another open work records, even with `adopt: true`. A
   machine counts as gone only when a fresh all-region listing and a `get` of the recorded id find it nowhere.
@@ -83,6 +132,10 @@ options and the guest helper all change. Works that ran on v0.0.x are imported, 
 - A missing machine is read only from boxd's exact not-found words in the region asked, so an unknown flag or a machine
   in the other region is never read as missing (F4).
 - A laptop upgrade no longer blinds reads: `boxd_status` and `boxd_job` work across guest versions (F6).
+
+### Changed
+
+- The host range is unchanged: `>=2.2.3 <2.4.0`, tested on 2.2.3, 2.2.4, 2.2.5, 2.2.6, 2.2.7 and 2.3.0.
 
 ## [0.0.6] - 2026-11-15
 

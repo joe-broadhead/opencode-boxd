@@ -19,29 +19,51 @@ boxd is a trademark of Azin Tech Operating Company B.V.; this unofficial plugin 
 ## Install
 
 ```sh
-opencode plugin add github:joe-broadhead/opencode-boxd#v0.0.6
+opencode plugin add github:joe-broadhead/opencode-boxd#v0.1.0
 ```
 
 Run `opencode reload`, or restart OpenCode, then run `/boxd-status`.
 
 Each release has its own tag, and a Git install does not update by itself. To move to a newer release, remove the old
-entry with `opencode plugin remove github:joe-broadhead/opencode-boxd#v<old version>`, then add the new tag with
+entry with `opencode plugin remove github:joe-broadhead/opencode-boxd#v0.0.6`, then add the new tag with
 `opencode plugin add github:joe-broadhead/opencode-boxd#v<version>`.
 
 Or add the plugin to `opencode.json` instead, with the same spec:
 
 ```json
-{ "plugins": [{ "package": "github:joe-broadhead/opencode-boxd#v0.0.6" }] }
+{ "plugins": [{ "package": "github:joe-broadhead/opencode-boxd#v0.1.0" }] }
 ```
 
 The install takes the GitHub release tag. Its commit carries the built `dist/`, so the install runs no build.
 
-**Upgrading from an earlier release.** The ledger moves to `~/.local/share/opencode-boxd/v1/`. The first start imports
-every earlier work once, all or nothing, and leaves the old records untouched apart from a `works/README-MOVED-TO-v1/`
-note; until the import is complete every tool answers `LEDGER_IMPORTING`. Going back to an earlier release is safe only
-before this release's first change (a submit, harvest, drop or reassign): after that, the old drop could accept a stale
-record and destroy unharvested work. The [CHANGELOG](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/CHANGELOG.md)
-lists every breaking change.
+**Upgrading from an earlier release.** This release breaks compatibility: tools, results, options and the ledger
+change. The tool `boxd_image` is gone (`boxd_golden` builds images, and never saves a work's machine); `boxd_read`,
+`boxd_exec` and `boxd_reassign` are new. The option `snapshot` is now `goldenBase`: rename it before you upgrade,
+because a left-over `snapshot` stops the plugin with `OPTIONS_INVALID`. Keep the boxd CLI signed in for the first
+start.
+
+The first start imports the earlier ledger, `~/.local/share/opencode-boxd/works/`, once into
+`~/.local/share/opencode-boxd/v1/`:
+
+- Until the import is complete, every tool answers `LEDGER_IMPORTING` with `progress`; the same call again in a few
+  seconds goes through. It reads boxd once (one all-region listing, one `get` per machine); if that listing fails, no
+  ledger is made, tools answer `IMPORT_V0_FAILED`, and the next call after 30 s, or a restart, tries again.
+- It is crash-safe, all or nothing: it builds in a staging folder and publishes `v1/` in one rename, so a crash or quit
+  leaves no `v1/`, and the next start imports again from the untouched records. A record it cannot read blocks only its
+  own work (`IMPORT_V0_FAILED`, with the reason in `v1/import-v0.json`) until the file is fixed or removed and OpenCode
+  restarts.
+- The earlier records are left as they are; the one addition is a note folder, `works/README-MOVED-TO-v1/`. A work
+  harvested before may hold an older laptop copy of its transcript: `boxd_status` lists it under `laptop-copy`, and
+  `boxd_harvest({ works })` replaces it.
+
+Going back is safe only before this release's first change (a submit, harvest, drop or reassign): after that, the old
+drop could accept a stale record and destroy unharvested work. To go back, run
+`opencode plugin remove github:joe-broadhead/opencode-boxd#v0.1.0`, then
+`opencode plugin add github:joe-broadhead/opencode-boxd#v0.0.6`, and keep only the options it knows (`snapshot`,
+`allowUntestedHost`, `allowedRoots`, `access`). It reads `works/` as it was before the upgrade and sees nothing this
+release did; the machines this release created keep billing until you destroy them. `v1/` stays, and upgrading again
+uses it as it is, without importing again. The
+[CHANGELOG](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/CHANGELOG.md) lists every breaking change.
 
 ## Sign in
 
@@ -189,7 +211,7 @@ The region choice, the CI reserve and the image recipe are the policies worth se
 // /Library/Application Support/opencode/opencode.json on macOS
 {
   "plugins": [{
-    "package": "github:joe-broadhead/opencode-boxd#v0.0.6",
+    "package": "github:joe-broadhead/opencode-boxd#v0.1.0",
     "options": { "region": "auto", "keepFree": { "fra": 20, "nyc": 0 }, "size": "2x8" }
   }]
 }
@@ -324,7 +346,7 @@ and notices, health, tools, agents without the default rules, the OpenCode versi
 ## Uninstall
 
 ```sh
-opencode plugin remove github:joe-broadhead/opencode-boxd#v0.0.6
+opencode plugin remove github:joe-broadhead/opencode-boxd#v0.1.0
 ```
 
 The ledger is yours to keep or delete. Machines are boxd's: `boxd machine remove oc-<work id> -y` destroys one.
