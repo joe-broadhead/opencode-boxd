@@ -9,7 +9,7 @@
  * 4. Each file is copied by `machine cp` into a staged temp file beside the stored one, and committed only when its
  *    size and streamed sha256 match the helper's report: the last good export is never overwritten before the new one
  *    is verified (round 2, M-a). The same for `patch.diff` and the `untracked/` set, which is swapped in whole.
- * 5. The laptop's copy is replaced through the prover (`src/prover.ts`): delete, then import, parents first (F1).
+ * 5. The laptop's copy is replaced through the laptop port (`src/prover.ts`): delete, then import, parents first (F1).
  * 6. `saved` is recorded last, under the work's lock, so `boxd_resume` always rebuilds from a complete, verified set.
  *
  * The whole call holds the work's ledger lock, and the guest steps hold the machine's lock inside it (design §2.2).
@@ -20,7 +20,7 @@ import { mkdir, stat, unlink } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { BoxdError, boxdError, inField } from "../errors.js"
 import type { GitState, MovedFile, SavedSession, WorkRecord } from "../ledger/types.js"
-import { laptopProver } from "../prover.js"
+import { replaceOnLaptop } from "../prover.js"
 import { assertInsideRoots, assertWorkPath, digestFile, FILE_LIMIT, placeFile, resolveLaptopPath, rootsOf, TOTAL_LIMIT } from "../paths.js"
 import type { ChangeTarget, ExportAnswer, GitAnswer, OpContext, Owned, RunOutcome, StagedFile, StagedFolder } from "../ports.js"
 import type { HarvestResult } from "../results.js"
@@ -90,7 +90,6 @@ interface Fetched {
 
 export async function harvestWork(services: Services, item: HarvestItem, context: WorkContext): Promise<HarvestResult> {
   const { op } = context
-  const prover = laptopProver((request) => services.runner.spawn(request), services.opencodeBin)
   let fileError: BoxdError | undefined
   const result = await services.ledger.update(
     [item.workId],
@@ -123,7 +122,8 @@ export async function harvestWork(services: Services, item: HarvestItem, context
         // The laptop's own OpenCode: each session replaced, parents first (F1). A failure keeps the stored files.
         if (fetched.exported) {
           const folderOf = services.ledger.workFolder(record.workId)
-          await prover.replace(
+          await replaceOnLaptop(
+            services.laptop,
             parentsFirst(fetched.exported).map((session) => ({ id: session.id, file: join(folderOf, "exports", `${session.id}.json`) })),
             localDirectory,
             op,

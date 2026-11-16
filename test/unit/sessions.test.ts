@@ -60,7 +60,7 @@ beforeEach(async () => {
   guest.prompts.length = 0
   guest.switches.length = 0
   counter = await startSpawnCounter({ guestPort: guest.port, version: VERSION })
-  runtime = createRuntime({ boxdBin: counter.boxdBin }, { opencodeBin: counter.opencodeBin })
+  runtime = createRuntime({ boxdBin: counter.boxdBin, opencodeBin: counter.opencodeBin })
   root = tempRoot("boxd-c2-")
   project = join(root, "project")
   mkdirSync(project)

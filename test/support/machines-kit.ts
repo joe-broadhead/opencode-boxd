@@ -71,7 +71,7 @@ export interface KitInput {
 export async function startKit(input: KitInput = {}): Promise<Kit> {
   const guest = startFakeGuest({ version: VERSION })
   const counter = await startSpawnCounter({ guestPort: guest.port, version: VERSION })
-  const runtime = createRuntime({ boxdBin: counter.boxdBin }, { opencodeBin: counter.opencodeBin })
+  const runtime = createRuntime({ boxdBin: counter.boxdBin, opencodeBin: counter.opencodeBin })
   const root = realpathSync(mkdtempSync(join(realpathSync(tmpdir()), "boxd-c1-")))
   const project = join(root, "project")
   mkdirSync(project, { recursive: true })

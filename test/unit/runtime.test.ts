@@ -16,7 +16,7 @@ const sleeping = () => Bun.spawnSync(["pgrep", "-f", "^sleep 597$"]).stdout.toSt
 
 beforeEach(() => {
   fake = startFakeCli()
-  runtime = createRuntime({ boxdBin: fake.bin })
+  runtime = createRuntime({ boxdBin: fake.bin, opencodeBin: fake.opencodeBin })
 })
 afterEach(async () => {
   await runtime.dispose()

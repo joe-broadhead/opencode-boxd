@@ -82,7 +82,7 @@ export async function startWorld(
   const root = tempRoot("boxd-fleet-")
   const guest = startFakeGuest({ version: "2.2.6" })
   const counter = await startSpawnCounter({ guestPort: guest.port, ...(options.latencyMs ? { latencyMs: options.latencyMs } : {}) })
-  const runtime = createRuntime({ boxdBin: counter.boxdBin }, { opencodeBin: counter.opencodeBin })
+  const runtime = createRuntime({ boxdBin: counter.boxdBin, opencodeBin: counter.opencodeBin })
   const sessions = new FakeSessions()
   const clock = { now: new Date("2026-11-16T10:00:00.000Z") }
   const host = {

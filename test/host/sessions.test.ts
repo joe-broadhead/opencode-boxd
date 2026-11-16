@@ -45,7 +45,7 @@ async function seedWork(host: Host, ledger: Awaited<ReturnType<typeof ledgerOf>>
   const machine = host.boxd.seed(`oc-${workId}`, { status: "running", region: "fra", labels: { owner: "opencode-boxd", role: "session", work: workId } })
   const tree = join(host.boxd.fake.disk(machine), "home", "boxd", "work", workId)
   if (install) {
-    const runtime = createRuntime({ boxdBin: host.boxd.bin })
+    const runtime = createRuntime({ boxdBin: host.boxd.bin, opencodeBin: host.boxd.fake.opencodeBin })
     try {
       await runtime.runner.withMachineLock({ id: machine.id as MachineId }, op("seed"), async () => {
         const { target } = await runtime.boxd.checkOwned("fra", machine.name as `oc-${string}`, machine.id as MachineId, op("seed"))

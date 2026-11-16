@@ -14,7 +14,7 @@ afterAll(cleanup)
 describe("the runtime on a stock host", () => {
   test("Stop on the model path ends the tool call and kills the boxd child and the remote command it started", async () => {
     const host = await startHost()
-    const runtime = createRuntime({ boxdBin: host.boxd.bin })
+    const runtime = createRuntime({ boxdBin: host.boxd.bin, opencodeBin: host.boxd.fake.opencodeBin })
     try {
       const machine = host.boxd.fake.machine({ name: "oc-stop", region: "fra" })
       // A command no other process on this machine runs, so every check below is about this test's own tree.

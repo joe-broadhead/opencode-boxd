@@ -49,7 +49,7 @@ describe("the laptop port", () => {
     const file = exportFile("ses_twice")
     await laptop.importSession(file, "/project", context)
     const error = await fail(laptop.importSession(file, "/project", context))
-    expect([error?.code, error?.what]).toEqual(["IMPORT_FAILED", "This laptop already had the session, so its copy was not replaced; delete it first."])
+    expect([error?.code, error?.what]).toEqual(["IMPORT_FAILED", "This laptop's OpenCode already held the session, so the import changed nothing; it is deleted first."])
   })
 
   test("a delete that fails for another reason is IMPORT_FAILED, never absent", async () => {
