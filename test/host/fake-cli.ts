@@ -115,6 +115,15 @@ case "$1" in
 esac
 `
 
+/** `timeout <seconds> <command…>`: the command's own exit, or 124 when the bound ran out, as coreutils answers. */
+const GUEST_TIMEOUT = `#!/usr/bin/env python3
+import subprocess, sys
+try:
+    sys.exit(subprocess.run(sys.argv[2:], timeout=float(sys.argv[1])).returncode)
+except subprocess.TimeoutExpired:
+    sys.exit(124)
+`
+
 export function startFakeCli(options: { readonly dir?: string; readonly version?: string; readonly guestPort?: number; readonly latencyMs?: [number, number] } = {}): FakeCli {
   const dir = options.dir ?? realpathSync(mkdtempSync(join(realpathSync(tmpdir()), "boxd-fake-")))
   mkdirSync(join(dir, "guest-bin"), { recursive: true })
@@ -129,6 +138,11 @@ export function startFakeCli(options: { readonly dir?: string; readonly version?
   const opencodeBin = shim("opencode", " --as-opencode")
   writeFileSync(join(dir, "guest-bin", "opencode"), GUEST_OPENCODE)
   chmodSync(join(dir, "guest-bin", "opencode"), 0o755)
+  // The guest's coreutils `timeout`, which the helper's detached clone uses, for a test machine that has none (macOS).
+  if (!Bun.which("timeout")) {
+    writeFileSync(join(dir, "guest-bin", "timeout"), GUEST_TIMEOUT)
+    chmodSync(join(dir, "guest-bin", "timeout"), 0o755)
+  }
   const root = join(dir, "disks")
   mkdirSync(root, { recursive: true })
   const initial: FakeState = {

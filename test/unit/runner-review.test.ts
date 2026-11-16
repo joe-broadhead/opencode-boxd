@@ -28,6 +28,13 @@ const alive = (pid: number) => {
     return false
   }
 }
+/**
+ * A descendant that leaves the child's process group (a new session) and keeps its stdout open, writing its pid first.
+ * `os.setsid` from Python, which every test machine has, where the `setsid` binary is Linux's alone.
+ */
+const escape = (file: string, seconds: number) =>
+  `python3 -c 'import os, sys; os.setsid(); open(sys.argv[1], "w").write(str(os.getpid())); os.execvp("sleep", ["sleep", sys.argv[2]])' ${file} ${seconds}`
+
 let files = 0
 const pidFile = () => join(dir, `pid-${++files}`)
 async function readPid(path: string): Promise<number> {
@@ -298,7 +305,7 @@ describe("process trees", () => {
   test("L-2: dispose settles a child whose escaped descendant holds its stdout, within the bound", async () => {
     const file = pidFile()
     const runner = createRunner({ killGraceMs: 200 })
-    const script = `setsid sh -c 'echo $$ > ${file}; exec sleep 33' & sleep 33`
+    const script = `${escape(file, 33)} & sleep 33`
     const run = settle(runner.spawn({ ...ctx("t"), bin: "sh", args: ["-c", script], timeoutMs: 60_000 }))
     const escaped = await readPid(file)
     const started = Date.now()
@@ -314,7 +321,7 @@ describe("process trees", () => {
   test("L-2: a timeout settles the same way: the slot comes back", async () => {
     const file = pidFile()
     const runner = createRunner({ killGraceMs: 100 })
-    const script = `setsid sh -c 'echo $$ > ${file}; exec sleep 34' & sleep 34`
+    const script = `${escape(file, 34)} & sleep 34`
     const answer = await settle(runner.spawn({ ...ctx("t"), bin: "sh", args: ["-c", script], timeoutMs: 300 }))
     expect(answer.ok ? "ran" : code(answer.error)).toBe("TIMEOUT")
     expect(runner.health().children.now).toBe(0)
