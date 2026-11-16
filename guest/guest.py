@@ -904,14 +904,38 @@ def entry(root, name):
     return {"path": name, "bytes": size, "sha256": sha}
 
 
+def pinned_git(directory, *args, text=True):
+    """git on the work folder alone: discovery stops at the folder's parent (GIT_CEILING_DIRECTORIES), so a work folder
+    nested inside another repository is never read as part of it."""
+    env = dict(os.environ)
+    env["GIT_CEILING_DIRECTORIES"] = os.path.dirname(os.path.realpath(directory))
+    env.pop("GIT_DIR", None)
+    env.pop("GIT_WORK_TREE", None)
+    return subprocess.run(["git", "-C", directory, *args], capture_output=True, text=text, env=env)
+
+
+def own_repository(directory):
+    """True when the work folder is the top of its own repository; false when it is in none. A repository whose top is
+    elsewhere is refused: its state is not the work's."""
+    top = pinned_git(directory, "rev-parse", "--show-toplevel")
+    if top.returncode != 0:
+        return False
+    if os.path.realpath(top.stdout.strip()) != os.path.realpath(directory):
+        fail("GIT_UNKNOWN", "the work folder is not the top of its own git repository")
+    return True
+
+
 def action_git(request):
     directory = work_directory(request.get("directory"))
     answer = {"known": False, "remote": None, "branch": None, "sha": None, "dirty": False, "untracked": [], "ignored": []}
-    probe = subprocess.run(["git", "-C", directory, "rev-parse", "--is-inside-work-tree"], capture_output=True, text=True)
-    if probe.returncode == 0 and probe.stdout.strip() == "true":
-        status = subprocess.run(["git", "-C", directory, "status", "--porcelain=v1", "-z", "--untracked-files=all"], capture_output=True, text=True)
+
+    def git(*args, text=True):
+        return pinned_git(directory, *args, text=text)
+
+    if own_repository(directory):
+        status = git("status", "--porcelain=v1", "-z", "--untracked-files=all")
         # Ignored paths, an ignored folder as one entry ("build/"), so a dependency tree is one path, not thousands.
-        listed = subprocess.run(["git", "-C", directory, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"], capture_output=True, text=True)
+        listed = git("ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory")
         if status.returncode != 0 or listed.returncode != 0:
             fail("GUEST_FAILED", "git status failed: " + (status.stderr + listed.stderr).strip()[-200:])
         untracked, dirty = [], False
@@ -930,9 +954,9 @@ def action_git(request):
                 untracked.append(name)
             else:
                 dirty = True
-        sha = subprocess.run(["git", "-C", directory, "rev-parse", "HEAD"], capture_output=True, text=True)
-        remote = subprocess.run(["git", "-C", directory, "remote", "get-url", "origin"], capture_output=True, text=True)
-        branch = subprocess.run(["git", "-C", directory, "branch", "--show-current"], capture_output=True, text=True)
+        sha = git("rev-parse", "HEAD")
+        remote = git("remote", "get-url", "origin")
+        branch = git("branch", "--show-current")
         answer.update(
             known=True,
             remote=strip_userinfo(remote.stdout.strip()) or None,
@@ -944,7 +968,7 @@ def action_git(request):
         )
         if dirty:
             # Tracked changes, staged and unstaged together: `git diff` alone misses a staged file.
-            patch = subprocess.run(["git", "-C", directory, "diff", "--binary", "HEAD"], capture_output=True)
+            patch = git("diff", "--binary", "HEAD", text=False)
             os.makedirs(HARVEST, mode=0o700, exist_ok=True)
             path = os.path.join(HARVEST, "patch.diff")
             write_file(path, patch.stdout, 0o600)
