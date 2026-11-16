@@ -19,17 +19,46 @@ opencode api post /api/rpc/boxd.machines.tools/describe -H "x-opencode-directory
 ```
 
 A plugin-owned method's result is the method's output object, as `describe` gives its schema: for boxd, the JSON the
-tool itself returns (a work's state, a harvest's sessions, a job's outcome). `text` is what the model path would show.
+tool itself returns, with a `state` on every answer. `text` is what the model path would show.
 
-`boxd_status` reads the whole fleet in one call: each work's `phase`, its last `outcome`, and for a running work whose
-last prompt is not harvested, `lastActivityAt`, `lastText` and `pending`, read from each guest in parallel with a bound
-per machine. A guest that does not answer within it is `phase: "unreachable"` with `error`, `message` and `next`, and the
-other works still report. `credentials` lists the account's sealed variables by `name`, `scope` and `hosts`, never a
-value. A script that watches many works can call `boxd_status` once a round, instead of `boxd_job` per work:
+## Watching a fleet
+
+`boxd_status` answers for the whole fleet in one call: `counts` by phase, each region's machine headroom, the works that
+need a decision (`attention`, worst first, at most `limit`, with `more` for the rest), repeated causes folded into
+`groups`, and the `cost` and `cleanup` blocks. It never wakes a machine and never reads an idle guest. Its `cursor`,
+passed back as `since`, answers only the works that changed since; a cursor older than the kept event log answers the
+full view with `cursorExpired: true`, so a gap is never mistaken for "nothing changed".
 
 ```sh
 opencode api post /api/rpc/boxd.machines.tools/boxd_status -H "x-opencode-directory:$PWD" \
-  -d '{"input":{"sessionID":"<id>","input":{}}}'
+  -d '{"input":{"sessionID":"<id>","input":{"since":1842,"limit":50}}}'
+```
+
+A script's own session gets no notices: notices go to the coordinator that last drove a work from the model path. A
+script names one with `notify` on `boxd_submit` (a session id, or `false` to clear it), and a submit without `notify`
+leaves an earlier subscription in place.
+
+## Many works in one call
+
+`boxd_ensure`, `boxd_submit`, `boxd_job`, `boxd_harvest`, `boxd_sleep`, `boxd_resume` and `boxd_drop` take
+`works: [...]`, 1 to 300 items, and answer `{ state, counts, results }` with one result per item in input order. `state`
+is `done`, `partial`, `failed` or `cancelled`. A list call has a bound: an item still `creating` or `starting` when it
+runs out answers that state, and an item that never started answers `cancelled` with `started: false`; both carry the
+same `next`, which only waits and converges. Use one list call rather than many single calls at once.
+
+```sh
+opencode api post /api/rpc/boxd.machines.tools/boxd_ensure -H "x-opencode-directory:$PWD" \
+  -d '{"input":{"sessionID":"<id>","input":{"works":[{"workId":"api-a","repo":"https://github.com/o/a"},{"workId":"api-b","repo":"https://github.com/o/b"}]}}}'
+opencode api post /api/rpc/boxd.machines.tools/boxd_job -H "x-opencode-directory:$PWD" \
+  -d '{"input":{"sessionID":"<id>","input":{"works":["api-a","api-b"]}}}'
+```
+
+`boxd_sleep`, `boxd_harvest` and `boxd_drop` also take `select` instead of `works`, resolved against a fresh listing and
+the ledger; `dryRun: true` lists the matches and changes nothing:
+
+```sh
+opencode api post /api/rpc/boxd.machines.tools/boxd_sleep -H "x-opencode-directory:$PWD" \
+  -d '{"input":{"sessionID":"<id>","input":{"select":"finished","dryRun":true}}}'
 ```
 
 ## Methods
@@ -38,12 +67,15 @@ opencode api post /api/rpc/boxd.machines.tools/boxd_status -H "x-opencode-direct
 |---|---|---|
 | `boxd_status` | read | allowed |
 | `boxd_job` | read | allowed |
+| `boxd_read` | read | allowed |
 | `boxd_ensure` | write | the agent or session allows `boxd_ensure` |
 | `boxd_submit` | write | the agent or session allows `boxd_submit` |
 | `boxd_harvest` | export | the agent or session allows `boxd_harvest` (it writes this laptop) |
 | `boxd_sleep` | write | the agent or session allows `boxd_sleep` |
 | `boxd_resume` | write | the agent or session allows `boxd_resume` |
-| `boxd_image` | write | the agent or session allows `boxd_image` |
+| `boxd_reassign` | write | the agent or session allows `boxd_reassign` |
+| `boxd_golden` | write | the agent or session allows `boxd_golden` |
+| `boxd_exec` | write | the agent or session allows `boxd_exec` |
 | `boxd_drop` | destructive | the agent or session allows `boxd_drop` |
 
 A class is the worst thing the method does; it never decides whether a call runs. The rules do.
@@ -58,7 +90,7 @@ its content.
 A worked example: summarise the bookmarks a previous step saved, and bring the summary back.
 
 ```sh
-# 1. One work, with the laptop folder it belongs to.
+# 1. One work, with the laptop folder it belongs to. It answers when the guest's OpenCode is up.
 opencode api post /api/rpc/boxd.machines.tools/boxd_ensure -H "x-opencode-directory:$PWD" \
   -d '{"input":{"sessionID":"<id>","input":{"workId":"bookmarks"}}}'
 
@@ -66,17 +98,38 @@ opencode api post /api/rpc/boxd.machines.tools/boxd_ensure -H "x-opencode-direct
 opencode api post /api/rpc/boxd.machines.tools/boxd_submit -H "x-opencode-directory:$PWD" \
   -d '{"input":{"sessionID":"<id>","input":{"workId":"bookmarks","text":"Read data/bookmarks.json and write SUMMARY.md: one line per site, grouped by topic.","files":[{"from":"bookmarks.json","to":"data/bookmarks.json"}]}}}'
 
-# 3. Later: the outcome, then the transcript and the summary.
+# 3. Later: the outcome, then the transcript and the summary, then the machine down.
 opencode api post /api/rpc/boxd.machines.tools/boxd_job -H "x-opencode-directory:$PWD" \
   -d '{"input":{"sessionID":"<id>","input":{"workId":"bookmarks"}}}'
 opencode api post /api/rpc/boxd.machines.tools/boxd_harvest -H "x-opencode-directory:$PWD" \
   -d '{"input":{"sessionID":"<id>","input":{"workId":"bookmarks","files":["SUMMARY.md"]}}}'
+opencode api post /api/rpc/boxd.machines.tools/boxd_drop -H "x-opencode-directory:$PWD" \
+  -d '{"input":{"sessionID":"<id>","input":{"workId":"bookmarks"}}}'
 ```
 
-The harvest answers `outcome: "completed"` when the model finished, and the file lands beside the work's laptop folder.
-An `outcome` of `failed` is a warning on a successful harvest: the transcript and the files are still here, and the next
-step says what to fix. A `boxd_drop` after that harvest succeeds, because `SUMMARY.md` came back at the digest the guest
-still has; a file that was never harvested keeps the refusal.
+`boxd_job` answers `state: "idle"` with `outcome: "completed"` when the model finished. The harvest makes the work
+`saved: "fresh"`, and the drop succeeds because `SUMMARY.md` came back at the digest the guest still has; a file that
+was never harvested keeps the refusal (`UNTRACKED`).
+
+Two more reads help a script without a harvest:
+
+```sh
+opencode api post /api/rpc/boxd.machines.tools/boxd_read -H "x-opencode-directory:$PWD" \
+  -d '{"input":{"sessionID":"<id>","input":{"workId":"bookmarks","path":"SUMMARY.md"}}}'
+opencode api post /api/rpc/boxd.machines.tools/boxd_exec -H "x-opencode-directory:$PWD" \
+  -d '{"input":{"sessionID":"<id>","input":{"workId":"bookmarks","command":["git","status","--short"],"timeout":30}}}'
+```
+
+`boxd_exec` is a change, because a command can do anything; each argument reaches the remote shell exactly as given.
+When the work's machine runs out of room, `boxd_reassign` moves an unstarted work's machine to a new id, and
+`boxd_golden` builds or prunes the golden images:
+
+```sh
+opencode api post /api/rpc/boxd.machines.tools/boxd_reassign -H "x-opencode-directory:$PWD" \
+  -d '{"input":{"sessionID":"<id>","input":{"from":"spare-1","to":"bookmarks-2"}}}'
+opencode api post /api/rpc/boxd.machines.tools/boxd_golden -H "x-opencode-directory:$PWD" \
+  -d '{"input":{"sessionID":"<id>","input":{"region":"nyc","size":"4x16"}}}'
+```
 
 If the host asks for permission to touch a folder outside the project, allow it with the `external_directory` rule as
 well as the path rule:
@@ -131,25 +184,23 @@ A call the RPC refuses before the method runs is the RPC error `failed`, with `d
 | `SESSION_AGENT_REQUIRED` | the session names no agent | create a session that names an agent |
 | `TOOL_UNAVAILABLE` | OpenCode does not list the method's tool now | call `describe` to see the methods there are |
 
-A method that ran and refused answers with its output, not an RPC error, in the same shape as a success: `{ "workId":
-"<id>", "machine": "oc-<id>", "state": "<state>", "error": "<code>", "message": "<what happened>", "next": "<the one
-next step>" }`, the same object the model path gets. `workId` and `machine` are there when the call named a valid one.
-`state` is `unreachable` when boxd or the guest did not answer (`TIMEOUT`, `GUEST_UNRESPONSIVE`, `GUEST_SERVER_DOWN`,
-`GUEST_FAILED`, `BOXD_FAILED`, `BOXD_MISSING`, `CREATE_UNCERTAIN`), `starting`, `gone` and `busy` as a read would say
-them, `failed` for a run that failed, and `refused` for everything else, so a status loop reads `state` on every answer.
-A refusal can carry facts beside the sentence: `NAME_INVALID` and `PATH_REFUSED` name the input in `field` (such as
-`localDirectory` or `files[0].from`), and `UNTRACKED` gives `kind` (`untracked` or `ignored`), `count`, and the first 50
-`paths`. The codes a script meets most:
+A method that ran and refused answers with its output, not an RPC error, in the same shape as a success: `{ "state":
+"<state>", "error": "<code>", "message": "<what happened>", "next": "<the one next call>" }`, with `workId`, `machine`
+and `region` when the call named a valid work, and the facts its code carries: `field` (`NAME_INVALID`), `paths`,
+`count` and `kind` (`UNTRACKED`), `limit` per region (`MACHINE_LIMIT`), `progress` (`LEDGER_IMPORTING`), `uncertain`
+(`CANCELLED`), and `today`, `daily` and `currency` (`BUDGET_REACHED`). `state` is `refused`, `failed`, `unreachable`,
+`busy`, `starting`, `gone`, `asleep` or `cancelled`, so a loop reads `state` on every answer. The codes a script meets
+most:
 
 | Code | When | What to do |
 |---|---|---|
-| `NOT_OURS` | no open work has that id, or it is bound to another machine | call `boxd_ensure` for that work id |
-| `MACHINE_GONE` | the machine is missing or destroyed | call `boxd_resume` to rebuild it from the golden snapshot |
-| `SNAPSHOT_MISSING` | the golden snapshot is not in this boxd account | build the image as `docs/golden-image.md` describes, and set `snapshot` |
-| `SESSION_BUSY` | the guest session is still running (a harvest, or a submit that names a `model`) | call `boxd_job` until it reports idle, then make the call again |
-| `NOT_PROVEN` | no fresh laptop import since the last prompt | call `boxd_harvest` first |
-| `GUEST_RUN_FAILED`, `GUEST_AUTH_FAILED` | the guest session's last run failed | read the transcript, then `boxd_submit` again; an auth failure is fixed in the image |
-| `RUN_INTERRUPTED` | `boxd_resume` only: the guest's OpenCode stopped during the session's run | harvest what exists with `boxd_harvest`, then `boxd_submit` again |
+| `LEDGER_IMPORTING` | the import of earlier works is not complete yet | the same call again in a few seconds |
+| `NOT_OURS` | no open work has that id, or its name now points at another machine | `boxd_ensure` for an unknown id; otherwise look at the machines the message names |
+| `MACHINE_LIMIT` | no region has room | the other `region` when it has room, or free machines with `boxd_drop` or `boxd_reassign` |
+| `SESSION_BUSY` | the session is running and the call needs it idle | wait for the notice or `boxd_status`, or `mode: "interrupt"` |
+| `NOT_SAVED` | drop without a fresh harvest, or the guest moved on since it | `boxd_harvest`, then drop again |
+| `RUN_FAILED`, `GUEST_AUTH_FAILED` | the session's last run failed | read `lastText`; fix the credential for an auth failure; then `boxd_submit` again |
+| `BUDGET_REACHED` | the daily budget is reached with `action: "refuse"` | sleep and drop finished works, or raise the budget |
 
 Every other code the plugin raises is in `docs/configuration.md`, with its one next step.
 

@@ -38,6 +38,12 @@ changes ask; at **Read only** the three reads run and the nine changes are denie
 of the nine changes. The plugin's own guards that do not depend on a prompt hold in Jelly too: `boxd_drop` refuses a machine the
 laptop cannot account for, and `boxd_sleep` always works.
 
+The plugin's automation follows the same choice. At **Allowed** it harvests a finished work and then hibernates it after
+`autoSleepMinutes` (10 by default), by itself. At **Ask before changes** and **Read only** it does neither, because a
+change there either asks or does not run, and automation can do neither; only the person's own `automation: "on"` in
+the plugin config, their standing consent, turns it on there. The idle bounds set when a machine is created apply at
+every level, and nothing automatic ever drops a work.
+
 Jelly's shared rules for every plugin of the family, word for word:
 
 <!-- family-block:start -->

@@ -26,7 +26,7 @@ describe("the Code Mode path", () => {
   test("a read and a change run inside a program by default, and a change asks under an agent that asks", async () => {
     const host = await startHost({ model: true })
     try {
-      const read = await code(host, "const r = await tools.boxd.status({}); return JSON.stringify(r)", "NOT_IMPLEMENTED")
+      const read = await code(host, 'const r = await tools.boxd.status({}); return "status:" + r.state', "status:ok")
       expect(read.text).toContain("after-tool:")
       expect(await host.probe().permission.list({ sessionID: read.sessionID })).toEqual([])
 
@@ -34,9 +34,9 @@ describe("the Code Mode path", () => {
       const wrote = await code(host, `const r = await tools.boxd.ensure({ workId: "review-api" }); return "ensure:" + r.state`, "ensure:ready")
       expect(wrote.text).toContain("after-tool:")
       expect(await host.probe().permission.list({ sessionID: wrote.sessionID })).toEqual([])
-      const before = host.boxd.calls().length
 
       // An agent that asks for the tool still asks, and a decline runs nothing.
+      const before = host.boxd.calls().length
       const asking = await host.client.session.create({ location: { directory: host.location.directory }, agent: "build", permissions: [{ action: "boxd_drop", resource: "*", effect: "ask" }] })
       await host.client.session.prompt({
         sessionID: asking.id,

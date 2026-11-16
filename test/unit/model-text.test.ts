@@ -6,7 +6,9 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { NAMESPACE_DESCRIPTION } from "../../src/constants.js"
-import { formatStatus, type Status } from "../../src/status.js"
+import { buildStatus, formatStatus, type Status } from "../../src/status.js"
+import { TOOLS } from "../../src/tools.js"
+import { statusFacts } from "../support/fleet.js"
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url))
 const read = (file: string) => readFileSync(join(ROOT, file), "utf8")
@@ -38,30 +40,8 @@ const atAll = (text: string) =>
 
 const jellySummary = () => (JSON.parse(read("package.json")) as { jelly?: { summary?: string } }).jelly?.summary ?? ""
 
-/** The status a person reads with the default option and the block in place. */
-const defaultStatus = (): Status =>
-  ({
-    version: "0.0.0",
-    state: "connected",
-    host: { version: "2.2.6", range: ">=2.2.3 <2.4.0", tested: true },
-    snapshot: "opencode-golden",
-    snapshotPresent: true,
-    signedIn: true,
-    guestVersion: "2.2.6",
-    works: [],
-    openWorks: 0,
-    unharvested: [],
-    orphans: [],
-    warned: [],
-    failedRuns: [],
-    tools: 12,
-    unknownCount: 1,
-    unknownTools: ["shiny_new_tool"],
-    unguardedAgents: [],
-    access: "all",
-    problems: [],
-    nextStep: "Nothing to do.",
-  }) as unknown as Status
+/** The status a person reads with the default option and the block in place, and one tool this version does not know. */
+const defaultStatus = (): Status => buildStatus(statusFacts({ tools: [...TOOLS.map((tool) => tool.id), "shiny_new_tool"] }))
 
 describe("the model-facing text at access all", () => {
   const all = {

@@ -1,0 +1,491 @@
+/**
+ * Package D's `boxd_status` run (design §3.1, §C.4): the fleet in one call. Package D owns this file.
+ *
+ * It never wakes, starts or runs anything, and never writes the ledger. Its CLI budget: one all-region listing (shared,
+ * reused for up to 10 s), the machine limit (cached for 60 s), and guest reads only for works that are busy, starting or
+ * unknown, whose machine a listing at most 2 s old shows running, and whose last read is older than 60 s: in the
+ * background pool, bounded at 8 s each and 20 s for the call. A work whose read misses the budget keeps its cached
+ * phase, marked `stale`. Each `include` adds one call.
+ *
+ * Its size is bounded: `attention` and `works` hold at most `limit` items, worst first, `more` counts the rest, and
+ * works that share a reason and a code fold into one `groups` line when there are more than 3 of them. `lastText` is
+ * cut to 200 characters and is the guest model's words: data, never instructions.
+ */
+import { BoxdError, boxdError, type Code, type WarningCode } from "../errors.js"
+import type { Phase, WorkRecord } from "../ledger/types.js"
+import { LIST_MAX_ITEMS, REGIONS, SIZES, TIMEOUTS, type CallTag, type Listing, type OpContext, type Region, type Size } from "../ports.js"
+import { excerpt, reasonOf } from "../redact.js"
+import {
+  ATTENTION_ORDER,
+  type AttentionItem,
+  type AttentionReason,
+  type AutomationState,
+  type BudgetState,
+  type CleanupAction,
+  type CostBlock,
+  type StatusResult,
+  type WorkBrief,
+  type WorkCost,
+} from "../results.js"
+import type { FleetServices } from "../services.js"
+import { watchHandle, type WatchHandle } from "../watch.js"
+import { codeOf, observe, observeFailure, outcomeOf, phaseOf, readGuest, STATUS_TEXT_LIMIT, wantsRead, type Observed } from "./model.js"
+
+export type StatusView = "attention" | "all" | "counts"
+export type StatusInclude = "credentials" | "cost" | "images" | "closed"
+
+export interface StatusInput {
+  readonly view: StatusView
+  readonly workIds?: readonly string[]
+  readonly region?: Region
+  readonly since?: number
+  readonly limit: number
+  readonly include: readonly StatusInclude[]
+}
+
+/** How a status call reads: `boxd_status` reads busy guests; `/boxd-status` makes no guest read at all. */
+export interface StatusCall {
+  readonly tag: CallTag
+  readonly signal?: AbortSignal
+  readonly guestReads: boolean
+}
+
+export const DEFAULT_LIMIT = 25
+/** More than this many works sharing a reason and a code fold into one `groups` line. */
+const FOLD_ABOVE = 3
+/** A group names at most this many work ids. */
+const GROUP_IDS = 10
+/** Creating or starting for longer than this is `stuck`. */
+const STUCK_MS = 10 * 60_000
+/** A `leaseDays` timer ending within this long is `lease-expiring`. */
+const LEASE_WARN_MS = 24 * 60 * 60_000
+const WORK_ID = /^[a-z][a-z0-9-]{0,24}$/
+const VIEWS: readonly StatusView[] = ["attention", "all", "counts"]
+const INCLUDES: readonly StatusInclude[] = ["credentials", "cost", "images", "closed"]
+
+const invalid = (field: string, message: string) => boxdError("NAME_INVALID", message, { field })
+
+/** The input, checked: a bad field is refused before anything runs. */
+export function statusInput(raw: Record<string, unknown>): StatusInput {
+  const view = raw.view ?? "attention"
+  if (typeof view !== "string" || !(VIEWS as readonly string[]).includes(view)) throw invalid("view", 'view must be "attention", "all" or "counts".')
+  let workIds: string[] | undefined
+  if (raw.workIds !== undefined) {
+    if (!Array.isArray(raw.workIds) || raw.workIds.length > LIST_MAX_ITEMS || raw.workIds.some((id) => typeof id !== "string" || !WORK_ID.test(id))) {
+      throw invalid("workIds", `workIds must be up to ${LIST_MAX_ITEMS} work ids, each a short lowercase id such as "review-api".`)
+    }
+    workIds = [...new Set(raw.workIds as string[])]
+  }
+  if (raw.region !== undefined && (typeof raw.region !== "string" || !(REGIONS as readonly string[]).includes(raw.region))) throw invalid("region", `region must be one of ${REGIONS.join(", ")}.`)
+  if (raw.since !== undefined && (typeof raw.since !== "number" || !Number.isSafeInteger(raw.since) || raw.since < 0)) throw invalid("since", "since must be a cursor from an earlier answer: a whole number, 0 or more.")
+  const limit = raw.limit ?? DEFAULT_LIMIT
+  if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1 || limit > LIST_MAX_ITEMS) throw invalid("limit", `limit must be a whole number from 1 to ${LIST_MAX_ITEMS}.`)
+  const include = raw.include ?? []
+  if (!Array.isArray(include) || include.some((part) => !(INCLUDES as readonly unknown[]).includes(part))) throw invalid("include", `include takes ${INCLUDES.map((part) => `"${part}"`).join(", ")}.`)
+  return {
+    view: view as StatusView,
+    ...(workIds ? { workIds } : {}),
+    ...(raw.region !== undefined ? { region: raw.region as Region } : {}),
+    ...(raw.since !== undefined ? { since: raw.since as number } : {}),
+    limit,
+    include: [...new Set(include as StatusInclude[])],
+  }
+}
+
+/** One open or closed work as status sees it. */
+interface Row {
+  readonly record: WorkRecord
+  readonly phase: Phase
+  readonly observed: Observed | undefined
+  readonly saved: WorkBrief["saved"]
+  readonly stale: boolean
+}
+
+/** A concrete call, such as `boxd_harvest({ workId: "a" })`. */
+const one = (tool: string, workId: string, extra = "") => `${tool}({ workId: ${JSON.stringify(workId)}${extra} })`
+const quoted = (ids: readonly string[]) => ids.map((id) => JSON.stringify(id)).join(", ")
+
+/** Why a work needs a decision, worst first, with its code and its one next call; undefined when it needs none. */
+export function attentionOf(row: Row, facts: { readonly now: number; readonly hostVersion: string | null; readonly automation: AutomationState; readonly goneTargets: ReadonlySet<string> }): { why: AttentionReason; error?: Code; next: string } | undefined {
+  const { record, phase, observed, saved } = row
+  if (record.state !== "open") return undefined
+  const id = record.workId
+  const outcome = outcomeOf(record, observed)
+  const code = codeOf(record, observed)
+  const prompted = record.lastSubmit !== undefined
+  const unsaved = prompted && saved !== "fresh"
+  const reasons: Array<{ why: AttentionReason; error?: Code; next: string }> = []
+  if ((phase === "idle" && outcome === "failed") || code === "SESSION_MISSING") {
+    const error = code ?? "RUN_FAILED"
+    const next =
+      error === "SESSION_MISSING"
+        ? `${one("boxd_resume", id)} imports the saved transcript`
+        : error === "GUEST_AUTH_FAILED"
+          ? `${one("boxd_harvest", id)}, then set or rotate the model credential (a sealed, host-bound boxd env secret) and ${one("boxd_submit", id, ', text: "…"')} again`
+          : `${one("boxd_job", id, ", tail: 5")} to read what happened, then ${one("boxd_submit", id, ', text: "…"')}`
+    reasons.push({ why: "failed", error, next })
+  }
+  if (phase === "unreachable") {
+    const error = code ?? "GUEST_FAILED"
+    const next =
+      error === "AGENT_UNREACHABLE"
+        ? one("boxd_ensure", id, ', repair: "reboot"')
+        : error === "GUEST_UNRESPONSIVE"
+          ? one("boxd_exec", id, ', command: ["free", "-m"]')
+          : error === "GUEST_SERVER_DOWN" || error === "GUEST_FAILED"
+            ? one("boxd_ensure", id)
+            : one("boxd_job", id)
+    reasons.push({ why: "unreachable", error, next })
+  }
+  if (phase === "gone" && unsaved) reasons.push({ why: "gone-unsaved", error: "MACHINE_GONE", next: `${one("boxd_resume", id)} rebuilds it from the saved transcript, or ${one("boxd_drop", id)} closes the work` })
+  if (phase === "idle" && unsaved) reasons.push({ why: "idle-unsaved", next: one("boxd_harvest", id) })
+  if (phase === "asleep" && unsaved) reasons.push({ why: "asleep-unsaved", next: `${one("boxd_resume", id)}, then ${one("boxd_harvest", id)}` })
+  if (phase === "creating" || phase === "starting") {
+    const since = Date.parse(observed?.since ?? record.pendingCreate?.at ?? record.createdAt)
+    if (!Number.isNaN(since) && facts.now - since > STUCK_MS) reasons.push({ why: "stuck", next: one("boxd_ensure", id) })
+  }
+  const running = phase === "idle" || phase === "ready" || phase === "busy"
+  if (record.session?.notify && facts.goneTargets.has(record.session.notify) && (phase === "idle" || phase === "ready")) {
+    reasons.push({ why: "orphan", next: `${one("boxd_harvest", id)}, then ${one("boxd_sleep", id)}: its coordinator session is gone` })
+  }
+  if (observed?.guestVersion && facts.hostVersion && observed.guestVersion !== facts.hostVersion && unsaved && phase !== "busy") {
+    reasons.push({ why: "version", error: "GUEST_VERSION", next: `${one("boxd_ensure", id)} upgrades it in place, then ${one("boxd_harvest", id)}` })
+  }
+  if (record.laptopCopy === "unverified") reasons.push({ why: "laptop-copy", next: `${one("boxd_harvest", id)} replaces this laptop's copy of the transcript` })
+  if ((phase === "idle" || phase === "ready") && !observed?.needsInput && !facts.automation.startsWith("on")) {
+    reasons.push({ why: "idle-running", next: one("boxd_sleep", id) })
+  }
+  if (observed?.needsInput && running) reasons.push({ why: "needs-input", next: `A person answers the ${observed.needsInput} with boxd connect ${record.machine}` })
+  if (record.lease) {
+    const left = Date.parse(record.lease.expiresAt) - facts.now
+    if (!Number.isNaN(left) && left < LEASE_WARN_MS) reasons.push({ why: "lease-expiring", next: `${one("boxd_harvest", id)} now; boxd deletes the machine when its lease ends` })
+  }
+  if (!reasons.length) return undefined
+  return reasons.sort((a, b) => ATTENTION_ORDER.indexOf(a.why) - ATTENTION_ORDER.indexOf(b.why))[0]
+}
+
+/** One line for many works that share a reason and a code: the selector when one fits, else the ids. */
+function groupNext(why: AttentionReason, error: Code | undefined, ids: readonly string[]): string {
+  const named = ids.length <= GROUP_IDS ? quoted(ids) : `${quoted(ids.slice(0, GROUP_IDS))}, and the other ${ids.length - GROUP_IDS} from boxd_status({ view: "all" })`
+  switch (why) {
+    case "failed":
+      return error === "GUEST_AUTH_FAILED"
+        ? `Set or rotate the shared model credential (a sealed, host-bound boxd env secret), then boxd_submit({ works: [{ workId, text }, …] }) for ${named}`
+        : `boxd_job({ works: [${named}] }) to read what happened, then boxd_submit again`
+    case "idle-unsaved":
+      return 'boxd_harvest({ select: "unsaved-finished" })'
+    case "idle-running":
+      return 'boxd_sleep({ select: "idle" })'
+    case "laptop-copy":
+    case "orphan":
+    case "lease-expiring":
+      return `boxd_harvest({ works: [${named}] })`
+    case "asleep-unsaved":
+    case "gone-unsaved":
+      return `boxd_resume({ works: [${named}] }), then boxd_harvest({ works: [the same ids] })`
+    case "stuck":
+      return `boxd_ensure({ works: [${ids.length <= GROUP_IDS ? ids.map((id) => `{ workId: ${JSON.stringify(id)} }`).join(", ") : `{ workId } for ${named}`}] })`
+    case "version":
+      return `boxd_ensure for each of ${named}; it upgrades each guest in place`
+    case "unreachable":
+      return `boxd_job({ works: [${named}] })`
+    default:
+      return `boxd_status({ view: "all" }) lists ${named}`
+  }
+}
+
+/** The cost service's part, or a block that says it is not available: status never fails for it. */
+async function costParts(services: FleetServices, input: StatusInput, tag: CallTag): Promise<{ cost: CostBlock; cleanup: readonly CleanupAction[]; automation: AutomationState; budget?: BudgetState }> {
+  const safely = async <T>(fn: () => Promise<T> | T): Promise<{ value: T } | { error: string }> => {
+    try {
+      return { value: await fn() }
+    } catch (error) {
+      return { error: reasonOf(error) }
+    }
+  }
+  const [block, cleanup, automation, budget] = await Promise.all([
+    safely(() => services.cost.block({ works: input.include.includes("cost"), limit: input.limit }, tag)),
+    safely(() => services.cost.cleanup(tag)),
+    safely(() => services.cost.automation()),
+    services.options.budget ? safely(() => services.cost.budget(tag)) : Promise.resolve({ value: undefined }),
+  ])
+  return {
+    cost: "value" in block ? block.value : unavailableCost(block.error),
+    cleanup: "value" in cleanup ? cleanup.value : [],
+    automation: "value" in automation ? automation.value : automationFallback(services),
+    ...("value" in budget && budget.value ? { budget: budget.value } : {}),
+  }
+}
+
+function unavailableCost(reason: string): CostBlock {
+  return {
+    currency: "unknown",
+    perHour: { estimate: 0, running: 0, asleep: 0, basis: "not estimated: the cost service is not available", ratesSource: "public" },
+    today: { machines: null, models: { currency: "USD", total: 0 }, complete: false, unavailable: `The cost service is not available (${reason}).` },
+  }
+}
+
+/** What `access` and `automation` say, when the cost service cannot (design §C.3). */
+function automationFallback(services: FleetServices): AutomationState {
+  const { automation, access } = services.options
+  if (automation === "on") return "on (consent)"
+  if (automation === "off") return "off"
+  return access === "all" ? "on" : "off (access)"
+}
+
+/** Image names this plugin builds: `<prefix>-<opencode version>-<size>`. */
+function imageOf(name: string, prefix: string): { opencode: string; size: Size } | undefined {
+  if (!name.startsWith(`${prefix}-`)) return undefined
+  const rest = name.slice(prefix.length + 1)
+  const size = SIZES.find((value) => rest.endsWith(`-${value}`))
+  if (!size) return undefined
+  const opencode = rest.slice(0, -size.length - 1)
+  return /^\d+\.\d+\.\d+[\w.-]*$/.test(opencode) ? { opencode, size } : undefined
+}
+
+/** Settles within `ms` or answers undefined; the work is stopped through `controller`. */
+async function within<T>(promise: Promise<T>, ms: number): Promise<T | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const late = new Promise<undefined>((resolve) => (timer = setTimeout(() => resolve(undefined), ms)))
+  try {
+    return await Promise.race([promise, late])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** The `boxd_status` answer (and, with `guestReads: false`, the fleet part of `/boxd-status`). */
+export async function fleetStatus(services: FleetServices, input: StatusInput, call: StatusCall): Promise<StatusResult> {
+  const now = () => services.clock.now()
+  const op = (pool: OpContext["pool"] = "foreground"): OpContext => ({ call: call.tag, ...(call.signal ? { signal: call.signal } : {}), pool })
+  const handle: WatchHandle | undefined = watchHandle(services.watch)
+
+  // The ledger first: its gate answers LEDGER_IMPORTING or IMPORT_V0_FAILED before anything else runs.
+  const filter = { ...(input.workIds ? { workIds: input.workIds } : {}), ...(input.region ? { region: input.region } : {}) }
+  const open = await services.ledger.list(filter, op())
+  const closed = input.include.includes("closed") ? (await services.ledger.list({ ...filter, closed: true }, op())).filter((record) => record.state === "closed") : []
+  handle?.kick()
+
+  let listing: Listing | undefined
+  let listingError: string | undefined
+  try {
+    listing = await services.boxd.list({ maxAgeMs: TIMEOUTS.phaseListingMaxAgeMs }, op())
+  } catch (error) {
+    if (error instanceof BoxdError && error.code === "CANCELLED") throw error
+    listingError = reasonOf(error)
+  }
+
+  // Guest reads: busy, starting or unknown works only, never an idle one, under the read rule and the call's budget.
+  const stale = new Set<string>()
+  if (call.guestReads && listing) {
+    const at = now().getTime()
+    const wanted = open.filter((record) => wantsRead(record, listing!, handle?.observed(record.workId), at, TIMEOUTS.cachedReadMaxAgeMs))
+    if (wanted.length) {
+      if (Date.now() - listing.takenAt > TIMEOUTS.readListingMaxAgeMs) listing = await services.boxd.list({ maxAgeMs: TIMEOUTS.readListingMaxAgeMs }, op())
+      const budget = new AbortController()
+      const signal = call.signal ? AbortSignal.any([call.signal, budget.signal]) : budget.signal
+      const readOp: OpContext = { call: call.tag, signal, pool: "background" }
+      const fresh = listing
+      const reads = wanted.map(async (record) => {
+        const previous = handle?.observed(record.workId)
+        try {
+          const answer = await readGuest(services, record, fresh, {}, readOp)
+          handle?.remember(record.workId, observe(answer, previous, now(), STATUS_TEXT_LIMIT))
+        } catch (error) {
+          if (budget.signal.aborted || call.signal?.aborted) return
+          handle?.remember(record.workId, observeFailure(error, previous, phaseOf(record, fresh, previous), now()))
+        }
+        return record.workId
+      })
+      const settled = await within(Promise.all(reads), TIMEOUTS.statusBudget)
+      if (!settled) {
+        budget.abort()
+        const done = new Set((await Promise.all(reads.map((read) => within(read, 0)))).filter((id): id is string => typeof id === "string"))
+        for (const record of wanted) if (!done.has(record.workId)) stale.add(record.workId)
+      }
+      if (call.signal?.aborted) throw boxdError("CANCELLED", "The status call was stopped; nothing was changed.")
+    }
+  }
+
+  const rows: Row[] = [...open, ...closed].map((record) => {
+    const observed = handle?.observed(record.workId)
+    return { record, phase: phaseOf(record, listing, observed), observed, saved: services.ledger.saved(record), stale: stale.has(record.workId) || (!listing && record.state === "open") }
+  })
+
+  // The cursor, and the works that changed since the caller's.
+  let cursor: number
+  let cursorExpired = false
+  let changed: Set<string> | undefined
+  if (input.since !== undefined) {
+    const page = await services.ledger.eventsSince(input.since, op())
+    cursor = page.cursor
+    cursorExpired = page.cursorExpired
+    if (!cursorExpired) changed = new Set(page.events.map((event) => event.workId))
+  } else {
+    cursor = handle ? await handle.cursor(op()) : (await services.ledger.eventsSince(0, op())).cursor
+  }
+
+  const tag = call.tag
+  const [limits, costs, secrets, snapshots] = await Promise.all([
+    services.boxd.machineLimit(op()).catch(() => undefined),
+    costParts(services, input, tag),
+    input.include.includes("credentials") ? services.boxd.secrets(op()).then((value) => ({ value }), (error: unknown) => ({ error: reasonOf(error) })) : undefined,
+    input.include.includes("images") ? services.boxd.snapshots(op()).catch(() => undefined) : undefined,
+  ])
+
+  const at = now().getTime()
+  const costOf = new Map<string, WorkCost>((costs.cost.works ?? []).map((work) => [work.workId, { machine: work.machine, model: work.model }]))
+  const withCost = input.include.includes("cost")
+  const workCost = (row: Row): WorkCost | undefined => {
+    if (!withCost) return undefined
+    return costOf.get(row.record.workId) ?? { machine: null, model: row.observed?.modelCost ?? null }
+  }
+
+  // Counts over every work the filter names.
+  const counts: Partial<Record<Phase, number>> = {}
+  for (const row of rows) counts[row.phase] = (counts[row.phase] ?? 0) + 1
+
+  // Attention: worst first, folded by reason and code, at most `limit`.
+  const facts = { now: at, hostVersion: services.hostVersion, automation: costs.automation, goneTargets: handle?.goneTargets() ?? new Set<string>() }
+  const visible = (row: Row) => !changed || changed.has(row.record.workId)
+  const needs = rows
+    .filter(visible)
+    .map((row) => ({ row, attention: attentionOf(row, facts) }))
+    .filter((entry): entry is { row: Row; attention: NonNullable<ReturnType<typeof attentionOf>> } => entry.attention !== undefined)
+    .sort((a, b) => ATTENTION_ORDER.indexOf(a.attention.why) - ATTENTION_ORDER.indexOf(b.attention.why) || a.row.record.workId.localeCompare(b.row.record.workId))
+  const byKey = new Map<string, typeof needs>()
+  for (const entry of needs) {
+    const key = `${entry.attention.why}|${entry.attention.error ?? ""}`
+    byKey.set(key, [...(byKey.get(key) ?? []), entry])
+  }
+  const groups: StatusResult["groups"][number][] = []
+  const single: typeof needs = []
+  for (const entries of byKey.values()) {
+    if (entries.length > FOLD_ABOVE) {
+      const first = entries[0]!.attention
+      const ids = entries.map((entry) => entry.row.record.workId)
+      groups.push({ why: first.why, ...(first.error ? { error: first.error } : {}), count: ids.length, workIds: ids.slice(0, GROUP_IDS), next: groupNext(first.why, first.error, ids) })
+    } else {
+      single.push(...entries)
+    }
+  }
+  single.sort((a, b) => ATTENTION_ORDER.indexOf(a.attention.why) - ATTENTION_ORDER.indexOf(b.attention.why) || a.row.record.workId.localeCompare(b.row.record.workId))
+
+  const brief = (row: Row): WorkBrief => {
+    const cost = workCost(row)
+    const lastActivityAt = row.observed?.lastActivityAt
+    return {
+      workId: row.record.workId,
+      region: row.record.region,
+      phase: row.phase,
+      outcome: outcomeOf(row.record, row.observed),
+      saved: row.saved,
+      ...(lastActivityAt ? { lastActivityAt } : {}),
+      ...(cost ? { cost } : {}),
+      ...(row.stale ? { stale: true as const } : {}),
+    }
+  }
+  const item = ({ row, attention }: (typeof needs)[number]): AttentionItem => {
+    const lastText = row.observed?.lastText ? excerpt(row.observed.lastText, STATUS_TEXT_LIMIT) : undefined
+    return {
+      ...brief(row),
+      why: attention.why,
+      ...(attention.error ? { error: attention.error } : {}),
+      ...(lastText && (attention.why === "failed" || attention.why === "idle-unsaved") ? { lastText } : {}),
+      next: attention.next,
+    }
+  }
+
+  let attention: AttentionItem[] | undefined
+  let works: WorkBrief[] | undefined
+  let more = 0
+  if (input.view === "attention") {
+    attention = single.slice(0, input.limit).map(item)
+    more = single.length - attention.length
+  } else if (input.view === "all") {
+    const listed = rows.filter(visible).sort((a, b) => a.record.workId.localeCompare(b.record.workId))
+    works = listed.slice(0, input.limit).map(brief)
+    more = listed.length - works.length
+  }
+
+  // Machines with the plugin's labels that no open work records.
+  const recorded = new Set(open.map((record) => `${record.region}/${record.machine}`))
+  const orphans = (listing?.machines ?? [])
+    .filter((machine) => machine.name.startsWith("oc-") && !machine.name.startsWith("oc-gb-") && machine.status !== "destroyed")
+    .filter((machine) => machine.labels.owner === "opencode-boxd" || (machine.labels.role === "session" && machine.labels.work !== undefined))
+    .filter((machine) => !recorded.has(`${machine.region}/${machine.name}`))
+    .filter((machine) => !input.region || machine.region === input.region)
+    .map((machine) => {
+      const workId = machine.name.slice(3)
+      return { machine: machine.name, region: machine.region, next: WORK_ID.test(workId) ? `${one("boxd_ensure", workId)} adopts it` : "Remove it with the boxd CLI" }
+    })
+
+  // One shared cause across many works: #1's case, 15 works stopped on one expired token.
+  const authFailed = rows.filter((row) => row.record.state === "open" && codeOf(row.record, row.observed) === "GUEST_AUTH_FAILED")
+  const fleet: StatusResult["fleet"] =
+    authFailed.length >= 2
+      ? (() => {
+          const since = authFailed.map((row) => row.observed?.since ?? row.record.run?.at ?? "").filter(Boolean).sort()[0] ?? now().toISOString()
+          return { authFailures: { count: authFailed.length, since, note: `${authFailed.length} works stopped on a refused credential since ${since}; a shared token may have expired.` } }
+        })()
+      : {}
+
+  const warnings = new Set<WarningCode>()
+  if (costs.budget?.state === "reached" && costs.budget.action === "warn") warnings.add("BUDGET_WARN")
+  if (costs.budget?.state === "unknown") warnings.add("BUDGET_UNKNOWN")
+  for (const row of rows) {
+    if (row.record.state !== "open") continue
+    for (const warning of row.record.warnings ?? []) warnings.add(warning.code)
+    if (row.record.lease && Date.parse(row.record.lease.expiresAt) - at < LEASE_WARN_MS) warnings.add("LEASE_EXPIRING")
+  }
+
+  const inUseImages = new Set(open.map((record) => `${record.region}/${record.image.name}`))
+  const images = snapshots
+    ?.map((snapshot) => ({ snapshot, parsed: imageOf(snapshot.name, services.options.goldenPrefix) }))
+    .filter((entry) => entry.parsed !== undefined)
+    .map(({ snapshot, parsed }) => ({ region: snapshot.region, name: snapshot.name, opencode: parsed!.opencode, size: parsed!.size, inUse: inUseImages.has(`${snapshot.region}/${snapshot.name}`) }))
+
+  const health = services.runner.health()
+  const watchHealth = handle?.health()
+  const imported = services.importV0.state()
+
+  return {
+    state: "ok",
+    cursor,
+    asOf: listing ? new Date(listing.takenAt).toISOString() : now().toISOString(),
+    counts,
+    regions: (limits ?? [])
+      .filter((limit) => !input.region || limit.region === input.region)
+      .map((limit) => ({ ...limit, keepFree: services.options.keepFree[limit.region] ?? 0, works: open.filter((record) => record.region === limit.region).length })),
+    groups,
+    ...(attention ? { attention } : {}),
+    ...(works ? { works } : {}),
+    more,
+    cursorExpired,
+    orphans,
+    fleet,
+    ...(secrets
+      ? {
+          credentials: {
+            secrets: "value" in secrets ? secrets.value : [],
+            setAt: null,
+            missing: `boxd does not report when a secret was set (upstream ask U4)${"error" in secrets ? `; the list could not be read (${secrets.error})` : ""}.`,
+          },
+        }
+      : {}),
+    cost: costs.cost,
+    cleanup: costs.cleanup,
+    automation: costs.automation,
+    ...(costs.budget ? { budget: costs.budget } : {}),
+    ...(images ? { images } : {}),
+    ...(warnings.size ? { warnings: [...warnings].sort() } : {}),
+    cli: { signedIn: listingError === undefined, version: null },
+    health: {
+      loopLagMaxMs: health.loopLagMaxMs,
+      children: { now: health.children.now, cap: health.children.cap },
+      ...(watchHealth?.notices.length ? { notices: watchHealth.notices } : {}),
+      ...(watchHealth?.watcher ? { watcher: watchHealth.watcher } : listingError ? { watcher: `The machine listing failed (${listingError}); phases are the last ones seen.` } : {}),
+    },
+    ...(imported.state === "complete" && (imported.works > 0 || imported.blocked.length > 0) ? { import: { works: imported.works, errors: imported.blocked.length } } : {}),
+  }
+}

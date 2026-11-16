@@ -17,11 +17,6 @@ const SCRIPTING = read("docs/scripting.md")
 
 const codes = Object.keys(CODES)
 
-/**
- * The README and the docs set still describe v0.0.6. Package D rewrites them against the v1 registry and code table
- * (design §9.1); until then the checks that compare them with the code are skipped, and nothing else is.
- */
-const docsAfterPackageD = test.skip
 
 /** Every file under a folder, relative to the repository. */
 function files(folder: string): string[] {
@@ -90,8 +85,8 @@ describe("the README", () => {
     expect(README).not.toMatch(/npm run build/)
   })
 
-  docsAfterPackageD("has one Troubleshooting row for every code, and no code the plugin does not raise", () => {
-    const rows = [...README.matchAll(/^\| `([A-Z_]+)` \|/gm)].map((match) => match[1])
+  test("has one Troubleshooting row for every code, and no code the plugin does not raise", () => {
+    const rows = [...README.matchAll(/^\| `([A-Z][A-Z0-9_]*)` \|/gm)].map((match) => match[1])
     expect(rows.sort()).toEqual([...codes].sort())
     for (const code of codes) expect(CONFIG).toContain(`| \`${code}\` |`)
   })
@@ -107,14 +102,14 @@ describe("the README", () => {
     expect(README).toContain(`/${COMMAND_STEM}`)
   })
 
-  docsAfterPackageD("says every tool is allowed by default, and names the three ways to restrict", () => {
+  test("says every tool is allowed by default, and names the three ways to restrict", () => {
     expect(README).toContain("**Every tool is allowed by default.**")
     for (const value of ["\"all\"", "\"ask-changes\"", "\"read-only\""]) expect(README).toContain(value)
     for (const tool of CHANGING_TOOLS) expect(README).toContain(tool)
     expect(README).toContain("a machine that idles hibernates")
   })
 
-  docsAfterPackageD("prints the default-rules block exactly as the code generates it, in order", () => {
+  test("prints the default-rules block exactly as the code generates it, in order", () => {
     const block = [/(## Permissions\n[\s\S]*?)```json\n([\s\S]*?)\n```/].map((pattern) => pattern.exec(README)?.[2]).find((body) => body?.includes("boxd_*"))
     expect(block).toBeDefined()
     const rules = JSON.parse(block!) as { action: string; resource: string; effect: string }[]
@@ -123,7 +118,7 @@ describe("the README", () => {
   })
 
   // The configuration guide prints every value's generated block in full, and none of them is elided.
-  docsAfterPackageD.each(["all", "ask-changes", "read-only"] as const)("the configuration guide prints the %s block in full", (access) => {
+  test.each(["all", "ask-changes", "read-only"] as const)("the configuration guide prints the %s block in full", (access) => {
     const at = CONFIG.indexOf(`\`access: "${access}"\``)
     expect({ access, found: at !== -1 }).toEqual({ access, found: true })
     const start = CONFIG.indexOf("```json", at)
@@ -180,7 +175,7 @@ describe("the docs set", () => {
     expect(found).toBeGreaterThan(3)
   })
 
-  docsAfterPackageD("scripting names every method, the location and the saved-approval limit", () => {
+  test("scripting names every method, the location and the saved-approval limit", () => {
     for (const tool of TOOLS.map((spec) => spec.id)) expect(SCRIPTING).toContain(tool)
     expect(SCRIPTING).toContain("Known limit: a saved \"Always allow\" answer")
     expect(SCRIPTING).toContain("boxd.machines.tools")

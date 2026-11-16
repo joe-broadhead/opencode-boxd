@@ -1,175 +1,81 @@
-# The golden image
+# Golden images
 
-Every machine the plugin creates boots from one snapshot: the golden image. It must contain the OpenCode version this
-laptop runs, and a way for the session to reach a model. It must not contain a credential of its own if you can avoid it.
+Every work machine boots from a golden image: a boxd snapshot named `<prefix>-<opencode version>-<size>` in the work's
+region, such as `oc-golden-2.2.6-4x16`, that holds this laptop's OpenCode and the guest helper, and nothing else. The
+plugin builds these images itself, from a fixed recipe; you do not build one by hand.
 
-The stock boxd image does **not** contain OpenCode 2: a stock machine ships 1.19.5, which is a 1.x release and ignores
-the guest server's password. Build your own once, and set the plugin's `snapshot` option to its name.
+- `boxd_ensure` builds the image it needs when it is missing (option `buildGolden: "auto"`, the default). A build for
+  one region and size is shared by every call that needs it at once. With `buildGolden: "never"`, `boxd_ensure` answers
+  `GOLDEN_MISSING` and names the `boxd_golden` call instead.
+- `boxd_golden` builds, lists or prunes images. With no input it builds the default size in every region that lacks
+  one; `region`, `size` and `from` choose; an image that exists answers `present` unless `rebuild: true`.
+- The size comes from the image, so a work machine never needs a resize, and nothing reboots after a create.
+- Snapshots do not cross regions, so each region has its own images.
 
-The default name is `opencode-golden`. `boxd_status` says when it is missing, and `boxd_ensure` and `boxd_resume` refuse
-to create a machine without it.
+## The recipe
 
-## 1. A machine to build it on
+1. **A builder machine**: `oc-gb-<region>-<size>-<rand>`, labelled `role=golden-builder`, with `--delete-after 2h` as
+   a safety net, so it is removed even if the laptop goes away. It starts from stock boxd, or from the `goldenBase`
+   snapshot when one is set.
+2. **One exec on the builder**: upgrade OpenCode to this laptop's version (`opencode upgrade --major` from the stock
+   1.x, then `opencode upgrade <version>`), check `opencode --version` and that the guest server asks for its password,
+   install the guest helper in `~/.opencode-boxd/`, and run your `goldenSetup` script when one is set.
+3. **The scrub**, the same whatever the base: stop `opencode serve`, and delete `/etc/profile.d/boxd-env.sh` (boxd writes
+   it again at every boot), the guest password, the helper's exports, and `/home/boxd/work/`. The build refuses a base
+   whose OpenCode database holds a session (`GOLDEN_BUILD_FAILED`: the base was a used machine, not an image) and a base
+   that holds `~/.local/share/opencode/auth.json` (`GOLDEN_HAS_CREDENTIAL`, below).
+4. **Save and remove**: `snapshots save` under the image's name in that region, then the builder is removed.
 
-Make a private machine from the stock image and open a shell on it. Do this with the `boxd` CLI, outside the plugin:
+A build takes about one to two minutes. No step ever saves a work's machine as an image: a work's checkout, its session
+database, its guest password and whatever its session wrote never reach another machine.
 
-```sh
-boxd machine new golden-builder --label role=image --json
-boxd machine connect golden-builder
-```
+## Model credentials are never baked into an image
 
-There is no stock snapshot to name: omit `--from-snapshot`, and `machine get` then reports `source: standalone`.
-`machine connect` gives a real login shell; `boxd machine exec golden-builder -- bash` does not, and interactive
-commands such as `opencode auth login` exit silently under it.
+An image reaches every work created from it, and anyone in your boxd organisation who can boot it. A key stored in an
+image could not be scoped or rotated per work, and would outlive its rotation in every image that holds it. So a build
+refuses a base with an `auth.json`, whatever `goldenBase` says, with `GOLDEN_HAS_CREDENTIAL`.
 
-Set a short idle bound while the machine waits for you, so it does not bill:
+Give works a model key in one of three ways, in this order:
 
-```sh
-boxd machine config set golden-builder auto-hibernate.timeout 1800
-```
+1. **A sealed `boxd env` secret, bound to the provider's hosts** (recommended):
 
-Do not pass `--shared`: sharing deletes OpenCode's sign-in. Do not pass `--isolated`: the image keeps git and the in-VM
-`boxd` CLI, which a session machine needs.
+   ```sh
+   boxd env set OPENCODE_API_KEY <key> --secret --domains <provider hosts> --scope private
+   ```
 
-## 2. The OpenCode version that matches the laptop
+   boxd injects it at every boot; the machine holds only a placeholder, and the real value is sent only to the
+   provider's hosts. One rotation reaches every work.
+2. **A separately named secret per provider or team**, such as `ANTHROPIC_API_KEY` for one and `OPENROUTER_API_KEY` for
+   another, with each work's `model` choosing the provider.
+3. **The provider's own sign-in on one machine**: a person runs `boxd connect oc-<work id>` and then
+   `opencode auth login` there (it needs a login shell). The credential then lives on that work's disk only, and goes
+   when the work is dropped.
 
-The guest must run exactly the version on this laptop. Print it on the laptop first:
+Before a build, `boxd_golden` looks at the account's secrets. When none is one that OpenCode reads as a provider key, the
+build still succeeds, but its result carries `warning: "NO_MODEL_CREDENTIAL"` with these three ways, and `boxd_status`
+repeats it: the third way happens after the build. A work with no credential answers `GUEST_AUTH_FAILED` at its first
+prompt, with the same next step.
 
-```sh
-opencode --version        # for example: opencode v2.2.5
-```
+A provider may refuse a service-account key (one answered 403 `provider.auth`); use a key made for this, with a spending
+limit, and rotate it if anyone leaves the organisation.
 
-The guest ships 1.x, so upgrade across the major version first, then pin the laptop's exact release:
+## Your own customisation
 
-```sh
-opencode upgrade --major  # installs the newest 2.x, for example 2.2.6
-opencode upgrade 2.2.5    # the exact version the laptop runs
-opencode --version        # must equal the laptop's, to the patch release
-```
+- **`goldenSetup`**: an absolute path to a laptop script, inside the project or an allowed root, that the builder runs
+  before the scrub. Use it for tools, configuration or skills every work needs. It runs in every region the same way.
+- **`goldenBase`**: a snapshot name to build from instead of stock, so a hand-made machine's customisations carry over.
+  A base snapshot lives in one region only; `goldenSetup` is how the same customisation reaches the other region. The
+  base is scrubbed like any other, and refused if it holds a session or an `auth.json`.
 
-`opencode upgrade 2.2.5` from 1.x refuses with "OpenCode 2.2.5 is OpenCode 2"; the `--major` step is what makes 2.x
-reachable. Both steps together take a few seconds.
+The builder's labels are captured into the image, and a restore inherits them under its own: works set `role=session`,
+which overrides `role=golden-builder`. Anything else that selects machines by that label must know this.
 
-Check that the server password works, because the guest helper depends on it. Check both directions and stop the
-server afterwards:
+## When the laptop's OpenCode changes
 
-```sh
-OPENCODE_PASSWORD=probe opencode serve --hostname 127.0.0.1 --port 4096 &
-sleep 5
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:4096/api/info                 # 401, not 200
-curl -s -o /dev/null -w '%{http_code}\n' -u opencode:probe http://127.0.0.1:4096/api/info # 200
-pkill -f "opencode serve"
-```
+A laptop upgrade makes a new image name, so new works get the new image and open works keep the one they recorded.
+`boxd_ensure` upgrades an open work's guest in place once its session is idle; until then the work stays usable for
+reads and prompts, and a harvest answers `GUEST_VERSION`.
 
-A `200` without credentials means the server ignored the password: the image holds a 1.x OpenCode, and every session on
-it would be open to anything that can reach the port. Leaving the test server running puts it inside the snapshot.
-
-## 3. A way to reach a model
-
-The recommended path keeps **no credential in the image**. A boxd environment variable is injected into every machine
-at boot, so the image can stay clean:
-
-```sh
-boxd env set --secret OPENCODE_API_KEY <key> --domain '*.opencode.ai,opencode.ai'
-```
-
-- `--secret` seals the value: `boxd env list` shows `(sealed)`, never the value.
-- Bind it to the provider's hosts with `--domain`, so the guest cannot send it anywhere else.
-- Scope it to the org (default `all`) or to you (`private`); either is injected at boot by `boxd-takeoff` into
-  `/etc/profile.d/boxd-env.sh`.
-- The machine boots with the variable already set, `auth.json` stays absent, and every image you build inherits the
-  arrangement without holding the key.
-
-Two things to know:
-
-- A **Go Teams service-account** key does not work for model calls. The guest answers
-  `provider.auth … Go Teams covers workspace members, not service accounts. Use a personal API key to call Go models.`
-  Use a personal provider key with a **spending limit**.
-- The injected variables are readable by anything on the machine and by anyone who can boot a machine in the
-  organisation: they are injected at boot, not baked into the image, but every boot has them. Rotate the key if someone
-  leaves.
-- A short-lived token, such as a GitHub App installation token that lives one hour, must be set again before it
-  expires. A refresh that runs on the laptop stops while the laptop sleeps, and every guest that pushes after that gets
-  a 401. Tell a session in its prompt to stop and report a 401 or 403: it cannot finish an interactive sign-in, such as
-  `boxd manage integrations connect git`, without a person.
-
-### Signing in on the machine, as a fallback
-
-If you cannot use `boxd env`, sign the guest's OpenCode in **on the machine itself**:
-
-```sh
-ssh -t golden-builder.boxd opencode auth login
-```
-
-`ssh -t` (or `boxd machine connect` then `opencode auth login`) is required: `boxd machine exec --tty … -- opencode auth
-login` exits with no picker. Never copy `~/.local/share/opencode/auth.json` from the laptop, and never paste a token into
-a prompt: an agent's transcript would hold it. Confirm without printing the secret:
-
-```sh
-ssh -t golden-builder.boxd opencode auth list
-```
-
-`auth list` already names providers that come from environment variables, so look for the provider you added with a
-stored credential, not for a longer list.
-
-A credential stored this way is on the image's disk. Anyone in the organisation who can boot the image inherits it: use a
-dedicated key with a spending limit, and rotate it when someone leaves. This is why the environment path is preferred.
-
-## 4. Remove the injected values before you save
-
-`boxd-takeoff` writes the environment variables to `/etc/profile.d/boxd-env.sh` on the machine's disk. Delete that file
-just before the snapshot, so the image carries no copy; it is regenerated from `boxd env` at the next boot:
-
-```sh
-sudo rm -f /etc/profile.d/boxd-env.sh
-```
-
-Clear any shell history too. Leave nothing else changed.
-
-## 5. Save it
-
-Nothing may be running that holds a session you care about, and the machine should be clean of scratch work.
-
-```sh
-boxd snapshots save golden-builder opencode-golden --json     # a few seconds for a ~10 GiB disk, an image either way
-boxd snapshots list --json                                    # the name, status "ready", version 1
-boxd machine remove golden-builder -y
-```
-
-Point the plugin at it in `opencode.json` (or rely on the default name):
-
-```jsonc
-{
-  "plugins": [{
-    "package": "github:joe-broadhead/opencode-boxd#v0.0.6",
-    "options": { "snapshot": "opencode-golden" }
-  }]
-}
-```
-
-`boxd_status` shows `Snapshot: opencode-golden (present)`. A name that is not there shows `(not in this boxd account)`,
-with this doc as its next step.
-
-## The disclosure
-
-**A snapshot that holds model credentials can be booted by anyone in your boxd organisation who can see or use
-snapshots.** A credential stored on the disk is inherited by every machine created from it. The environment path keeps
-the value out of the image, but every boot still has it. Treat either arrangement as a shared secret:
-
-- use a provider key made for the image, with a spending limit, and rotate it if anyone leaves the organisation;
-- do not put personal tokens, mail credentials or a second provider on the image;
-- delete an old image when you replace it (`boxd snapshots remove <name> -y`), so the old arrangement cannot be booted.
-
-The plugin itself never copies credentials to or from a machine, and never reads your laptop's credential store.
-
-## Rebuilding it when the laptop's OpenCode changes
-
-`GUEST_VERSION` means the machine's OpenCode is not this laptop's, and `boxd_status` shows the version the guest must
-have. When you upgrade OpenCode on the laptop:
-
-1. build a new image as above, with the new version, and a new name, such as `opencode-golden-2.2.7`;
-2. set `snapshot` to the new name;
-3. run `boxd_resume` for each open work: a machine that is gone is rebuilt from the new image and its proven transcript;
-4. delete the old image once no work needs it.
-
-A snapshot is an image, not a session: rebuilding it never carries a transcript. The laptop's ledger does.
+Images pile up, one per OpenCode version, size and region. `boxd_status({ include: ["images"] })` marks each one
+`inUse` when an open work records it, and `boxd_golden({ prune: true })` removes the ones no open work records and that
+are not the current version's. It never removes an image an open work records, because `boxd_resume` rebuilds from it.

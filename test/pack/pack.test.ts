@@ -185,20 +185,19 @@ describe.each(TESTED_HOSTS)("installed alone, in stock OpenCode %s", (version) =
       expect(build).toEqual(defaultRules())
 
       const { output } = await host.api<{ output: Record<string, unknown> }>("POST", "/api/rpc/boxd.machines/status", { input: {} })
-      // The v1 ledger (package B) and fleet view (package D) are not built on this branch yet, so status says it cannot
-      // read a ledger; the package's posture, hooks and tools are still reported.
+      // An empty ledger: the fleet is read (a stock host has no boxd CLI, so the listing fails and says so), and the
+      // package's posture, hooks and tools are reported.
       expect(output).toMatchObject({
         version: pkg.version,
-        state: "failed",
+        state: "connected",
         host: { version, range: SUPPORTED_HOST, tested: true },
-        snapshot: `oc-golden-${version}-2x8`,
+        image: `oc-golden-${version}-2x8`,
         guestVersion: version,
         openWorks: 0,
         unknownCount: 0,
         unguardedAgents: [],
         problems: [],
       })
-      expect(String(output.error)).toContain("not built yet")
       expect(StatusRpc.methods.status.output.required).toContain("nextStep")
 
       const { data: agents } = await host.api<{ data: { id: string }[] }>("GET", "/api/agent")

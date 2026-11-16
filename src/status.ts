@@ -1,42 +1,50 @@
+/**
+ * The status model (package D): one model for `/boxd-status`, the `/boxd` dialog and the status RPC. `version`, `host`,
+ * `state`, `unguardedAgents` and `nextStep` are the fields every plugin of this family shares; the rest are boxd's own.
+ *
+ * It reads the ledger and the watcher's knowledge, and makes no boxd call beyond a machine read: the all-region listing
+ * and the machine limit, both cached and shared with the tools. It never reads a guest, so opening the dialog never
+ * wakes a machine or keeps an idle one awake. A failure's reason is cut to one line of 160 characters.
+ */
 import type { Plugin, Rpc } from "@opencode/plugin"
 import { COMMAND_STEM, DISPLAY_NAME, PLUGIN_ID, TESTED_HOSTS } from "./constants.js"
 import { isSupportedHost, type HostCheck } from "./host-version.js"
 import { defaultRules, unguardedAgents, type Access, type Rule } from "./permissions.js"
 import { cut, shortReason } from "./redact.js"
-import { failureText, nextStepFor } from "./outcome.js"
-import type { MachineStatus, RunOutcome, SecretInfo } from "./ports.js"
+import { PHASES, type Phase } from "./ledger/types.js"
+import type { Notices } from "./options.js"
+import { CAPS } from "./ports.js"
+import type { StatusResult } from "./results.js"
 import { TOOLS } from "./tools.js"
 import type { FleetServices } from "./services.js"
 import { VERSION } from "./version.js"
+import { BoxdError } from "./errors.js"
+import { fleetStatus } from "./fleet/status.js"
 
 export { shortReason }
 
 /** The status labels (S9) in machine form; the report shows `failed` and `connected` as written. */
 type State = "connected" | "failed"
 
-/** One work as the v0 status model reports it. Package D replaces this model with the v1 fleet view. */
-export interface WorkSummary {
+/** One work that needs a decision, as the report names it: plugin words, never guest text. */
+export interface StatusAttention {
   readonly workId: string
-  readonly machine: string
-  readonly sessionId: string | null
-  readonly proof: "fresh" | "stale" | "missing"
-  readonly dirty: boolean
-  readonly machineStatus: MachineStatus | null
-  readonly warnings: readonly string[]
-  readonly outcome: RunOutcome | null
+  readonly phase: Phase
+  readonly why: string
   readonly error?: string
-  readonly asleepBy?: "boxd_sleep" | "idle_or_cli"
-  readonly sleptAt?: string
+  readonly next: string
 }
 
-/** What the ledger read gives status. */
-export interface FleetStatus {
-  readonly snapshot: string
-  readonly snapshotPresent: boolean | null
-  readonly works: readonly WorkSummary[]
-  readonly orphans: readonly string[]
-  readonly cli: { readonly signedIn: true } | { readonly signedIn: false; readonly reason: string }
-  readonly credentials?: { readonly secrets: readonly SecretInfo[] } | { readonly error: string }
+/** The Cost row (design §C.5): running and asleep counts, the estimate per hour, today's machine cost, the top action. */
+export interface StatusCost {
+  readonly currency: string
+  readonly running: number
+  readonly asleep: number
+  readonly perHour: number | null
+  readonly today: number | null
+  /** Why a figure is missing, on one line. */
+  readonly note?: string
+  readonly cleanup?: { readonly call: string; readonly works: number; readonly savesPerHour?: number; readonly savesPerDay?: number }
 }
 
 /** What status is built from. The TUI fills what it can see; fields it cannot see stay undefined. */
@@ -44,47 +52,47 @@ export interface StatusFacts {
   /** What the plugin's own tools may do without asking, from the option. */
   readonly access: Access
   readonly host: HostCheck
-  readonly snapshot: string
-  /** This laptop's OpenCode version, which the guest must match. */
+  /** The image a new work in the default size boots from. */
+  readonly image: string
+  readonly buildGolden: "auto" | "never"
+  /** This laptop's OpenCode version, which a guest must match to move a transcript. */
   readonly guestVersion: string | null
-  readonly ledger?: FleetStatus
-  /** The ledger could not be read: status is `failed`, with this reason. */
-  readonly ledgerError?: string
+  readonly notices: Notices
+  readonly fleet?: StatusResult
+  /** The fleet could not be read: status is `failed`, with this reason and next step. */
+  readonly fleetError?: { readonly reason: string; readonly nextStep?: string }
   readonly tools?: readonly string[]
   readonly agents?: readonly { readonly id: string; readonly permissions: readonly Rule[] }[]
   readonly problems?: readonly string[]
 }
 
-/**
- * One status model for `/boxd-status`, the `/boxd` dialog and the status RPC. `version`, `host`, `state`,
- * `unguardedAgents` and `nextStep` are the fields every plugin of this family shares; the rest are boxd's own.
- */
 export interface Status {
   readonly version: string
   readonly state: State
-  /** For a failed ledger only: the reason, on one line of at most 160 characters. */
+  /** For a failed read only: the reason, on one line of at most 160 characters. */
   readonly error?: string
   readonly host: HostCheck
-  readonly snapshot: string
-  /** Whether the golden snapshot exists in the account; null when the listing could not be read. */
-  readonly snapshotPresent: boolean | null
-  /** Whether the boxd CLI answered as signed in; null when status could not ask it. */
+  readonly access: Access
+  /** Whether the boxd CLI answered the machine listing; null when status could not ask it. */
   readonly signedIn: boolean | null
-  /** Why the boxd CLI did not answer, on one line of at most 160 characters. */
-  readonly signInError?: string
-  /** The OpenCode version the machine must run: this laptop's own. */
+  readonly image: string
+  readonly buildGolden: "auto" | "never"
+  /** The OpenCode version a guest must run to move a transcript: this laptop's own. */
   readonly guestVersion: string | null
-  /** Every open work, with its proof state and the machine's state when boxd answered. */
-  readonly works: readonly WorkSummary[]
   readonly openWorks: number
-  /** Open works whose laptop import is missing or older than the last prompt. */
-  readonly unharvested: readonly string[]
-  /** `oc-*` machines the account has that no open work records. */
+  readonly counts: Readonly<Partial<Record<Phase, number>>>
+  /** At most ten works that need a decision, worst first; `moreAttention` counts the rest. */
+  readonly attention: readonly StatusAttention[]
+  readonly moreAttention: number
+  readonly groups: ReadonlyArray<{ readonly why: string; readonly error?: string; readonly count: number; readonly next: string }>
+  /** `oc-*` machines with the plugin's labels that no open work records. */
   readonly orphans: readonly string[]
-  /** Open works hibernated before their last prompt was harvested. */
-  readonly warned: readonly string[]
-  /** Open works whose guest session's last run failed, with the redacted error. */
-  readonly failedRuns: readonly { readonly workId: string; readonly error?: string }[]
+  readonly regions: ReadonlyArray<{ readonly region: string; readonly limit: number; readonly inUse: number; readonly free: number }>
+  readonly cost: StatusCost | null
+  readonly automation: string
+  readonly notices: Notices
+  readonly health: { readonly loopLagMaxMs: number; readonly children: number; readonly cap: number; readonly droppedNotices: number; readonly watcher?: string }
+  readonly imported?: { readonly works: number; readonly errors: number }
   /** How many boxd tools OpenCode lists. */
   readonly tools: number
   /** How many of the listed `boxd_*` tools this version does not know. */
@@ -92,8 +100,6 @@ export interface Status {
   readonly unknownTools: readonly string[]
   /** Agents where a new boxd tool would run without asking; empty when there are none. */
   readonly unguardedAgents: readonly string[]
-  /** What the plugin's own tools may do without asking, from the option. */
-  readonly access: Access
   readonly problems: readonly string[]
   /** The one next step: the `Next step` row, "Nothing to do." when nothing is needed. */
   readonly nextStep: string
@@ -112,77 +118,100 @@ const AGENTS_NEXT_STEP =
 const NOTHING_TO_DO = "Nothing to do."
 const SIGN_IN_NEXT_STEP = "Run boxd auth login in a terminal, check that the laptop's boxd CLI is on OpenCode's PATH, then run /boxd-status again."
 const LISTED_UNKNOWN = 20
+const LISTED_ATTENTION = 10
 // A tool name comes from the host; list only plain names.
 const SAFE_NAME = /^[a-z][a-z0-9_]{0,63}$/
 const STATUS_LIMIT = 160
 const CLASS_OF = new Map<string, string>(TOOLS.map((tool) => [tool.id, tool.class]))
 const RULES_NOT_ADDED = "RULES_NOT_ADDED:"
 
+function costOf(fleet: StatusResult): StatusCost {
+  const top = fleet.cleanup[0]
+  const today = fleet.cost.today
+  const note = today.unavailable ?? (today.machines === null ? "today's machine cost needs an owner's or admin's boxd sign-in" : undefined)
+  return {
+    currency: fleet.cost.currency,
+    running: fleet.cost.perHour.running,
+    asleep: fleet.cost.perHour.asleep,
+    perHour: today.unavailable ? null : fleet.cost.perHour.estimate,
+    today: today.machines,
+    ...(note ? { note: cut(shortReason(note) ?? note, STATUS_LIMIT) } : {}),
+    ...(top
+      ? {
+          cleanup: {
+            call: top.call,
+            works: top.works,
+            ...(top.savesPerHour !== undefined ? { savesPerHour: top.savesPerHour } : {}),
+            ...(top.savesPerDay !== undefined ? { savesPerDay: top.savesPerDay } : {}),
+          },
+        }
+      : {}),
+  }
+}
+
 export function buildStatus(facts: StatusFacts): Status {
-  const state: State = facts.ledgerError ? "failed" : "connected"
+  const fleet = facts.fleet
+  const state: State = facts.fleetError || !fleet ? "failed" : "connected"
   const listed = facts.tools ?? []
   const unknown = listed.filter((name) => !CLASS_OF.has(name))
-  const works = facts.ledger?.works ?? []
-  const unharvested = works.filter((work) => work.proof !== "fresh").map((work) => work.workId)
-  const warned = works.filter((work) => work.warnings.length > 0).map((work) => work.workId)
-  const failedRuns = works.filter((work) => work.outcome === "failed").map((work) => ({ workId: work.workId, ...(work.error ? { error: work.error } : {}) }))
+  const counts = fleet?.counts ?? {}
+  const health = fleet?.health
   const status = {
     version: VERSION,
     state,
-    ...(facts.ledgerError ? { error: cut(shortReason(facts.ledgerError) ?? "no reason given", STATUS_LIMIT) } : {}),
-    access: facts.access,
+    ...(state === "failed" ? { error: cut(shortReason(facts.fleetError?.reason ?? "") ?? "no reason given", STATUS_LIMIT) } : {}),
     host: facts.host,
-    snapshot: facts.snapshot,
-    snapshotPresent: facts.ledger?.snapshotPresent ?? null,
-    signedIn: facts.ledger ? facts.ledger.cli.signedIn : null,
-    ...(facts.ledger && !facts.ledger.cli.signedIn ? { signInError: cut(shortReason(facts.ledger.cli.reason) ?? "no reason given", STATUS_LIMIT) } : {}),
+    access: facts.access,
+    signedIn: fleet ? fleet.cli.signedIn : null,
+    image: facts.image,
+    buildGolden: facts.buildGolden,
     guestVersion: facts.guestVersion,
-    works,
-    openWorks: works.length,
-    unharvested,
-    orphans: facts.ledger?.orphans ?? [],
-    warned,
-    failedRuns,
+    openWorks: Object.entries(counts).reduce((sum, [phase, count]) => (phase === "closed" ? sum : sum + (count ?? 0)), 0),
+    counts,
+    attention: (fleet?.attention ?? []).slice(0, LISTED_ATTENTION).map((item) => ({ workId: item.workId, phase: item.phase, why: item.why, ...(item.error ? { error: item.error } : {}), next: item.next })),
+    moreAttention: Math.max(0, (fleet?.attention?.length ?? 0) - LISTED_ATTENTION) + (fleet?.more ?? 0),
+    groups: (fleet?.groups ?? []).map((group) => ({ why: group.why, ...(group.error ? { error: group.error } : {}), count: group.count, next: group.next })),
+    orphans: (fleet?.orphans ?? []).map((orphan) => `${orphan.machine} (${orphan.region})`),
+    regions: (fleet?.regions ?? []).map(({ region, limit, inUse, free }) => ({ region, limit, inUse, free })),
+    cost: fleet ? costOf(fleet) : null,
+    automation: fleet?.automation ?? "unknown",
+    notices: facts.notices,
+    health: {
+      loopLagMaxMs: health?.loopLagMaxMs ?? 0,
+      children: health?.children.now ?? 0,
+      cap: health?.children.cap ?? CAPS.shared,
+      droppedNotices: health?.notices?.length ?? 0,
+      ...(health?.watcher ? { watcher: cut(shortReason(health.watcher) ?? health.watcher, STATUS_LIMIT) } : {}),
+    },
+    ...(fleet?.import ? { imported: fleet.import } : {}),
     tools: listed.length,
     unknownCount: unknown.length,
     unknownTools: unknown.filter((name) => SAFE_NAME.test(name)).slice(0, LISTED_UNKNOWN),
     unguardedAgents: unguardedAgents(facts.agents ?? [], facts.access),
     problems: facts.problems ?? [],
   }
-  return { ...status, nextStep: nextStepOf(status) }
+  return { ...status, nextStep: nextStepOf(status, facts.fleetError?.nextStep) }
 }
 
-function nextStepOf(status: Omit<Status, "nextStep">): string {
-  if (status.state === "failed") return "Restart OpenCode, then run /boxd-status again."
+function nextStepOf(status: Omit<Status, "nextStep">, failedNext: string | undefined): string {
+  if (status.state === "failed") return failedNext ?? "Restart OpenCode, then run /boxd-status again."
   // Every tool runs the boxd CLI, so a CLI that cannot answer comes before every other setup fix.
   if (status.signedIn === false) return SIGN_IN_NEXT_STEP
-  // Without its golden image no machine can be created or rebuilt, so this comes before every other setup fix.
-  if (status.snapshotPresent === false) {
-    return `Create the golden image named "${status.snapshot}" as docs/golden-image.md describes, then set the snapshot option to it.`
-  }
   const rules = status.problems.find((problem) => problem.startsWith(RULES_NOT_ADDED))
   if (rules) return rules.split(" Next step: ")[1] ?? AGENTS_NEXT_STEP
   if (status.unguardedAgents.length) return AGENTS_NEXT_STEP
-  // A run that failed is the one thing an agent must not read as success: it outranks the housekeeping steps.
-  if (status.failedRuns.length) {
-    const first = status.failedRuns[0]!
-    const run = { outcome: "failed" as const, ...(first.error ? { error: first.error } : {}) }
-    const more = status.failedRuns.length > 1 ? ` ${status.failedRuns.length - 1} more ${status.failedRuns.length === 2 ? "work has" : "works have"} a failed run too.` : ""
-    return `${failureText(run, first.workId)} ${nextStepFor(run)}${more}`
-  }
-  if (status.orphans.length) {
-    return `Call boxd_ensure for the work id ${status.orphans.length === 1 ? "named" : "named"} by ${list(status.orphans.map((name) => name.replace(/^oc-/, "")))} to adopt ${status.orphans.length === 1 ? "a machine" : "machines"} no ledger records, or remove them with the boxd CLI.`
-  }
-  if (status.warned.length) {
-    return `Call boxd_resume and then boxd_harvest for ${list(status.warned)}: it was hibernated before its last prompt was harvested.`
-  }
-  if (status.unharvested.length) {
-    const names = list(status.unharvested)
-    return `Call boxd_harvest for ${names}: sleep, image and drop refuse without a fresh import on this laptop.`
-  }
+  // A folded cause comes first when it is worse than the first single work: one fix reaches many works.
+  const group = status.groups[0]
+  const first = status.attention[0]
+  if (group && (!first || order(group.why) <= order(first.why))) return `${group.count} works: ${group.next}.`
+  if (first) return `${first.workId} (${first.why}${first.error ? `, ${first.error}` : ""}): ${first.next}.`
+  if (status.orphans.length) return `Call boxd_ensure with the work id of ${list(status.orphans)} to adopt it, or remove it with the boxd CLI.`
   const problem = status.problems[0]?.split(" Next step: ")[1]
   return problem ?? NOTHING_TO_DO
 }
+
+const ORDER = ["failed", "unreachable", "gone-unsaved", "idle-unsaved", "asleep-unsaved", "stuck", "orphan", "version", "laptop-copy", "idle-running", "needs-input", "lease-expiring", "budget"]
+const order = (why: string) => (ORDER.includes(why) ? ORDER.indexOf(why) : ORDER.length)
 
 const list = (names: readonly string[]) => (names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`)
 
@@ -212,46 +241,74 @@ function toolsText({ tools, unknownCount, unknownTools, access }: Status) {
   return `${tools} available, ${unknownCount} unknown${names} (unknown tools ${unknown})`
 }
 
-/** The last run's outcome, beside the work it belongs to. */
-function outcomeText(outcome: RunOutcome | null): string {
-  if (outcome === null) return ""
-  if (outcome === "failed") return ", last run failed"
-  if (outcome === "aborted") return ", last run aborted"
-  return ", last run completed"
-}
-
-/** Why a machine is down, beside its state. */
-function asleepText(work: WorkSummary): string {
-  if (work.asleepBy === "boxd_sleep") return ` by boxd_sleep${work.sleptAt ? ` at ${work.sleptAt}` : ""}`
-  if (work.asleepBy === "idle_or_cli") return " by the idle bound or the boxd CLI"
-  return ""
-}
-
 /** The boxd CLI row: the sign-in is the CLI's own, so status reports whether the CLI answered its machine listing. */
-function cliText({ signedIn, signInError }: Status) {
+function cliText({ signedIn }: Status) {
   const never = "the plugin never reads your boxd account or credentials"
   if (signedIn === true) return `signed in (it answered the machine listing; ${never})`
-  if (signedIn === false) return `not signed in, or not reachable (${signInError ?? "no reason given"}; ${never})`
+  if (signedIn === false) return `not signed in, or not reachable (the machine listing failed; ${never})`
   return `not checked (${never})`
 }
 
-/** The Snapshot row: the configured image, and whether this account actually has it. */
-function snapshotText({ snapshot, snapshotPresent }: Status) {
-  if (snapshotPresent === false) return `${snapshot} (not in this boxd account)`
-  if (snapshotPresent === null) return `${snapshot} (not checked: the snapshot list could not be read)`
-  return `${snapshot} (present)`
+function imageText({ image, buildGolden }: Status) {
+  return buildGolden === "auto" ? `${image} for a new work in the default size; boxd_ensure builds it when it is missing` : `${image} for a new work in the default size; buildGolden is "never", so boxd_golden builds it`
 }
 
-/** The Works row: what is open, and what is not yet safe to sleep, image or drop. */
-function worksText({ openWorks, unharvested, warned, orphans, works }: Status) {
+/** The Works row: counts by phase, in the one phase order, and machines no ledger records. */
+function worksText({ openWorks, counts, orphans, imported }: Status) {
   const unowned = orphans.length ? `; machines no ledger records: ${list(orphans)}` : ""
-  if (openWorks === 0) return `no open work${unowned}`
-  const machines = works
-    .map((work) => `${work.workId} (${work.machineStatus ?? "state unknown"}${asleepText(work)}${outcomeText(work.outcome)}${work.outcome === "failed" && work.error ? `: ${work.error}` : ""})`)
-    .join(", ")
-  const stale = unharvested.length ? `; no fresh laptop import: ${list(unharvested)}` : "; every work has a fresh laptop import"
-  const asleep = warned.length ? `; hibernated before a harvest: ${list(warned)}` : ""
-  return `${openWorks} open: ${machines}${stale}${asleep}${unowned}`
+  const from = imported ? `; ${imported.works} imported from v0${imported.errors ? `, ${imported.errors} blocked` : ""}` : ""
+  if (openWorks === 0) return `no open work${unowned}${from}`
+  const phases = PHASES.filter((phase) => phase !== "closed" && counts[phase]).map((phase) => `${counts[phase]} ${phase}`)
+  return `${openWorks} open: ${phases.join(", ")}${unowned}${from}`
+}
+
+function attentionText({ attention, groups, moreAttention }: Status) {
+  if (!attention.length && !groups.length) return "none"
+  const folded = groups.map((group) => `${group.count} works ${group.why}${group.error ? ` (${group.error})` : ""}`)
+  const single = attention.map((item) => `${item.workId} ${item.why}${item.error ? ` (${item.error})` : ""}`)
+  const more = moreAttention ? `; and ${moreAttention} more` : ""
+  return `${[...folded, ...single].join("; ")}${more}; boxd_status has each next call`
+}
+
+function machinesText({ regions }: Status) {
+  if (!regions.length) return "the machine limit could not be read"
+  return regions.map((region) => `${region.region} ${region.inUse} of ${region.limit} in use, ${region.free} free`).join("; ")
+}
+
+const SYMBOLS: Readonly<Record<string, string>> = { EUR: "€", USD: "$", GBP: "£" }
+const money = (amount: number, currency: string) => (SYMBOLS[currency] ? `${SYMBOLS[currency]}${amount.toFixed(2)}` : `${amount.toFixed(2)} ${currency}`)
+
+function costText({ cost }: Status) {
+  if (!cost) return "not read"
+  const machines = `${cost.running} running, ${cost.asleep} asleep`
+  const hour = cost.perHour === null ? "no estimate" : `~${money(cost.perHour, cost.currency)}/h (an estimate)`
+  const today = cost.today === null ? "" : `; today ${money(cost.today, cost.currency)} on machines`
+  const top = cost.cleanup
+    ? `; cleanup: ${cost.cleanup.call}${cost.cleanup.savesPerHour !== undefined ? ` saves ~${money(cost.cleanup.savesPerHour, cost.currency)}/h` : cost.cleanup.savesPerDay !== undefined ? ` saves ~${money(cost.cleanup.savesPerDay, cost.currency)}/day` : ""}, or /boxd-cleanup`
+    : ""
+  return `${machines}, ${hour}${today}${top}${cost.note ? ` (${cost.note})` : ""}`
+}
+
+function automationText({ automation, notices }: Status) {
+  const what =
+    automation === "on"
+      ? "on: finished works are harvested, then hibernated, after autoSleepMinutes"
+      : automation === "on (consent)"
+        ? 'on by your automation: "on": finished works are harvested, then hibernated, after autoSleepMinutes'
+        : automation === "off (access)"
+          ? 'off at this access level; set automation: "on" to consent, or clean up with boxd_sleep'
+          : automation === "not-owner"
+            ? "another OpenCode process on this laptop runs it"
+            : automation === "off"
+              ? "off (automation: \"off\")"
+              : "unknown"
+  return `${what}; notices: ${notices}`
+}
+
+function healthText({ health }: Status) {
+  const watcher = health.watcher ? `; ${health.watcher}` : ""
+  const dropped = health.droppedNotices ? `; ${health.droppedNotices} notices dropped` : ""
+  return `event-loop delay at most ${health.loopLagMaxMs} ms; ${health.children} of ${health.cap} boxd processes${dropped}${watcher}`
 }
 
 /** The OpenCode row: the version, whether it is tested, the supported range, then any setup problems. */
@@ -278,9 +335,14 @@ export function formatStatus(status: Status) {
     `- boxd CLI: ${cliText(status)}`,
     `- Connection: ${connection}`,
     `- Access: ${accessText(status)}`,
-    `- Snapshot: ${snapshotText(status)}`,
-    `- Guest: must be OpenCode ${status.guestVersion ?? "unknown"}, this laptop's version; a job or a harvest checks it`,
+    `- Image: ${imageText(status)}`,
+    `- Guest: OpenCode ${status.guestVersion ?? "unknown"}, this laptop's version, to move a transcript; reads work across versions`,
     `- Works: ${worksText(status)}`,
+    `- Attention: ${attentionText(status)}`,
+    `- Machines: ${machinesText(status)}`,
+    `- Cost: ${costText(status)}`,
+    `- Automation: ${automationText(status)}`,
+    `- Health: ${healthText(status)}`,
     `- Tools: ${toolsText(status)}`,
     `- Agents without default rules: ${agents.length ? `${agents.join(", ")}\n${agentRules(status.access)}` : "none"}`,
     `- OpenCode: ${hostText(status)}`,
@@ -293,49 +355,56 @@ interface StatusContext {
   readonly tool: Pick<Plugin.Context["tool"], "list">
 }
 
-/** Reads the live facts through public host APIs; never calls boxd. A failed ledger read is the `failed` state. */
+/** A coded error's reason and its own next step; any other error's message. */
+function failureOf(error: unknown): { reason: string; nextStep?: string } {
+  if (error instanceof BoxdError) {
+    const again = error.state === "busy" ? "Run /boxd-status again in a few seconds." : `${error.next.replace(/\.$/, "")}, then run /boxd-status again.`
+    return { reason: `${error.code}: ${error.what}`, nextStep: again }
+  }
+  return { reason: shortReason(error instanceof Error ? error.message : String(error)) ?? "no reason given" }
+}
+
+/** Reads the live facts through public host APIs and the fleet view; never reads a guest. A failed read is `failed`. */
 export async function readStatus(
   ctx: StatusContext,
-  facts: Pick<StatusFacts, "host" | "snapshot" | "guestVersion" | "problems" | "access"> & { readonly ledger: () => Promise<FleetStatus> },
+  facts: Omit<StatusFacts, "fleet" | "fleetError" | "tools" | "agents"> & { readonly fleet: () => Promise<StatusResult> },
 ): Promise<Status> {
-  const [agents, tools, ledger] = await Promise.all([
+  const [agents, tools, fleet] = await Promise.all([
     ctx.agent.list(),
     ctx.tool.list(),
-    facts.ledger().then(
+    facts.fleet().then(
       (value) => ({ value }),
-      (error: unknown) => ({ error: shortReason(error instanceof Error ? error.message : String(error)) ?? "no reason given" }),
+      (error: unknown) => ({ error: failureOf(error) }),
     ),
   ])
+  const { fleet: _read, ...rest } = facts
   return buildStatus({
-    access: facts.access,
-    host: facts.host,
-    snapshot: facts.snapshot,
-    guestVersion: facts.guestVersion,
-    ...(facts.problems ? { problems: facts.problems } : {}),
-    ...("value" in ledger ? { ledger: ledger.value } : { ledgerError: ledger.error }),
+    ...rest,
+    ...("value" in fleet ? { fleet: fleet.value } : { fleetError: fleet.error }),
     tools: tools.filter((tool) => tool.options?.namespace === "boxd").map((tool) => tool.id),
     agents: agents.data,
   })
 }
 
-/**
- * The status reader `src/plugin.ts` wires into `/boxd-status`, the dialog and the status RPC. Package D owns it and
- * fills the fleet read from `services`; until then the ledger read fails, so status is `failed` with that reason.
- */
+/** The status reader `src/plugin.ts` wires into `/boxd-status`, the dialog and the status RPC. */
 export function statusReader(
   ctx: StatusContext,
   input: { readonly services: FleetServices; readonly host: HostCheck; readonly problems: () => readonly string[] },
 ): () => Promise<Status> {
   const { options, hostVersion } = input.services
+  let reads = 0
   return () =>
     readStatus(ctx, {
       access: options.access,
       host: input.host,
       // The image a new work in the default size boots from: <prefix>-<this laptop's OpenCode>-<size>.
-      snapshot: `${options.goldenPrefix}-${hostVersion ?? "unknown"}-${options.size}`,
+      image: `${options.goldenPrefix}-${hostVersion ?? "unknown"}-${options.size}`,
+      buildGolden: options.buildGolden,
       guestVersion: hostVersion,
+      notices: options.notices,
       problems: input.problems(),
-      ledger: () => Promise.reject(new Error("The v1 ledger is not built yet on this branch.")),
+      fleet: () =>
+        fleetStatus(input.services, { view: "attention", limit: LISTED_ATTENTION, include: [] }, { tag: { callId: `status-${++reads}`, source: "status-command" }, guestReads: false }),
     })
 }
 
@@ -348,6 +417,7 @@ function unavailable(error: unknown) {
 const strings = { type: "array", items: { type: "string" } }
 const count = { type: "integer", minimum: 0 }
 const nullableString = { type: ["string", "null"] }
+const nullableNumber = { type: ["number", "null"] }
 
 /** One read-only method for the TUI view and scripts: the same model `/boxd-status` renders. */
 export const StatusRpc = {
@@ -357,7 +427,33 @@ export const StatusRpc = {
       input: { type: "object" },
       output: {
         type: "object",
-        required: ["version", "state", "access", "host", "snapshot", "snapshotPresent", "signedIn", "guestVersion", "works", "openWorks", "unharvested", "orphans", "warned", "failedRuns", "tools", "unknownCount", "unknownTools", "unguardedAgents", "problems", "nextStep"],
+        required: [
+          "version",
+          "state",
+          "access",
+          "host",
+          "signedIn",
+          "image",
+          "buildGolden",
+          "guestVersion",
+          "openWorks",
+          "counts",
+          "attention",
+          "moreAttention",
+          "groups",
+          "orphans",
+          "regions",
+          "cost",
+          "automation",
+          "notices",
+          "health",
+          "tools",
+          "unknownCount",
+          "unknownTools",
+          "unguardedAgents",
+          "problems",
+          "nextStep",
+        ],
         properties: {
           version: { type: "string" },
           state: { enum: ["connected", "failed"] },
@@ -368,39 +464,55 @@ export const StatusRpc = {
             required: ["version", "range", "tested"],
             properties: { version: nullableString, range: { type: "string" }, tested: { type: "boolean" } },
           },
-          snapshot: { type: "string" },
-          snapshotPresent: { type: ["boolean", "null"] },
           signedIn: { type: ["boolean", "null"] },
-          signInError: { type: "string" },
+          image: { type: "string" },
+          buildGolden: { enum: ["auto", "never"] },
           guestVersion: nullableString,
-          works: {
+          openWorks: count,
+          counts: { type: "object", additionalProperties: count },
+          attention: {
             type: "array",
             items: {
               type: "object",
-              required: ["workId", "machine", "sessionId", "proof", "dirty", "machineStatus", "warnings"],
-              properties: {
-                workId: { type: "string" },
-                machine: { type: "string" },
-                sessionId: nullableString,
-                proof: { enum: ["fresh", "stale", "missing"] },
-                dirty: { type: "boolean" },
-                machineStatus: { type: ["string", "null"] },
-                warnings: strings,
-                outcome: { type: ["string", "null"], enum: ["completed", "failed", "aborted", null] },
-                error: { type: "string" },
-                asleepBy: { enum: ["boxd_sleep", "idle_or_cli"] },
-                sleptAt: { type: "string" },
+              required: ["workId", "phase", "why", "next"],
+              properties: { workId: { type: "string" }, phase: { enum: [...PHASES] }, why: { type: "string" }, error: { type: "string" }, next: { type: "string" } },
+            },
+          },
+          moreAttention: count,
+          groups: {
+            type: "array",
+            items: { type: "object", required: ["why", "count", "next"], properties: { why: { type: "string" }, error: { type: "string" }, count, next: { type: "string" } } },
+          },
+          orphans: strings,
+          regions: {
+            type: "array",
+            items: { type: "object", required: ["region", "limit", "inUse", "free"], properties: { region: { type: "string" }, limit: count, inUse: count, free: { type: "integer" } } },
+          },
+          cost: {
+            type: ["object", "null"],
+            required: ["currency", "running", "asleep", "perHour", "today"],
+            properties: {
+              currency: { type: "string" },
+              running: count,
+              asleep: count,
+              perHour: nullableNumber,
+              today: nullableNumber,
+              note: { type: "string" },
+              cleanup: {
+                type: "object",
+                required: ["call", "works"],
+                properties: { call: { type: "string" }, works: count, savesPerHour: { type: "number" }, savesPerDay: { type: "number" } },
               },
             },
           },
-          openWorks: count,
-          unharvested: strings,
-          orphans: strings,
-          warned: strings,
-          failedRuns: {
-            type: "array",
-            items: { type: "object", required: ["workId"], properties: { workId: { type: "string" }, error: { type: "string" } } },
+          automation: { type: "string" },
+          notices: { enum: ["wake", "queue", "off"] },
+          health: {
+            type: "object",
+            required: ["loopLagMaxMs", "children", "cap", "droppedNotices"],
+            properties: { loopLagMaxMs: { type: "number" }, children: count, cap: count, droppedNotices: count, watcher: { type: "string" } },
           },
+          imported: { type: "object", required: ["works", "errors"], properties: { works: count, errors: count } },
           tools: count,
           unknownCount: count,
           unknownTools: strings,
@@ -432,7 +544,7 @@ export function registerStatusCommand(
   return ctx.command.transform((editor) =>
     editor.add({
       name: `${COMMAND_STEM}-status`,
-      description: "Show boxd's ledger, machines, permission posture and the next step",
+      description: "Show boxd's works, machines, cost, permission posture and the next step",
       execute: async ({ sessionID }) => {
         const text = await read().then(formatStatus, (cause: unknown) => {
           const { message, nextStep } = unavailable(cause)
@@ -443,4 +555,3 @@ export function registerStatusCommand(
     }),
   )
 }
-

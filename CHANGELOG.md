@@ -11,25 +11,49 @@ v0.1.0 redesigns the plugin and breaks compatibility on purpose: the tools, the 
 options and the guest helper all change. Works that ran on v0.0.x are imported, not stranded.
 [docs/v1-design.md](docs/v1-design.md) is the design.
 
-- Tools: `boxd_image` is replaced by `boxd_golden`; `boxd_read`, `boxd_exec` and `boxd_reassign` are new; every
-  result has `state`, and list forms return `{ state, counts, results }`.
-- `proof` is now `saved` (`fresh`, `stale`, `none`); `NOT_PROVEN` is `NOT_SAVED`; `SNAPSHOT_MISSING` is
-  `GOLDEN_MISSING`; `SNAPSHOT_EXISTS`, `PARENT_MISSING` and `GUEST_RUN_FAILED` are gone.
-- `boxd_submit`'s `queued` is replaced by `delivery` (`steer`, `queue`, `started`), and `mode` chooses it.
-- `vcpu` is now `size`; `wait` is now `"ready" | "created" | "none"` and defaults to `"ready"` (`"created"` for a list
-  of more than 50).
-- The ledger moves to `~/.local/share/opencode-boxd/v1/`; v0 records are imported once, all or nothing, and left
-  untouched apart from a `README-MOVED-TO-v1/` note folder. **Going back to v0.0.6 is safe only before v0.1.0's first
-  change** (a submit, harvest, drop or reassign): after that, v0's drop could accept a stale proof.
-- Every change acts on the machine id the ledger recorded; a name that points at another machine is refused.
-- `boxd_golden` never saves a work's machine; `boxd_image`'s path is gone.
-- Notices go to the calling session on the model path only; a script names a session with `notify`.
-- The guest helper lives in `~/.opencode-boxd/` on the machine, not `/tmp`.
-- The option `snapshot` is now `goldenBase`; images are built by the plugin and named by OpenCode version and size.
+- **Tools.** `boxd_image` is replaced by `boxd_golden`; `boxd_read`, `boxd_exec` and `boxd_reassign` are new, so there
+  are twelve. Every result has `state`, a refusal too (`refused`, `failed`, `unreachable`, `busy`, `starting`, `gone`,
+  `asleep`, `cancelled`) beside `error`, `message` and `next`, and `next` is one concrete call. List forms take
+  `works: [...]` (1 to 300) and return `{ state, counts, results }`, in input order.
+- **Words.** `proof` is now `saved` (`fresh`, `stale`, `none`). One phase vocabulary for every tool: `creating`,
+  `starting`, `ready`, `busy`, `idle`, `asleep`, `gone`, `unreachable`, `closed`; `empty` and `missing` are gone.
+- **Codes.** `NOT_PROVEN` is `NOT_SAVED`; `SNAPSHOT_MISSING` is `GOLDEN_MISSING`; `GUEST_RUN_FAILED` is `RUN_FAILED`;
+  `PARENT_MISSING` is folded into `EXPORT_INVALID`; `SNAPSHOT_EXISTS` is gone. New: `NOT_REASSIGNABLE`,
+  `MACHINE_LIMIT`, `SIZE_UNAVAILABLE`, `GOLDEN_BUILD_FAILED`, `GOLDEN_HAS_CREDENTIAL`, `MACHINE_ASLEEP`,
+  `AGENT_UNREACHABLE`, `SESSION_MISSING`, `IMPORT_FAILED`, `CANCELLED`, `LEDGER_LOCKED`, `LEDGER_IMPORTING`,
+  `IMPORT_V0_FAILED` and `BUDGET_REACHED`, and the warnings `BUDGET_WARN`, `BUDGET_UNKNOWN`, `LEASE_EXPIRING`,
+  `AUTOMATION_BLOCKED` and `NO_MODEL_CREDENTIAL`.
+- **`boxd_submit`.** `queued` is replaced by `delivery` (`steer`, `queue`, `started`), and `mode` (`steer`, `queue`,
+  `interrupt`) chooses it: the old submit already steered, and called it queued.
+- **`boxd_ensure`.** `vcpu` is now `size` (`1x4`, `2x8`, `4x16`, `8x32`), applied by the image rather than a resize;
+  `wait` is now `"ready" | "created" | "none"` and defaults to `"ready"` (`"created"` for a list of more than 50);
+  `region` picks `fra` or `nyc`; `repo`, `ref` and `git` set the guest up in the same call.
+- **`boxd_status`.** It lists only the works that need a decision (`attention`, worst first, at most `limit`, with
+  `more`), folds repeated causes into `groups`, returns a `cursor` that `since` takes, and adds `regions`, `orphans`,
+  `fleet`, `cost`, `cleanup`, `automation` and `health`. It never reads an idle or hibernated guest. `credentials`,
+  per-work cost, golden images and closed works come only with `include`.
+- **`boxd_job`.** `pending` is replaced by `waiting: { steer, queue }`; `tail` takes 1 to 20; `cost` adds the work's
+  machine and model cost. It answers a hibernated work from the listing and the ledger, and never wakes it.
+- **The ledger** moves to `~/.local/share/opencode-boxd/v1/`; v0 records are imported once, all or nothing, and left
+  untouched apart from a `works/README-MOVED-TO-v1/` note folder. Until the import is complete every tool answers
+  `LEDGER_IMPORTING`. **Going back to v0.0.6 is safe only before v0.1.0's first change** (a submit, harvest, drop or
+  reassign): after that, v0's drop could accept a stale proof and destroy unharvested work.
+- **By id.** Every change acts on the machine id the ledger recorded; a name that now points at another machine is
+  refused with `NOT_OURS`. A machine counts as gone only when a fresh all-region listing and a `get` of the recorded id
+  find it nowhere.
+- **Golden images.** The option `snapshot` is gone (now `goldenBase`); images are built by the plugin from a recipe,
+  per region and size, and named `<goldenPrefix>-<opencode version>-<size>`. `boxd_golden` never saves a work's machine,
+  so `boxd_image`'s path is gone.
 - **Model credentials are never baked into an image.** A base that holds `auth.json` is refused
   (`GOLDEN_HAS_CREDENTIAL`), so v0's fallback of `opencode auth login` on the image builder is gone. Give works a key
-  as a sealed, host-bound `boxd env` secret, or sign in on one work's own machine after `boxd connect`.
-- Harvest never overwrites the last good export until the new one is verified.
+  as a sealed, host-bound `boxd env` secret, a secret per provider, or sign in on one work's own machine after
+  `boxd connect`.
+- **Notices** go only to the work's root coordinator: the session that started or last drove it from the model path,
+  found by walking up from a subagent. A script's own session gets none unless it names one with `notify`. At most one
+  notice a minute per coordinator, and never a guest's text.
+- **The guest helper** lives in `~/.opencode-boxd/` on the machine, not `/tmp`, and a read never uploads it.
+- **Harvest** never overwrites the last good export until the new one is verified, and drop also checks the guest's own
+  session marks, so a prompt that bypassed the plugin blocks the destroy.
 - **Cost and cleanup.** Every new work machine is created with auto-suspend off, auto-hibernate at 2 h and
   `idle.ignore-outbound` off, at every `access` level. At `access: "all"` the plugin now harvests a finished work
   and then hibernates it after 10 idle minutes, orphans included; at "ask-changes" and "read-only" only with
@@ -38,8 +62,27 @@ options and the guest helper all change. Works that ran on v0.0.x are imported, 
   action with a permission prompt only a person answers. A coordinator session gets one short fleet line at the end of
   a request when the fleet changed; the system prompt is never changed, so the prompt cache holds. The new options are
   `automation`, `leaseDays` and `budget`; the last two are off by default.
-- Fixed: a second harvest now replaces the laptop's copy of the transcript (F1); Stop now ends a tool call and its
-  processes (F2).
+- **Options.** New: `region`, `keepFree`, `size`, `git`, `goldenPrefix`, `goldenBase`, `goldenSetup`, `buildGolden`,
+  `notices`, `autoHibernateMinutes`, `automation`, `autoSleepMinutes`, `orphanHours`, `leaseDays`, `budget`,
+  `costContext` and `idleCheck`. Removed: `snapshot`.
+- **`/boxd-status`** shows the golden image, works by phase, the works that need a decision, each region's machines,
+  a Cost row, automation and notices, and health; the Snapshot row is gone.
+
+### Added
+
+- One runner owns every child process: at most 12 boxd processes for tool calls and reads, 4 for `boxd_exec` and 2
+  laptop imports, each with a timeout, the call's stop signal and an output cap. Status reports the worst event-loop
+  delay of the last 5 minutes.
+- The watcher: a sweep while any work is busy, which appends each phase change to `events.jsonl` and hands it to
+  automation and the notices.
+
+### Fixed
+
+- A second harvest now replaces the laptop's copy of the transcript (F1).
+- Stop now ends a tool call and its processes (F2).
+- A missing machine is read only from boxd's exact not-found words in the region asked, so an unknown flag or a machine
+  in the other region is never read as missing (F4).
+- A laptop upgrade no longer blinds reads: `boxd_status` and `boxd_job` work across guest versions (F6).
 
 ## [0.0.6] - 2026-11-15
 
