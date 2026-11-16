@@ -7,6 +7,7 @@ import { createRuntime, type PluginRuntime } from "../../src/exec/runtime.js"
 import { CAPS, TIMEOUTS, type MachineId, type OpContext } from "../../src/ports.js"
 import { DISPOSE_BOUND_MS } from "../../src/services.js"
 import { startFakeCli, type FakeCli } from "../host/fake-cli.js"
+import { running } from "../support/processes.js"
 
 let fake: FakeCli
 let runtime: PluginRuntime
@@ -14,7 +15,13 @@ const context = (callId: string): OpContext => ({ call: { callId, source: "boxd_
 const outcome = (promise: Promise<unknown>) => promise.then(() => "ran", (error: unknown) => (error instanceof BoxdError ? error.code : String(error)))
 /** This process's own long command: another copy of the suite running at once has its own, so the counts never mix. */
 const LONG = `sleep 597.${process.pid}`
-const sleeping = () => Bun.spawnSync(["pgrep", "-f", `^${LONG.replace(".", "\\.")}$`]).stdout.toString().trim()
+/** The running copies, a zombie not yet reaped counting as gone (test/support/processes.ts). */
+const sleeping = () =>
+  Bun.spawnSync(["pgrep", "-f", `^${LONG.replace(".", "\\.")}$`])
+    .stdout.toString()
+    .split("\n")
+    .filter((line) => line.trim() !== "" && running(Number(line)))
+    .join("\n")
 const count = () => sleeping().split("\n").filter(Boolean).length
 
 beforeEach(() => {

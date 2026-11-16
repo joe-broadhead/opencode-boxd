@@ -7,6 +7,7 @@ import { createRuntime, type PluginRuntime } from "../../src/exec/runtime.js"
 import { CAPS, type ChangeTarget, type MachineId, type OpContext, type ReadTarget } from "../../src/ports.js"
 import { startFakeGuest, type FakeGuest } from "../host/fake-guest.js"
 import { startSpawnCounter, type CountingFake } from "../host/spawn-counter.js"
+import { stillRunning } from "../support/processes.js"
 import { budgetProblems, SPAWN_BUDGETS, type BudgetRow } from "../support/spawn-count.js"
 
 let guestServer: FakeGuest
@@ -189,14 +190,6 @@ describe("under load", () => {
     const spawns = counter.fake.spawns().filter((spawn) => spawn.call?.startsWith("call_stop_"))
     // No queued call started a child after the Stop, and every child that started is gone.
     expect(spawns).toHaveLength(CAPS.shared)
-    const alive = (pid: number) => {
-      try {
-        process.kill(pid, 0)
-        return true
-      } catch {
-        return false
-      }
-    }
-    expect(spawns.filter((spawn) => alive(spawn.pid))).toEqual([])
+    expect(await stillRunning(spawns.map((spawn) => spawn.pid))).toEqual([])
   }, 60_000)
 })

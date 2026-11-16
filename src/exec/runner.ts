@@ -102,6 +102,8 @@ const defaultLaunch: Launch = (bin, args, options) =>
 
 interface Waiter {
   readonly pool: Pool
+  /** Queued at the front: after every earlier front waiter, before every other. */
+  readonly front: boolean
   readonly start: () => void
   readonly abandon: (error: BoxdError) => void
 }
@@ -274,6 +276,7 @@ export function createRunner(options: RunnerOptions = {}): PluginRunner {
       }
       const waiter: Waiter = {
         pool,
+        front,
         start: () => {
           signal?.removeEventListener("abort", onAbort)
           resolve()
@@ -284,8 +287,13 @@ export function createRunner(options: RunnerOptions = {}): PluginRunner {
         },
       }
       signal?.addEventListener("abort", onAbort, { once: true })
-      if (front) queues[pool].unshift(waiter)
-      else queues[pool].push(waiter)
+      // The front is first in, first out too: a read retried on a fresh listing never jumps ahead of one retried
+      // earlier, so no retried read is passed over again and again until its retries run out.
+      const queue = queues[pool]
+      if (front) {
+        const after = queue.findIndex((queued) => !queued.front)
+        queue.splice(after === -1 ? queue.length : after, 0, waiter)
+      } else queue.push(waiter)
       pump()
     })
   }

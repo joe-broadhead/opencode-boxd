@@ -12,6 +12,7 @@ import { BoxdError } from "../../src/errors.js"
 import { createRunner } from "../../src/exec/runner.js"
 import type { BoxdPort, MachineId, OpContext, ReadTarget } from "../../src/ports.js"
 import { startFakeCli, type FakeCli } from "../host/fake-cli.js"
+import { running as alive, stillRunning } from "../support/processes.js"
 
 const dir = realpathSync(mkdtempSync(join(realpathSync(tmpdir()), "boxd-review-")))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
@@ -20,14 +21,6 @@ const ctx = (callId: string, signal?: AbortSignal, pool: OpContext["pool"] = "fo
 const code = (error: unknown) => (error instanceof BoxdError ? error.code : String(error))
 const settle = <T>(promise: Promise<T>) => promise.then((value) => ({ ok: true as const, value }), (error: unknown) => ({ ok: false as const, error }))
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-const alive = (pid: number) => {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch {
-    return false
-  }
-}
 /**
  * A descendant that leaves the child's process group (a new session) and keeps its stdout open, writing its pid first.
  * `os.setsid` from Python, which every test machine has, where the `setsid` binary is Linux's alone.
@@ -63,7 +56,7 @@ describe("locks", () => {
     expect(waiterRan).toBe(true)
     expect(runner.lockedMachines()).toBe(0)
     await runner.dispose()
-  })
+  }, 30_000)
 
   test("Stop while waiting on the lock: CANCELLED, uncertain false; the holder is unaffected; the lock passes on", async () => {
     const runner = createRunner()
@@ -179,11 +172,10 @@ describe("joined flights (M-2)", () => {
     expect(alive(pid)).toBe(true)
     stopB.abort()
     expect([(await a).ok, (await b).ok]).toEqual([false, false])
-    for (let tries = 0; tries < 50 && alive(pid); tries++) await sleep(20)
-    expect(alive(pid)).toBe(false)
+    expect(await stillRunning([pid])).toEqual([])
     expect(await runner.join("k", ctx("C"), async () => "fresh")).toBe("fresh")
     await runner.dispose()
-  })
+  }, 30_000)
 })
 
 describe("the boxd port's shared reads", () => {
@@ -194,11 +186,11 @@ describe("the boxd port's shared reads", () => {
     fake = startFakeCli()
     runner = createRunner()
     boxd = createBoxdCli({ bin: fake.bin, runner })
-  })
+  }, 30_000)
   afterEach(async () => {
     await runner.dispose()
     fake.dispose()
-  })
+  }, 30_000)
 
   test("M-2: Stop of call A does not cancel call B that joined A's listing", async () => {
     fake.machine({ name: "oc-a", region: "fra" })
@@ -216,7 +208,7 @@ describe("the boxd port's shared reads", () => {
     expect(answerA.ok ? "ok" : code(answerA.error)).toBe("CANCELLED")
     expect(answerB.ok).toBe(true)
     expect(fake.spawns().filter((spawn) => spawn.argv[1] === "list")).toHaveLength(2)
-  })
+  }, 30_000)
 
   test("M-2: the same for the machine limit and the snapshots", async () => {
     await boxd.list({ maxAgeMs: 0 }, ctx("warm"))
@@ -231,7 +223,7 @@ describe("the boxd port's shared reads", () => {
       stop.abort()
       expect([(await a).ok, (await b).ok]).toEqual([false, true])
     }
-  })
+  }, 30_000)
 
   test("M-1: a read that waited in a queue past its listing's age joins a fresh listing; the machine now asleep is refused not-readable and never woken", async () => {
     fake.machine({ name: "oc-a", region: "fra" })
@@ -250,7 +242,7 @@ describe("the boxd port's shared reads", () => {
     expect([error.code, error.details.kind]).toEqual(["MACHINE_ASLEEP", "not-readable"])
     expect(fake.read().wokenByExec ?? []).toEqual([])
     expect(fake.calls().filter((call) => call.startsWith("machine exec"))).toEqual([])
-  })
+  }, 30_000)
 
   test("reads that waited in a queue past their listing's age still run on a running machine, sharing one fresh listing", async () => {
     fake.machine({ name: "oc-a", region: "fra" })
@@ -268,7 +260,7 @@ describe("the boxd port's shared reads", () => {
     expect(lists() - before).toBeGreaterThanOrEqual(1)
     expect(lists() - before).toBeLessThanOrEqual(2)
     expect(fake.read().wokenByExec ?? []).toEqual([])
-  })
+  }, 30_000)
 
   test("M-1: a read whose machine went to sleep before its slot came answers MACHINE_ASLEEP at the start", async () => {
     fake.machine({ name: "oc-a", region: "fra" })
@@ -282,7 +274,7 @@ describe("the boxd port's shared reads", () => {
     const answer = await read
     expect(answer.ok ? "ran" : code(answer.error)).toBe("MACHINE_ASLEEP")
     expect(fake.calls().filter((call) => call.startsWith("machine cp"))).toEqual([])
-  })
+  }, 30_000)
 })
 
 describe("process trees", () => {
@@ -295,12 +287,11 @@ describe("process trees", () => {
     const grandchild = await readPid(file)
     stop.abort()
     expect((await run).ok).toBe(false)
-    for (let tries = 0; tries < 50 && alive(grandchild); tries++) await sleep(20)
-    const survived = alive(grandchild)
-    if (survived) process.kill(grandchild, "SIGKILL")
-    expect(survived).toBe(false)
+    const survived = await stillRunning([grandchild])
+    if (survived.length) process.kill(grandchild, "SIGKILL")
+    expect(survived).toEqual([])
     await runner.dispose()
-  })
+  }, 30_000)
 
   test("L-2: dispose settles a child whose escaped descendant holds its stdout, within the bound", async () => {
     const file = pidFile()
@@ -316,7 +307,7 @@ describe("process trees", () => {
     expect((await run).ok).toBe(false)
     // It left the child's own process group, so no kill of that group can reach it: the test ends it.
     process.kill(escaped, "SIGKILL")
-  })
+  }, 30_000)
 
   test("L-2: a timeout settles the same way: the slot comes back", async () => {
     const file = pidFile()
@@ -327,5 +318,5 @@ describe("process trees", () => {
     expect(runner.health().children.now).toBe(0)
     process.kill(await readPid(file), "SIGKILL")
     await runner.dispose()
-  })
+  }, 30_000)
 })

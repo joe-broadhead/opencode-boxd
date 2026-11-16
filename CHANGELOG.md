@@ -137,6 +137,9 @@ below. The details:
 - A missing machine is read only from boxd's exact not-found words in the region asked, so an unknown flag or a machine
   in the other region is never read as missing (F4).
 - A laptop upgrade no longer blinds reads: `boxd_status` and `boxd_job` work across guest versions (F6).
+- On a slower laptop with many busy works, every guest read queued behind the others still runs: a read whose listing
+  aged in the queue retries on a fresh one in order, until the call's bound, rather than reading as stale after ten
+  tries.
 
 ### Changed
 

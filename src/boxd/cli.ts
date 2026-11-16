@@ -11,6 +11,7 @@ import { BoxdError, boxdError } from "../errors.js"
 import { partialOutput, type PluginRunner } from "../exec/runner.js"
 import {
   BUILDER_LABELS,
+  CALL_BOUND_MS,
   TIMEOUTS,
   WORK_LABELS,
   type BoxdPort,
@@ -70,8 +71,15 @@ const CHANGE_MS = TIMEOUTS.helperChange
 /** `machine usage` and `manage usage` are for owners and admins; a member gets this refusal. */
 const USAGE_REFUSED = /\bowners? and admins? only\b|\bonly (?:org )?(?:owners|admins)\b|\bnot (?:an? )?(?:owner|admin)\b|\bforbidden\b|\b403\b/i
 
-/** How often a read is retried on a fresh listing before its refusal is the caller's: it then reads as stale. */
-const READ_REFRESHES = 10
+/**
+ * How long a read keeps retrying on fresh listings before its refusal is the caller's (it then reads as stale): the call
+ * bound `B`. A count would not do: one listing serves only the reads that get a slot within its 2 s, so with many reads
+ * queued on a slow machine every read but those few ages out once per listing, while the queue still drains in order.
+ * A read that cannot run for another reason (its machine not running, a failed listing) is refused at once.
+ */
+const READ_RETRY_BOUND_MS = CALL_BOUND_MS
+/** How young a listing a retried read takes: most of the 2 s the read rule allows is left for its wait at the front. */
+const RETRY_LISTING_MAX_AGE_MS = TIMEOUTS.readListingMaxAgeMs / 4
 /** The listing failures a read may wait out: boxd answered with an unknown failure, or not in time. */
 const TRANSIENT: ReadonlySet<string> = new Set(["BOXD_FAILED", "TIMEOUT"])
 const isListingAge = (error: unknown) => error instanceof BoxdError && error.details.rule === "listing-age"
@@ -140,12 +148,16 @@ export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
     status: info.status,
   })
 
-  /** A read target on a listing young enough for the read rule: its own, or the shared one, refreshed when stale. */
-  async function readable(target: ReadTarget, context: OpContext): Promise<ReadTarget> {
+  /**
+   * A read target on a listing young enough for the read rule: its own, or the shared one, refreshed when older than
+   * `maxAgeMs`. A read retried after its listing aged in the queue asks for a younger one (`RETRY_LISTING_MAX_AGE_MS`),
+   * so it does not start its next wait on a listing that is about to age out again.
+   */
+  async function readable(target: ReadTarget, context: OpContext, maxAgeMs: number = TIMEOUTS.readListingMaxAgeMs): Promise<ReadTarget> {
     target = newest(target)
-    if (now() - target.listing.takenAt <= TIMEOUTS.readListingMaxAgeMs) return target
+    if (now() - target.listing.takenAt <= maxAgeMs) return target
     try {
-      return { ...target, listing: await list({ maxAgeMs: TIMEOUTS.readListingMaxAgeMs }, context) }
+      return { ...target, listing: await list({ maxAgeMs }, context) }
     } catch (error) {
       // Only a transient failure is a read to try again; a signed-out or missing CLI (`BOXD_MISSING`), or a stop, is
       // the caller's error as it is, so it fails at once.
@@ -161,6 +173,7 @@ export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
     const args = execArgs(target.region, target.name, command, settings.timeoutSeconds, settings.json)
     await assertLaptopCli(bin, runner, context)
     let current = isChangeTarget(target) ? target : await readable(target, context)
+    const started = now()
     let result: SpawnResult
     for (let attempt = 0; ; attempt++) {
       const guard = readGuard(current, context.pool)
@@ -179,8 +192,8 @@ export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
       } catch (error) {
         // A read whose listing aged while it waited for its slot: join a fresh shared listing, check again, and wait at
         // the front. Only a machine that listing does not show running is refused (`kind: "not-readable"`).
-        if (isChangeTarget(current) || !isListingAge(error) || attempt >= READ_REFRESHES) throw error
-        current = await readable(current, context)
+        if (isChangeTarget(current) || !isListingAge(error) || now() - started > READ_RETRY_BOUND_MS) throw error
+        current = await readable(current, context, RETRY_LISTING_MAX_AGE_MS)
       }
     }
     if (settings.json) {
