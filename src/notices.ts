@@ -55,7 +55,8 @@ export function noticeItem(event: WorkEvent, saved: SavedState): string | undefi
   const code = event.code === undefined ? undefined : isCode(event.code) ? event.code : "RUN_FAILED"
   if (event.to === "idle") {
     const outcome = event.outcome && OUTCOMES.has(event.outcome) ? event.outcome : null
-    if (outcome === "failed") return `${event.workId} failed (${code ?? "RUN_FAILED"})`
+    // A failed run, or an idle work with a code (its session is missing), reads as status's attention does.
+    if (outcome === "failed" || code) return `${event.workId} failed (${code ?? "RUN_FAILED"})`
     const facts = [...(outcome ? [outcome] : []), saved === "fresh" ? "saved" : "not saved"]
     return `${event.workId} idle (${facts.join(", ")})`
   }
@@ -78,18 +79,30 @@ export function noticeText(items: readonly Pending[]): string | undefined {
   return `boxd: ${works} — ${shown.join("; ")}${more > 0 ? `; and ${more} more` : ""}. boxd_status({ since: ${since} }) has the details.`
 }
 
-/** Why a target may not get a notice now, or undefined when it may: gone, archived, or no longer a root session. */
-async function refusal(sessions: Pick<SessionAccess, "get">, target: string): Promise<string | undefined> {
+/**
+ * True for the host's answer that a session does not exist (`Session.NotFoundError` on every tested host). Only this
+ * answer means "gone": any other error from `ctx.session.get` (a busy host, a hiccup) says nothing about the session.
+ */
+export function isNotFound(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false
+  const { name, _tag: tag, message } = error as { name?: unknown; _tag?: unknown; message?: unknown }
+  return [name, tag].some((value) => typeof value === "string" && /NotFound/i.test(value)) || (typeof message === "string" && /\bnot found\b/i.test(message))
+}
+
+/** What the host says about a session: present (and a root, not archived), gone for good, or unknown for now. */
+export type TargetCheck = { readonly state: "ok" } | { readonly state: "gone"; readonly why: string } | { readonly state: "unknown" }
+
+export async function checkTarget(sessions: Pick<SessionAccess, "get">, target: string): Promise<TargetCheck> {
   let info: { readonly parentID?: unknown; readonly time?: { readonly archived?: unknown } } | undefined
   try {
     info = (await sessions.get({ sessionID: target } as never)) as typeof info
-  } catch {
-    return "the session is gone"
+  } catch (error) {
+    return isNotFound(error) ? { state: "gone", why: "the session is gone" } : { state: "unknown" }
   }
-  if (!info) return "the session is gone"
-  if (info.time?.archived !== undefined && info.time.archived !== null) return "the session is archived"
-  if (typeof info.parentID === "string" && info.parentID !== "") return "the session now has a parent"
-  return undefined
+  if (!info) return { state: "gone", why: "the session is gone" }
+  if (info.time?.archived !== undefined && info.time.archived !== null) return { state: "gone", why: "the session is archived" }
+  if (typeof info.parentID === "string" && info.parentID !== "") return { state: "gone", why: "the session now has a parent" }
+  return { state: "ok" }
 }
 
 export class NoticeQueue {
@@ -98,6 +111,8 @@ export class NoticeQueue {
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly flushing = new Set<Promise<void>>()
   private readonly droppedList: DroppedNotice[] = []
+  /** Targets whose notice is being checked or posted: a second post for one waits for it, then for its minute. */
+  private readonly inFlight = new Set<string>()
   private stopped = false
   /** While a sweep runs, nothing is posted: its changes go out together when it ends. */
   private held = 0
@@ -167,18 +182,37 @@ export class NoticeQueue {
   }
 
   private async post(target: string): Promise<void> {
-    if (this.stopped || this.held > 0) return
+    if (this.stopped || this.held > 0 || this.inFlight.has(target)) return
     const works = this.pending.get(target)
     if (!works?.size) return
     if (this.due(target) > 0) return this.schedule(target)
+    this.inFlight.add(target)
+    try {
+      await this.send(target, works)
+    } finally {
+      this.inFlight.delete(target)
+      // A change that arrived meanwhile waits for this target's next minute.
+      if (!this.stopped && this.pending.get(target)?.size) this.schedule(target)
+    }
+  }
+
+  private async send(target: string, works: Map<string, Pending>): Promise<void> {
     this.pending.delete(target)
     const items = [...works.values()].sort((a, b) => a.event.seq - b.event.seq)
     const text = noticeText(items)
     const mode = this.deps.mode()
     if (!text || mode === "off") return
-    const why = await refusal(this.deps.sessions, target)
-    if (why) return this.drop(target, why)
+    // The minute starts now, before any await, so no second notice can pass the check meanwhile.
     this.lastSent.set(target, this.deps.now().getTime())
+    const check = await checkTarget(this.deps.sessions, target)
+    if (check.state === "gone") return this.drop(target, check.why)
+    if (check.state === "unknown") {
+      // The host did not say: keep the changes (newer ones win) and try again at the next minute.
+      const later = this.pending.get(target) ?? new Map<string, Pending>()
+      for (const [workId, item] of works) if (!later.has(workId)) later.set(workId, item)
+      this.pending.set(target, later)
+      return
+    }
     const post = (resume: boolean) => this.deps.sessions.synthetic({ sessionID: target, text, description: "boxd notice", delivery: "queue", resume } as never)
     try {
       await post(mode === "wake")

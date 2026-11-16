@@ -19,8 +19,8 @@ import { statSync } from "node:fs"
 import { join } from "node:path"
 import { BoxdError } from "./errors.js"
 import { LEDGER_PATHS, type Phase, type WorkRecord } from "./ledger/types.js"
-import { base, codeOf, observe, observeFailure, outcomeOf, phaseOf, promptedSince, readGuest, recordPhase, STATUS_TEXT_LIMIT, wantsRead, type Observed } from "./fleet/model.js"
-import { NoticeQueue, type DroppedNotice } from "./notices.js"
+import { base, codeOf, notRead, observe, observeFailure, outcomeOf, phaseOf, promptedSince, readGuest, recordPhase, STATUS_TEXT_LIMIT, wantsRead, type Observed } from "./fleet/model.js"
+import { checkTarget, NoticeQueue, type DroppedNotice } from "./notices.js"
 import type { FleetSnapshot, FleetWatch, Listing, OpContext, WorkEvent, WorkSnapshot } from "./ports.js"
 import { TIMEOUTS } from "./ports.js"
 import { reasonOf } from "./redact.js"
@@ -80,7 +80,8 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
   const now = () => core.clock.now()
   const observed = new Map<string, Observed>()
   /** The last phase the event log holds per work, and when. */
-  const logged = new Map<string, { readonly phase: Phase; readonly at: string }>()
+  /** `seenAt` is when this process learned it (`Date.now()`, the listing's clock). */
+  const logged = new Map<string, { readonly phase: Phase; readonly at: string; readonly seenAt: number }>()
   const records = new Map<string, WorkRecord>()
   const listeners = new Set<(event: WorkEvent) => void>()
   /** Sequence numbers this process already handed out, so the tail does not hand them out twice. */
@@ -136,7 +137,7 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
     return observed.get(record.workId)?.phase ?? logged.get(record.workId)?.phase ?? (record.state === "closed" ? "closed" : recordPhase(record))
   }
 
-  function dispatch(event: WorkEvent, notice: boolean): void {
+  function dispatch(event: WorkEvent, notice: boolean, record = records.get(event.workId)): void {
     for (const listener of [...listeners]) {
       try {
         listener(event)
@@ -145,13 +146,12 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
       }
     }
     if (!notice) return
-    const record = records.get(event.workId)
     notices.enqueue(event, record?.session?.notify, record ? core.ledger.saved(record) : "none")
   }
 
   /** What an event says, kept unless a guest read since is newer. */
   function learn(event: WorkEvent): void {
-    logged.set(event.workId, { phase: event.to, at: event.at })
+    logged.set(event.workId, { phase: event.to, at: event.at, seenAt: Date.now() })
     const previous = observed.get(event.workId)
     if (previous?.readAt !== undefined && previous.readAt >= Date.parse(event.at)) return
     const at = new Date(event.at)
@@ -180,7 +180,9 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
     for (const event of page.events) {
       if (event.seq <= cursor || dispatched.has(event.seq)) continue
       learn(event)
-      dispatch(event, true)
+      // A work a change tool just closed has left the open list: its record still names its coordinator.
+      const record = records.get(event.workId) ?? (await core.ledger.get(event.workId, op).catch(() => undefined))
+      dispatch(event, true, record)
     }
     cursor = Math.max(cursor, page.cursor)
     for (const seq of dispatched) if (seq <= cursor) dispatched.delete(seq)
@@ -216,7 +218,8 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
   async function append(record: WorkRecord, phase: Phase, obs: Observed | undefined, op: OpContext): Promise<void> {
     const before = logged.get(record.workId)
     const outcome = phase === "idle" ? outcomeOf(record, obs) : undefined
-    const code = phase === "idle" && outcome === "failed" ? codeOf(record, obs) : phase === "unreachable" ? obs?.code : undefined
+    // An idle event carries a code for a failed run, and for any code the observation has (a missing session).
+    const code = phase === "idle" ? (outcome === "failed" || obs?.code ? codeOf(record, obs) : undefined) : phase === "unreachable" ? obs?.code : undefined
     const sleptByPlugin = record.slept && (!before || Date.parse(record.slept.at) >= Date.parse(before.at))
     const event: Omit<WorkEvent, "seq"> = {
       at: now().toISOString(),
@@ -231,7 +234,7 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
     }
     const line = await core.ledger.appendEvent(event, op)
     dispatched.add(line.seq)
-    logged.set(record.workId, { phase: line.to, at: line.at })
+    logged.set(record.workId, { phase: line.to, at: line.at, seenAt: Date.now() })
     // A first sight of a work the log never named is a fact to record, not news for its coordinator.
     dispatch(line, line.from !== null)
   }
@@ -256,13 +259,17 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
     listingAt = new Date(listing.takenAt).toISOString()
     const at = now().getTime()
     const reads = open.filter((record) => wantsRead(record, listing, observed.get(record.workId), at, WATCH_READ_REUSE_MS))
+    /** Works this sweep's guest read answered: their phase is news newer than any listing. */
+    const readNow = new Set<string>()
     await Promise.all(
       reads.map(async (record) => {
         const previous = observed.get(record.workId)
         try {
           observed.set(record.workId, observe(await readGuest(core, record, listing, {}, op), previous, now(), STATUS_TEXT_LIMIT))
+          readNow.add(record.workId)
         } catch (error) {
-          if (abort.signal.aborted) return
+          // A read the read rule refused learned nothing: the work keeps what was known, and the listing decides below.
+          if (abort.signal.aborted || notRead(error)) return
           observed.set(record.workId, observeFailure(error, previous, phaseOf(record, listing, previous), now()))
         }
       }),
@@ -285,7 +292,11 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
       }
       if (absent === 0) absentListing.delete(record.workId)
       if (!previous || previous.phase !== phase || previous.absent !== absent) observed.set(record.workId, { ...base(previous, phase, now()), absent })
-      if (logged.get(record.workId)?.phase === phase) continue
+      const last = logged.get(record.workId)
+      if (last?.phase === phase) continue
+      // A listing taken before the log's newest word on this work (a sleep a change tool just recorded) never
+      // contradicts it; the next sweep's listing decides.
+      if (last && last.seenAt > listing.takenAt && !readNow.has(record.workId)) continue
       try {
         await append(record, phase, observed.get(record.workId), op)
       } catch (error) {
@@ -302,15 +313,10 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
     const targets = new Set(open.map((record) => record.session?.notify).filter((target): target is string => typeof target === "string"))
     for (const target of [...goneTargets]) if (!targets.has(target)) goneTargets.delete(target)
     for (const target of targets) {
-      let gone = false
-      try {
-        const info = (await core.sessions.get({ sessionID: target } as never)) as { parentID?: unknown; time?: { archived?: unknown } } | undefined
-        gone = !info || (info.time?.archived !== undefined && info.time.archived !== null) || (typeof info.parentID === "string" && info.parentID !== "")
-      } catch {
-        gone = true
-      }
-      if (gone) goneTargets.add(target)
-      else goneTargets.delete(target)
+      // Only the host's own "not found", an archive or a new parent orphans the works; any other error says nothing.
+      const check = await checkTarget(core.sessions, target)
+      if (check.state === "gone") goneTargets.add(target)
+      else if (check.state === "ok") goneTargets.delete(target)
     }
   }
 

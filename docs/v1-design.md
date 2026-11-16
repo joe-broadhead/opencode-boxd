@@ -416,6 +416,10 @@ How it reads, with a budget of about 3 CLI calls plus bounded guest reads:
    the exec could wake it), and only when the watcher's cached read (§3.13) is older than 60 s. They run in the
    background pool (cap 4), at most one per machine, bounded at 8 s each (`machine exec --timeout 8`, plus a laptop kill
    at 10 s). A work whose read misses the call's total budget of 20 s keeps its cached phase, marked `"stale": true`.
+   A read that waited in the queue past its listing's 2 s joins one fresh shared listing and waits at the front of the
+   pool, so a queue of reads costs one more listing per 2 s window; only a machine that listing does not show running
+   is refused (`kind: "not-readable"`), and that work too keeps its cached phase, marked stale: it is never counted as
+   a guest failure.
    An `idle` work's phase changes only by a change tool, which records it, or by the machine going to sleep, which the
    listing shows.
 4. `include` adds one call each: `env list --json`, `manage usage --json --since <oldest open work>`, and
@@ -930,10 +934,10 @@ asserts its row.
 
 | Call | v0.0.6 | v0.1.0 |
 |---|---|---|
-| `boxd_status`, 170 works | 170 `get` + up to 170 `exec` + list + snapshots + env | 1 list + 1 limit (cached) + guest reads only for busy, running works whose watcher read is older than 60 s |
+| `boxd_status`, 170 works | 170 `get` + up to 170 `exec` + list + snapshots + env | 1 list + 1 limit (cached) + guest reads only for busy, running works whose watcher read is older than 60 s, and 1 more list per 2 s window of those reads |
 | `boxd_ensure`, new work, wait | 20–40 | 1 all-region listing (§3.4 step 2) + create + `setup` + 1 fresh listing for the `serve` poll (a read, so the read rule needs it) + polls (at most 6, with the limit and snapshot caches warm); adopting: listing + 1 `get` + `setup` + fresh listing + polls (at most 6) |
 | `boxd_submit` | 6–8 | 1 listing (≤ 2 s) + 1 `get` (the by-id check, §4.1) + 1 prompt exec (+1 `cp` per file) |
-| `boxd_job` | 4–5 | 1 listing (≤ 2 s) + 1 read exec |
+| `boxd_job` | 4–5 | 1 listing (≤ 2 s) + 1 read exec; a list form, 1 more listing per 2 s window of its reads |
 | `boxd_harvest`, 1 session | 7–9 | 1 `get` + 1 export exec (which checks the tree is idle and reads the run's outcome itself; a change exec, so no listing) + 1 `cp` + 1 git exec + 1 patch `cp` + 2 laptop imports (delete, import) |
 | `boxd_sleep` | 3 | 1 `get` + 1 `hibernate` |
 | `boxd_drop` | 4–6 | 1 git exec + 1 `get` + 1 `remove`; gone: the by-id check's `get` of the name, then 1 fresh list + 1 `get` of the id per region (3 `get`s) |

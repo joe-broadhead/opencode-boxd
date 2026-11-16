@@ -12,7 +12,7 @@ boxd is a trademark of Azin Tech Operating Company B.V.; this unofficial plugin 
 - OpenCode `>=2.2.3 <2.4.0` (2.2.3 or a later 2.2 or 2.3 release), tested on 2.2.3, 2.2.4, 2.2.5, 2.2.6, 2.2.7 and 2.3.0.
 - The laptop [boxd CLI](https://boxd.sh), signed in, on your `PATH`. The CLI that runs inside a boxd machine is refused.
 - A model key the guests can reach: a sealed, host-bound `boxd env` secret is the way
-  ([golden images](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/golden-image.md) says how). The plugin
+  ([golden images](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/images.md) says how). The plugin
   builds the golden images itself, from stock boxd, the first time a work needs one.
 - macOS or Linux on the laptop.
 
@@ -266,9 +266,11 @@ and notices, health, tools, agents without the default rules, the OpenCode versi
 
 ## Known limits
 
-- **Measured against one boxd account.** [docs/architecture.md](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/architecture.md)
-  records each measurement, and [docs/live-check.md](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/live-check.md)
-  lists the live checks and which of them have run. Until live check L3 runs, the per-region shape of
+- **No live check has run against this release yet.** The release rests on the unit and host suites and on the boxd
+  behaviour measured for earlier releases, against one account:
+  [docs/architecture.md](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/architecture.md) records each
+  measurement, and [docs/live-check.md](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/live-check.md)
+  lists the live checks, L1 to L13, ready to run. Until live check L3 runs, the per-region shape of
   `manage machine-limit --json` and the keys of `manage usage --json` are read as boxd's documentation describes them,
   unconfirmed against real boxd; the region headroom in status and the machine cost rest on that reading.
 - **The laptop's boxd CLI only.** The CLI inside a boxd machine acts in one region and has no organisation usage, so
@@ -309,7 +311,7 @@ The ledger is yours to keep or delete. Machines are boxd's: `boxd machine remove
 - [Configuration, permission rules and errors](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/configuration.md)
 - [Architecture](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/architecture.md)
 - [Scripting](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/scripting.md)
-- [Golden images](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/golden-image.md)
+- [Golden images](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/images.md)
 - [Jelly](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/jelly.md)
 - [Live check against real boxd](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/live-check.md)
 - [The design](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/v1-design.md)

@@ -148,7 +148,7 @@ describe("the README", () => {
 
 describe("the docs set", () => {
   test("has the shared files, each with a heading", () => {
-    for (const path of ["docs/configuration.md", "docs/architecture.md", "docs/golden-image.md", "docs/jelly.md", "docs/scripting.md", "docs/live-check.md"]) {
+    for (const path of ["docs/configuration.md", "docs/architecture.md", "docs/images.md", "docs/jelly.md", "docs/scripting.md", "docs/live-check.md"]) {
       expect(existsSync(new URL(path, root))).toBe(true)
       expect(read(path)).toMatch(/^# /m)
     }

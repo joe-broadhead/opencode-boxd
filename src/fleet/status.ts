@@ -29,7 +29,7 @@ import {
 } from "../results.js"
 import type { FleetServices } from "../services.js"
 import { watchHandle, type WatchHandle } from "../watch.js"
-import { codeOf, observe, observeFailure, outcomeOf, phaseOf, readGuest, STATUS_TEXT_LIMIT, wantsRead, type Observed } from "./model.js"
+import { codeOf, notRead, observe, observeFailure, outcomeOf, phaseOf, readGuest, STATUS_TEXT_LIMIT, wantsRead, type Observed } from "./model.js"
 
 export type StatusView = "attention" | "all" | "counts"
 export type StatusInclude = "credentials" | "cost" | "images" | "closed"
@@ -286,23 +286,24 @@ export async function fleetStatus(services: FleetServices, input: StatusInput, c
       const signal = call.signal ? AbortSignal.any([call.signal, budget.signal]) : budget.signal
       const readOp: OpContext = { call: call.tag, signal, pool: "background" }
       const fresh = listing
-      const reads = wanted.map(async (record) => {
+      // A read answers its work's id when it learned something: an answer, or a real guest failure. A read the read
+      // rule refused (the machine is not running in a fresh listing) or the budget stopped learned nothing: the work
+      // keeps its cached phase, marked stale (design §3.1 step 3), and is never counted as a failure.
+      const reads = wanted.map(async (record): Promise<string | undefined> => {
         const previous = handle?.observed(record.workId)
         try {
           const answer = await readGuest(services, record, fresh, {}, readOp)
           handle?.remember(record.workId, observe(answer, previous, now(), STATUS_TEXT_LIMIT))
         } catch (error) {
-          if (budget.signal.aborted || call.signal?.aborted) return
+          if (budget.signal.aborted || call.signal?.aborted || notRead(error)) return undefined
           handle?.remember(record.workId, observeFailure(error, previous, phaseOf(record, fresh, previous), now()))
         }
         return record.workId
       })
       const settled = await within(Promise.all(reads), TIMEOUTS.statusBudget)
-      if (!settled) {
-        budget.abort()
-        const done = new Set((await Promise.all(reads.map((read) => within(read, 0)))).filter((id): id is string => typeof id === "string"))
-        for (const record of wanted) if (!done.has(record.workId)) stale.add(record.workId)
-      }
+      if (!settled) budget.abort()
+      const done = new Set((settled ?? (await Promise.all(reads.map((read) => within(read, 0))))).filter((id): id is string => typeof id === "string"))
+      for (const record of wanted) if (!done.has(record.workId)) stale.add(record.workId)
       if (call.signal?.aborted) throw boxdError("CANCELLED", "The status call was stopped; nothing was changed.")
     }
   }

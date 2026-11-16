@@ -23,7 +23,7 @@ All options go in the plugin entry in `opencode.json`, and every one is optional
 | `size` | `"2x8"` | A new work's size: `"1x4"`, `"2x8"`, `"4x16"` or `"8x32"` (vCPU x GiB). |
 | `git` | none | `{ "name", "email" }`: the guest's git identity for every new work. Never a token. |
 | `goldenPrefix` | `"oc-golden"` | Golden image names are `<goldenPrefix>-<opencode version>-<size>`, such as `oc-golden-2.2.6-2x8`. |
-| `goldenBase` | `"stock"` | What a golden build starts from: stock boxd, or a snapshot name in the region it lives in. A base that holds model credentials is refused. |
+| `goldenBase` | `"stock"` | What a golden build starts from: stock boxd, or a snapshot name in the region it lives in. A base that holds model credentials is refused; [images.md](images.md) gives the recipe. |
 | `goldenSetup` | none | An absolute laptop path to a script, inside the project or an allowed root, run on every golden builder before the scrub. |
 | `buildGolden` | `"auto"` | `"auto"` builds a missing golden image when a work needs it; `"never"` answers `GOLDEN_MISSING` instead. |
 | `notices` | `"wake"` | How a work's change reaches its coordinator: `"wake"` posts a notice that starts an idle coordinator's turn, `"queue"` posts one that waits for its next turn, `"off"` posts nothing. At most one notice a minute per coordinator. |

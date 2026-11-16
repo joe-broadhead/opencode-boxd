@@ -16,7 +16,7 @@ import type { JobResult, ListResult, Refusal, WorkCost } from "../results.js"
 import type { FleetServices } from "../services.js"
 import { refusal } from "../tools.js"
 import { watchHandle } from "../watch.js"
-import { codeOf, JOB_TEXT_LIMIT, observe, observeFailure, outcomeOf, phaseOf, readGuest, rowOf, type Observed } from "./model.js"
+import { codeOf, JOB_TEXT_LIMIT, notRead, observe, observeFailure, outcomeOf, phaseOf, readGuest, rowOf, type Observed } from "./model.js"
 
 const WORK_ID = /^[a-z][a-z0-9-]{0,24}$/
 
@@ -110,14 +110,20 @@ async function jobOf(services: FleetServices, record: WorkRecord, listing: Listi
       }
     } catch (error) {
       if (error instanceof BoxdError && (error.code === "CANCELLED" || error.code === "NOT_OURS")) throw error
-      observed = observeFailure(error, previous, phaseOf(record, listing, previous), services.clock.now())
-      // One failed read is reported as it is: the job asked for this work now.
-      if (observed.phase !== "asleep" && observed.phase !== "unreachable") {
-        const code: Code = error instanceof BoxdError ? error.code : "BOXD_FAILED"
-        observed = { ...observed, phase: "unreachable", code }
+      if (notRead(error)) {
+        // The read rule refused it: the machine is no longer running in a fresh listing. Nothing was read, so the work
+        // answers from what was known and the listing, like a work that is down; it is not a guest failure.
+        read = false
+      } else {
+        observed = observeFailure(error, previous, phaseOf(record, listing, previous), services.clock.now())
+        // One failed read is reported as it is: the job asked for this work now.
+        if (observed.phase !== "unreachable") {
+          const code: Code = error instanceof BoxdError ? error.code : "BOXD_FAILED"
+          observed = { ...observed, phase: "unreachable", code }
+        }
       }
     }
-    if (observed) handle?.remember(record.workId, observed)
+    if (read && observed) handle?.remember(record.workId, observed)
   }
   const state = read && observed ? observed.phase : phaseOf(record, listing, observed)
   const outcome = outcomeOf(record, observed)

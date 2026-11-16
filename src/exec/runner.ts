@@ -17,6 +17,10 @@
  * - **The call tag.** Every child gets `CALL_TAG_ENV` set to its call's id, so the spawn-count harness ties each child
  *   to its call; the real CLI ignores it.
  * - **The read rule** (`assertReadable`): a guest read needs a listing at most 2 s old that shows the machine running.
+ *   A read whose listing aged in the queue is refused with `rule: "listing-age"`; the CLI port then joins a fresh shared
+ *   listing and requeues the read at the front of its pool (`front`), so a queue of reads costs one listing per 2 s
+ *   window and never refuses a running machine for its own wait. A machine the listing does not show running is
+ *   refused with `kind: "not-readable"`, and nothing is started, so a read never wakes it.
  * - **Health:** children now and at peak, each pool's load, and the event loop's worst delay over the last 5 minutes,
  *   sampled while any child runs or waits (design §4.3).
  */
@@ -67,7 +71,11 @@ export interface RunnerOptions {
  * A spawn with a check that runs when the child's slot is granted, just before it starts: the read rule is checked
  * there, so a read that waited in a queue never starts on a listing that has since gone stale (design §4.1).
  */
-export type GuardedSpawn = SpawnRequest & { readonly guard?: () => void }
+export type GuardedSpawn = SpawnRequest & {
+  readonly guard?: () => void
+  /** Wait at the front of the pool's queue: a read retried on a fresh listing, and the listing reads wait for. */
+  readonly front?: boolean
+}
 
 export interface PluginRunner extends Runner {
   spawn(request: GuardedSpawn): Promise<SpawnResult>
@@ -251,7 +259,7 @@ export function createRunner(options: RunnerOptions = {}): PluginRunner {
   }
 
   /** Waits for a slot in the request's pool; a signal or a dispose takes the request out of the queue. */
-  function admit(pool: Pool, signal: AbortSignal | undefined, command: string): Promise<void> {
+  function admit(pool: Pool, signal: AbortSignal | undefined, command: string, front = false): Promise<void> {
     if (disposed) return Promise.reject(cancelled(command, false))
     if (signal?.aborted) return Promise.reject(cancelled(command, false))
     return new Promise<void>((resolve, reject) => {
@@ -276,7 +284,8 @@ export function createRunner(options: RunnerOptions = {}): PluginRunner {
         },
       }
       signal?.addEventListener("abort", onAbort, { once: true })
-      queues[pool].push(waiter)
+      if (front) queues[pool].unshift(waiter)
+      else queues[pool].push(waiter)
       pump()
     })
   }
@@ -418,7 +427,7 @@ export function createRunner(options: RunnerOptions = {}): PluginRunner {
   return {
     async spawn(request) {
       const command = commandOf(request.bin, request.args)
-      await admit(request.pool ?? "foreground", request.signal, command)
+      await admit(request.pool ?? "foreground", request.signal, command, request.front === true)
       return run(request, command)
     },
 
@@ -603,11 +612,13 @@ export function assertReadable(target: ReadTarget, at: number): void {
   if (age > TIMEOUTS.readListingMaxAgeMs) {
     throw boxdError("BOXD_FAILED", `A guest read of ${target.name} needs a machine listing at most ${duration(TIMEOUTS.readListingMaxAgeMs)} old; this one is ${duration(Math.max(0, Math.round(age)))} old.`, {
       rule: "listing-age",
+      kind: "listing-stale",
     })
   }
   const row = target.listing.machines.find((machine) => machine.name === target.name && machine.region === target.region)
   if (!row || row.status !== "running") {
     throw boxdError("MACHINE_ASLEEP", row ? `${target.name} is ${row.status}, and a read never wakes a machine.` : `${target.name} is not in the ${target.region} listing, and a read never wakes a machine.`, {
+      kind: "not-readable",
       status: row?.status ?? "absent",
     })
   }

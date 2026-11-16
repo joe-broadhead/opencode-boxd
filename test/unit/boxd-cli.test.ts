@@ -238,11 +238,25 @@ describe("exec and copies", () => {
     expect(fake.read().wokenByExec ?? []).toEqual([])
   })
 
-  test("a listing older than 2 s is refused for a read", async () => {
+  test("a read on a listing older than 2 s joins a fresh one: it runs on a running machine, and is refused not-readable on one now asleep", async () => {
     fake.machine({ name: "oc-a", region: "fra" })
+    fake.machine({ name: "oc-b", region: "fra" })
     const listing = await boxd.list({ maxAgeMs: 0 }, context())
     const old = { ...listing, takenAt: listing.takenAt - 2_500 }
-    expect((await fail(boxd.exec(readTarget(old), "true", { timeoutSeconds: 5, json: false }, context())))?.details.rule).toBe("listing-age")
+    const lists = () => fake.calls().filter((call) => call.startsWith("machine list")).length
+    const before = lists()
+    const ran = await boxd.exec(readTarget(old), "echo fresh", { timeoutSeconds: 5, json: false }, context())
+    expect(ran.stdout).toBe("fresh\n")
+    // The shared listing was young enough: the read used it, and listed nothing more.
+    expect(lists()).toBe(before)
+    fake.update((state) => void (state.machines.find((machine) => machine.name === "oc-b")!.status = "hibernated"))
+    // Once the shared listing has aged too, the read takes a fresh one, which shows the machine asleep.
+    await new Promise((resolve) => setTimeout(resolve, 2_100))
+    const refused = await fail(boxd.exec(readTarget({ ...old, takenAt: old.takenAt - 5_000 }, "oc-b"), "echo no", { timeoutSeconds: 5, json: false }, context()))
+    expect([refused?.code, refused?.details.kind]).toEqual(["MACHINE_ASLEEP", "not-readable"])
+    expect(lists()).toBe(before + 1)
+    expect(fake.calls().filter((call) => call.startsWith("machine exec") && call.includes("oc-b"))).toEqual([])
+    expect(fake.read().wokenByExec ?? []).toEqual([])
   })
 
   test("the remote exit code comes back as the result; with --json the output is boxd's merged output", async () => {

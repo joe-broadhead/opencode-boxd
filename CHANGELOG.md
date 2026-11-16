@@ -21,7 +21,7 @@ options and the guest helper all change. Works that ran on v0.0.x are imported, 
   `PARENT_MISSING` is folded into `EXPORT_INVALID`; `SNAPSHOT_EXISTS` is gone. New: `NOT_REASSIGNABLE`,
   `MACHINE_LIMIT`, `SIZE_UNAVAILABLE`, `GOLDEN_BUILD_FAILED`, `GOLDEN_HAS_CREDENTIAL`, `MACHINE_ASLEEP`,
   `AGENT_UNREACHABLE`, `SESSION_MISSING`, `IMPORT_FAILED`, `CANCELLED`, `LEDGER_LOCKED`, `LEDGER_IMPORTING`,
-  `IMPORT_V0_FAILED` and `BUDGET_REACHED`, and the warnings `BUDGET_WARN`, `BUDGET_UNKNOWN`, `LEASE_EXPIRING`,
+  `IMPORT_V0_FAILED` and `BUDGET_REACHED`, and the warnings `UNHARVESTED_SLEEP`, `BUDGET_WARN`, `BUDGET_UNKNOWN`, `LEASE_EXPIRING`,
   `AUTOMATION_BLOCKED` and `NO_MODEL_CREDENTIAL`.
 - **`boxd_submit`.** `queued` is replaced by `delivery` (`steer`, `queue`, `started`), and `mode` (`steer`, `queue`,
   `interrupt`) chooses it: the old submit already steered, and called it queued.

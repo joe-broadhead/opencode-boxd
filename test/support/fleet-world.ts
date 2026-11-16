@@ -1,5 +1,7 @@
 // Package D's world for the fleet view and the watcher: the real runtime over the fake boxd CLI and the fake guest, a
 // real published ledger in a temp root, a fake host session API that records notices, and the watcher with no timer.
+import { cpSync } from "node:fs"
+import { join } from "node:path"
 import { createImportV0 } from "../../src/import-v0.js"
 import { createLedger } from "../../src/ledger/index.js"
 import type { WorkRecord } from "../../src/ledger/types.js"
@@ -62,14 +64,16 @@ export interface World {
   /** Many works at once, with no guest: machines in the fake listing and records in the ledger, idle by their record. */
   bulk(records: ReadonlyArray<Partial<WorkRecord> & { readonly workId: string; readonly status?: string }>): Promise<void>
   record(workId: string, change: (record: WorkRecord) => WorkRecord): Promise<WorkRecord>
+  /** Installs the helper on bulk machines by copying a set-up work's machine disk onto theirs. */
+  installHelper(from: WorkRecord, workIds: readonly string[]): void
   context(callId: string, source?: CallTag["source"]): OpContext
   dispose(): Promise<void>
 }
 
-export async function startWorld(options: { readonly options?: Record<string, unknown>; readonly cost?: CostPort } = {}): Promise<World> {
+export async function startWorld(options: { readonly options?: Record<string, unknown>; readonly cost?: CostPort; readonly latencyMs?: readonly [number, number] } = {}): Promise<World> {
   const root = tempRoot("boxd-fleet-")
   const guest = startFakeGuest({ version: "2.2.6" })
-  const counter = await startSpawnCounter({ guestPort: guest.port })
+  const counter = await startSpawnCounter({ guestPort: guest.port, ...(options.latencyMs ? { latencyMs: options.latencyMs } : {}) })
   const runtime = createRuntime({ boxdBin: counter.boxdBin }, { opencodeBin: counter.opencodeBin })
   const sessions = new FakeSessions()
   const clock = { now: new Date("2026-11-16T10:00:00.000Z") }
@@ -187,6 +191,10 @@ export async function startWorld(options: { readonly options?: Record<string, un
     work,
     bulk,
     record,
+    installHelper(from, workIds) {
+      const disks = (counter.fake.read() as unknown as { root: string }).root
+      for (const id of workIds) cpSync(join(disks, from.machineId!), join(disks, `vm_bulk_${id}`), { recursive: true })
+    },
     context,
     async dispose() {
       await watcher.dispose()

@@ -127,6 +127,8 @@ export interface BudgetRow {
 export const SPAWN_BUDGETS: readonly BudgetRow[] = [
   {
     call: "boxd_status",
+    // With busy works, their guest reads add one listing per 2 s window of reads (design §3.1 step 3, §4.4): a read
+    // that queued past its listing's age joins one fresh shared listing. `test/unit/fleet-scale.test.ts` checks that.
     scenario: "170 open works, none busy, machine limit cached",
     owner: "D",
     max: { "machine list": 1, "manage machine-limit": 1 },
@@ -156,6 +158,7 @@ export const SPAWN_BUDGETS: readonly BudgetRow[] = [
   },
   {
     call: "boxd_job",
+    // A list form adds one listing per 2 s window of its reads, as status does.
     scenario: "one running work",
     owner: "D",
     max: { "machine list": 1, "machine exec": 1 },

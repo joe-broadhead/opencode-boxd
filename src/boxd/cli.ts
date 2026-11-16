@@ -70,6 +70,10 @@ const CHANGE_MS = TIMEOUTS.helperChange
 /** `machine usage` and `manage usage` are for owners and admins; a member gets this refusal. */
 const USAGE_REFUSED = /\bowners? and admins? only\b|\bonly (?:org )?(?:owners|admins)\b|\bnot (?:an? )?(?:owner|admin)\b|\bforbidden\b|\b403\b/i
 
+/** How often a read is retried on a fresh listing before its refusal is the caller's: it then reads as stale. */
+const READ_REFRESHES = 10
+const isListingAge = (error: unknown) => error instanceof BoxdError && error.details.rule === "listing-age"
+
 export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
   const bin = options.bin ?? "boxd"
   const runner = options.runner
@@ -82,12 +86,12 @@ export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
   let snapshots: { readonly at: number; readonly value: readonly SnapshotRow[] } | undefined
 
   /** One CLI call: the flavour check first, then the child in its pool, then the stderr table on a failure. */
-  async function cli(args: readonly string[], context: OpContext, timeoutMs: number, asked: Asked = {}, guard?: () => void): Promise<SpawnResult> {
+  async function cli(args: readonly string[], context: OpContext, timeoutMs: number, asked: Asked = {}, guard?: () => void, front = false): Promise<SpawnResult> {
     await assertLaptopCli(bin, runner, context)
     const command = `boxd ${args.filter((arg) => !arg.startsWith("-")).slice(0, 2).join(" ")}`
     let result: SpawnResult
     try {
-      result = await runner.spawn({ ...context, bin, args, timeoutMs, ...(guard ? { guard } : {}) })
+      result = await runner.spawn({ ...context, bin, args, timeoutMs, ...(guard ? { guard } : {}), ...(front ? { front } : {}) })
     } catch (error) {
       // A CLI that is not signed in starts a browser sign-in and waits: the timeout cut it, and its words say why.
       const partial = partialOutput(error)
@@ -112,7 +116,8 @@ export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
   }
 
   async function takeListing(context: OpContext): Promise<Listing> {
-    const result = await cli(listArgs(), context, TIMEOUTS.cliRead)
+    // Queued reads wait for this listing, so it waits at the front of its pool.
+    const result = await cli(listArgs(), context, TIMEOUTS.cliRead, {}, undefined, true)
     const machines = parseListing(parseJson(result.stdout, "boxd machine list"))
     return { takenAt: now(), fresh: true, machines }
   }
@@ -133,19 +138,39 @@ export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
     status: info.status,
   })
 
+  /** A read target on a listing young enough for the read rule: its own, or the shared one, refreshed when stale. */
+  async function readable(target: ReadTarget, context: OpContext): Promise<ReadTarget> {
+    target = newest(target)
+    if (now() - target.listing.takenAt <= TIMEOUTS.readListingMaxAgeMs) return target
+    return { ...target, listing: await list({ maxAgeMs: TIMEOUTS.readListingMaxAgeMs }, context) }
+  }
+
   async function exec(target: ReadTarget | ChangeTarget, command: string, settings: { readonly timeoutSeconds: number; readonly json: boolean; readonly stdin?: string }, context: OpContext) {
-    const guard = readGuard(target, context.pool)
     const args = execArgs(target.region, target.name, command, settings.timeoutSeconds, settings.json)
     await assertLaptopCli(bin, runner, context)
-    // boxd kills the remote command at its timeout; the laptop kills the CLI shortly after, should it not return.
-    const result = await runner.spawn({
-      ...context,
-      bin,
-      args,
-      timeoutMs: settings.timeoutSeconds * 1000 + TIMEOUTS.killGraceMs,
-      ...(settings.stdin !== undefined ? { stdin: settings.stdin } : {}),
-      ...(guard ? { guard } : {}),
-    })
+    let current = isChangeTarget(target) ? target : await readable(target, context)
+    let result: SpawnResult
+    for (let attempt = 0; ; attempt++) {
+      const guard = readGuard(current, context.pool)
+      try {
+        // boxd kills the remote command at its timeout; the laptop kills the CLI shortly after, should it not return.
+        result = await runner.spawn({
+          ...context,
+          bin,
+          args,
+          timeoutMs: settings.timeoutSeconds * 1000 + TIMEOUTS.killGraceMs,
+          ...(settings.stdin !== undefined ? { stdin: settings.stdin } : {}),
+          ...(guard ? { guard } : {}),
+          ...(attempt > 0 ? { front: true } : {}),
+        })
+        break
+      } catch (error) {
+        // A read whose listing aged while it waited for its slot: join a fresh shared listing, check again, and wait at
+        // the front. Only a machine that listing does not show running is refused (`kind: "not-readable"`).
+        if (isChangeTarget(current) || !isListingAge(error) || attempt >= READ_REFRESHES) throw error
+        current = await readable(current, context)
+      }
+    }
     if (settings.json) {
       if (result.code !== 0) {
         const classified = classify(`${result.stderr}\n${result.stdout}`, { machine: target.name, region: target.region })
@@ -183,8 +208,14 @@ export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
       change(target, pool)
       return undefined
     }
-    runner.assertReadable(target)
-    return () => runner.assertReadable(target)
+    runner.assertReadable(newest(target))
+    // At the slot, the newest shared listing counts too: one refresh every 2 s serves every read still queued.
+    return () => runner.assertReadable(newest(target))
+  }
+
+  /** A read target on the newer of its own listing and the shared one. */
+  function newest(target: ReadTarget): ReadTarget {
+    return listing && listing.takenAt > target.listing.takenAt ? { ...target, listing: { ...listing, fresh: false } } : target
   }
 
   return {
