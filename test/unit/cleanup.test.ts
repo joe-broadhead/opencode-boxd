@@ -135,3 +135,24 @@ describe("/boxd-cleanup", () => {
     expect(f.synthetic).toHaveLength(1)
   })
 })
+
+describe("/boxd-cleanup with no open works", () => {
+  test("it reports that, reads nothing from boxd, asks nothing and changes nothing", async () => {
+    const f = fakes({ options: { access: "all" } })
+    open.push(f)
+    const asked: unknown[] = []
+    const ctx = { session: { synthetic: f.services.sessions.synthetic }, permission: { assert: async (input: unknown) => void asked.push(input) } }
+    const { report } = await runCleanup(ctx as never, f.services, "ses_person", "cleanup-empty")
+    expect(report).toContain("Nothing was changed.")
+    expect(asked).toEqual([])
+    expect(f.calls).toEqual([])
+    expect(f.actions.calls).toEqual([])
+    expect(f.synthetic).toHaveLength(1)
+  })
+
+  test("when every action is declined, the summary says nothing was changed", async () => {
+    const { f, run } = setup({ access: "all" }, () => "no")
+    await run()
+    expect(f.synthetic.at(-1)?.text).toEndWith("Nothing was changed.")
+  })
+})

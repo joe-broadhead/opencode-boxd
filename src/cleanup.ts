@@ -62,6 +62,8 @@ export async function cleanupReport(services: CostServices, call: ActionContext[
     const idle = minutesSince(work.idleSince, now)
     return `- ${work.workId}: ${work.phase}${work.needsInput ? " (waits on a person)" : ""}, ~${sign(rates.currency)}${hour.toFixed(4)}/h${idle !== null && work.phase !== "busy" ? `, idle ${idle} min` : ""}, saved ${work.saved}`
   }
+  // No open works: nothing costs money, and nothing is read from boxd.
+  if (!works.length) return "boxd cleanup: no open works, so no machine of this plugin costs money. Nothing was changed."
   const lines = [
     `boxd cleanup: ${fleet.running} running, ${fleet.asleep} asleep; ~${shown(rates.currency, fleet.perHour)}/h (an estimate, ${rates.source} rates).`,
   ]
@@ -100,7 +102,9 @@ export async function runCleanup(ctx: Omit<CleanupContext, "command">, services:
   const report = await cleanupReport(services, call)
   await ctx.session.synthetic({ sessionID, text: report, description: "boxd cleanup", resume: false })
   const outcomes: string[] = []
-  if (services.options.access === "read-only") return { report, outcomes }
+  const open = services.watch.snapshot().works.some((work) => work.phase !== "closed" && work.phase !== "gone")
+  if (services.options.access === "read-only" || !open) return { report, outcomes }
+  let changed = false
   for (const step of CLEANUP_STEPS) {
     let ids: readonly string[]
     try {
@@ -130,12 +134,14 @@ export async function runCleanup(ctx: Omit<CleanupContext, "command">, services:
     }
     try {
       const result = await services.actions[step.run](ids, context)
+      changed = true
       outcomes.push(`${step.verb}: ${counted(result as ListResult<{ state: string }>)}.`)
     } catch (error) {
       outcomes.push(`${step.verb}: failed (${error instanceof Error ? error.message.split("\n")[0]!.slice(0, 160) : String(error)}).`)
     }
   }
-  if (outcomes.length) await ctx.session.synthetic({ sessionID, text: `boxd cleanup, done:\n${outcomes.map((outcome) => `- ${outcome}`).join("\n")}`, description: "boxd cleanup", resume: false })
+  const done = `boxd cleanup, done:\n${outcomes.map((outcome) => `- ${outcome}`).join("\n")}${changed ? "" : "\nNothing was changed."}`
+  await ctx.session.synthetic({ sessionID, text: done, description: "boxd cleanup", resume: false })
   return { report, outcomes }
 }
 
