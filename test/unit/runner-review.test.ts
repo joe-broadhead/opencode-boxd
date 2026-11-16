@@ -226,7 +226,7 @@ describe("the boxd port's shared reads", () => {
     }
   })
 
-  test("M-1: a read that waited in a queue past its listing's age never starts, so it wakes nothing", async () => {
+  test("M-1: a read that waited in a queue past its listing's age joins a fresh listing; the machine now asleep is refused not-readable and never woken", async () => {
     fake.machine({ name: "oc-a", region: "fra" })
     const listing = await boxd.list({ maxAgeMs: 0 }, ctx("l"))
     const blockers = Array.from({ length: 12 }, (_, index) => runner.spawn({ ...ctx(`blocker${index}`), bin: "sleep", args: ["3"], timeoutMs: 10_000 }))
@@ -239,9 +239,28 @@ describe("the boxd port's shared reads", () => {
     await Promise.all(blockers)
     const answer = await read
     expect(answer.ok).toBe(false)
-    expect((answer as { error: BoxdError }).error.details.rule).toBe("listing-age")
+    const error = (answer as { error: BoxdError }).error
+    expect([error.code, error.details.kind]).toEqual(["MACHINE_ASLEEP", "not-readable"])
     expect(fake.read().wokenByExec ?? []).toEqual([])
     expect(fake.calls().filter((call) => call.startsWith("machine exec"))).toEqual([])
+  })
+
+  test("reads that waited in a queue past their listing's age still run on a running machine, sharing one fresh listing", async () => {
+    fake.machine({ name: "oc-a", region: "fra" })
+    const listing = await boxd.list({ maxAgeMs: 0 }, ctx("l"))
+    const blockers = Array.from({ length: 12 }, (_, index) => runner.spawn({ ...ctx(`blocker${index}`), bin: "sleep", args: ["2.5"], timeoutMs: 10_000 }))
+    await sleep(50)
+    const target: ReadTarget = { region: "fra", name: "oc-a", listing, machineId: null }
+    const lists = () => fake.calls().filter((call) => call.startsWith("machine list")).length
+    const before = lists()
+    const reads = Array.from({ length: 6 }, (_, index) => settle(boxd.exec(target, `echo read-${index}`, { timeoutSeconds: 5, json: false }, ctx(`r${index}`))))
+    await Promise.all(blockers)
+    const answers = await Promise.all(reads)
+    expect(answers.map((answer) => answer.ok)).toEqual([true, true, true, true, true, true])
+    // One fresh listing for the reads that waited; a second only if they outlived that one's 2 s.
+    expect(lists() - before).toBeGreaterThanOrEqual(1)
+    expect(lists() - before).toBeLessThanOrEqual(2)
+    expect(fake.read().wokenByExec ?? []).toEqual([])
   })
 
   test("M-1: a read whose machine went to sleep before its slot came answers MACHINE_ASLEEP at the start", async () => {

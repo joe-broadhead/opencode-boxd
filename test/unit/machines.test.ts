@@ -757,6 +757,40 @@ describe("waits ride out an outage and a busy runner (review MEDIUM 5b)", () => 
     expect(list.results.filter((entry) => (entry as Refusal).error !== undefined)).toEqual([])
   }, 180_000)
 
+  test("a wait whose listings fail on the real runner keeps waiting, and ends ready", async () => {
+    const k = await kit({ seam: { intervalMs: 100 } })
+    await known(k, "relisted")
+    const port = k.counter.fake.read().port
+    k.counter.fake.update((state) => void (state.port = 9))
+    // Every listing in the next second fails: the wait's own listing and the runner's refresh alike.
+    for (let index = 0; index < 4; index++) k.counter.fake.fault("machine list", { stderr: "error: network unreachable", code: 1 })
+    const back = setTimeout(() => k.counter.fake.update((state) => void (state.port = port)), 1_000)
+    const result = (await k.runs.boxd_ensure({ workId: "relisted" }, k.call())) as EnsureResult
+    clearTimeout(back)
+    expect(result.state).toBe("ready")
+  })
+
+  test("a session read whose listing fails once is read again, and acts on the answer", async () => {
+    const k = await kit()
+    const machine = await known(k, "relist-size", { session: { rootId: "ses_relist" } })
+    k.guest.sessions.set("ses_relist", { id: "ses_relist", busy: false, directory: "/home/boxd/work/relist-size", messages: [], inbox: [], updated: Date.now() })
+    await new Promise((resolve) => setTimeout(resolve, 2_100))
+    k.counter.fake.fault("machine list", { stderr: "error: network unreachable", code: 1 })
+    expect(await k.runs.boxd_ensure({ workId: "relist-size", size: "4x16" }, k.call())).toMatchObject({ state: "ready", size: "4x16" })
+    expect(k.calls()).toContain(`machine resize ${machine.id} --vcpu 4 -y --region fra --json`)
+  })
+
+  test("a signed-out CLI is not a listing to wait for: the wait answers its refusal at once", async () => {
+    const { readTarget } = await import("../../src/fleet/ensure.js")
+    const { boxdError } = await import("../../src/errors.js")
+    const machines = { services: { boxd: { list: async () => Promise.reject(boxdError("BOXD_MISSING", "not signed in")) } } } as never
+    const refused = await readTarget(machines, "fra", "oc-x", null, { call: { callId: "t", source: "boxd_ensure" } }).then(
+      () => undefined,
+      (error: unknown) => error as { code: string; details: Record<string, unknown> },
+    )
+    expect([refused?.code, refused?.details.kind]).toEqual(["BOXD_MISSING", undefined])
+  })
+
   test("a wait whose serve reads are refused for the listing's age keeps waiting, and ends ready", async () => {
     const k = await kit({ seam: { intervalMs: 100 } })
     await known(k, "queued")
@@ -794,10 +828,13 @@ describe("waits ride out an outage and a busy runner (review MEDIUM 5b)", () => 
     const { boxdError } = await import("../../src/errors.js")
     const stale = () => boxdError("BOXD_FAILED", "listing aged in the queue", { rule: "listing-age", kind: "listing-stale" })
     const asleep = () => boxdError("MACHINE_ASLEEP", "not running", { kind: "not-readable" })
-    expect([stale(), asleep()].every(notReadYet)).toBe(true)
+    const failedListing = () => boxdError("BOXD_FAILED", "the listing the read needed failed", { kind: "listing-failed", retryable: true })
+    expect([stale(), asleep(), failedListing()].every(notReadYet)).toBe(true)
     expect(notReadYet(boxdError("BOXD_FAILED", "something else"))).toBe(false)
     let tries = 0
     expect(await readOnce(async () => (++tries === 1 ? Promise.reject(stale()) : "idle"))).toBe("idle")
+    tries = 0
+    expect(await readOnce(async () => (++tries === 1 ? Promise.reject(failedListing()) : "idle"))).toBe("idle")
     expect(await readOnce(async () => Promise.reject(asleep()))).toBeUndefined()
     await expect(readOnce(async () => Promise.reject(boxdError("GUEST_FAILED", "a real failure")))).rejects.toThrow("GUEST_FAILED")
   })

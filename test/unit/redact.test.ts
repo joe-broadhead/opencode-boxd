@@ -3,8 +3,7 @@
 import { describe, expect, test } from "bun:test"
 import { excerpt, reasonOf, shortReason, oneLine, cut } from "../../src/redact.js"
 import { buildStatus, formatStatus } from "../../src/status.js"
-import { defaultRules } from "../../src/permissions.js"
-import { TOOLS } from "../../src/tools.js"
+import { statusFacts } from "../support/fleet.js"
 import { registerStatusRpc, StatusRpc, type Status } from "../../src/status.js"
 
 const SECRETS = ["abcdefghijklmnop", "sk-live-0123456789abcdef", "eyJhbGciOi.eyJzdWIiOi.c2lnbmF0dXJl", "fake-signature", "x".repeat(48)]
@@ -44,22 +43,10 @@ describe("redaction", () => {
   })
 })
 
-const host = { version: "2.2.6", range: ">=2.2.3 <2.4.0", tested: true }
-
-const status = (ledgerError?: string): Status =>
-  buildStatus({
-    access: "all",
-    host,
-    snapshot: "opencode-golden",
-    guestVersion: "2.2.6",
-    ...(ledgerError ? { ledgerError } : { ledger: { snapshot: "opencode-golden", works: [], orphans: [], snapshotPresent: true, cli: { signedIn: true } } }),
-    tools: TOOLS.map((tool) => tool.id),
-    agents: [{ id: "build", permissions: [{ action: "*", resource: "*", effect: "allow" }, ...defaultRules()] }],
-    problems: [],
-  })
+const status = (failure?: string): Status => buildStatus(statusFacts(failure ? { fleet: undefined, fleetError: { reason: failure } } : {}))
 
 describe("nothing secret reaches a status surface", () => {
-  test("the model and the report show a redacted ledger failure", () => {
+  test("the model and the report show a redacted fleet failure", () => {
     const failure = "EACCES: scandir the ledger directory with token=abcdefghijklmnop"
     for (const text of [JSON.stringify(status(failure)), formatStatus(status(failure))]) {
       expect(text).not.toContain("abcdefghijklmnop")

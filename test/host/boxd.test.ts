@@ -3,7 +3,8 @@
 // the status RPC, and runs nothing when a prompt is declined or a rule denies. Each tool's own behaviour is its
 // package's host suite (design §7.2): package C1's tools are in `machines.test.ts`; until a package fills a tool, the
 // tool answers NOT_IMPLEMENTED and runs no CLI. Package C2's tools are filled: for a work the ledger does not hold they
-// answer NOT_OURS, and also run no CLI.
+// answer NOT_OURS, and also run no CLI. Package D's reads are built: boxd_status answers the fleet, and boxd_job
+// refuses a work the ledger does not know.
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
@@ -22,11 +23,17 @@ afterAll(cleanup)
 const rule = (action: string, effect: Rule["effect"]): Rule => ({ action, resource: "*", effect })
 
 const NOT_IMPLEMENTED = { state: "failed", error: "NOT_IMPLEMENTED" }
-/** The tools whose package has not filled them yet on this branch. */
+/** The tools this file runs: every tool but package C1's, which `machines.test.ts` covers. */
 const UNBUILT = TOOLS.filter((tool) => tool.owner !== "C1")
 const NOT_OURS = { state: "refused", error: "NOT_OURS" }
+/** What package D's reads answer for a work this laptop's ledger does not know; they read the fleet, so they list. */
+const BUILT: Readonly<Record<string, object>> = {
+  boxd_status: { state: "ok", counts: {}, attention: [] },
+  boxd_job: { state: "refused", error: "NOT_OURS", workId: "review-api" },
+}
 /** What a tool answers here for review-api, a work the ledger does not hold. */
 const unknownWork = (id: string, input: Record<string, unknown>) => {
+  if (BUILT[id]) return BUILT[id]
   const spec = TOOLS.find((tool) => tool.id === id)!
   if (spec.owner !== "C2") return NOT_IMPLEMENTED
   // boxd_read checks its input first: it needs a path or the log.
@@ -72,13 +79,17 @@ describe("the plugin on a stock host", () => {
       expect(await effect(host, "build", "boxd_ensure")).toBe("allow")
       expect(await effect(host, "build", "boxd_read")).toBe("allow")
 
-      // The ledger is package B's: until it lands, status says it cannot read one, and still reports the posture.
+      // An empty ledger and a signed-in CLI: connected, nothing open, and the posture.
       const status = await statusThroughRpc(host)
-      expect(status).toMatchObject({ version: PACKAGE_VERSION, state: "failed", access: "all", host: { version: HOST_VERSION, range: SUPPORTED_HOST, tested: true }, tools: 12, unknownCount: 0, unguardedAgents: [] })
-      expect(String(status.error)).toContain("not built yet")
+      expect(status).toMatchObject({ version: PACKAGE_VERSION, state: "connected", signedIn: true, openWorks: 0, access: "all", host: { version: HOST_VERSION, range: SUPPORTED_HOST, tested: true }, tools: 12, unknownCount: 0, unguardedAgents: [] })
+      expect(status.regions).toEqual([
+        { region: "fra", limit: 300, inUse: 0, free: 300 },
+        { region: "nyc", limit: 300, inUse: 0, free: 300 },
+      ])
 
       const text = await statusText(host, await session(host))
-      expect(text).toContain("- Connection: failed")
+      expect(text).toContain("- Connection: connected (the ledger is readable; 0 open works)")
+      expect(text).toContain("- Cost: ")
       expect(text.split("\n").filter((line) => line.startsWith("- Next step:"))).toHaveLength(1)
     } finally {
       await host.close()
@@ -89,13 +100,14 @@ describe("the plugin on a stock host", () => {
     const host = await startHost()
     try {
       const build = await session(host)
-      const before = host.boxd.calls().length
       for (const tool of UNBUILT) {
-        const input = tool.name === "reassign" ? { from: "spare-1", to: "review-api" } : tool.name === "exec" ? { workId: "review-api", command: ["true"] } : { workId: "review-api", text: "Add a health check." }
+        const input =
+          tool.name === "status" ? {} : tool.name === "job" ? { workId: "review-api" } : tool.name === "reassign" ? { from: "spare-1", to: "review-api" } : tool.name === "exec" ? { workId: "review-api", command: ["true"] } : { workId: "review-api", text: "Add a health check." }
+        const before = host.boxd.calls().length
         const result = await attempt(host, build, "build", tool.id, "reject", input)
         expect({ tool: tool.id, asked: result.asked, output: result.output }).toMatchObject({ tool: tool.id, asked: undefined, output: unknownWork(tool.id, input) })
+        if (!BUILT[tool.id]) expect({ tool: tool.id, calls: host.boxd.calls().slice(before) }).toEqual({ tool: tool.id, calls: [] })
       }
-      expect(host.boxd.calls().slice(before)).toEqual([])
     } finally {
       await host.close()
     }
@@ -151,6 +163,7 @@ describe("cost and cleanup's surfaces (design §C)", () => {
     try {
       // A hook the host refused would be a status problem.
       expect((await statusThroughRpc(host)).problems).toEqual([])
+      const before = host.boxd.calls().length
       const sessionID = await session(host)
       await host.client.sessions.command({ sessionID, name: "boxd-cleanup", text: "" })
       const text = await until("/boxd-cleanup posts its report", async () => {
@@ -159,7 +172,7 @@ describe("cost and cleanup's surfaces (design §C)", () => {
         return posted?.type === "synthetic" ? posted.payload.text : undefined
       })
       expect(text).toContain("Nothing was changed.")
-      expect(host.boxd.calls()).toEqual([])
+      expect(host.boxd.calls().slice(before)).toEqual([])
       // The command's own action asks at every access level, so each cleanup action is a person's prompt.
       expect(await effect(host, "build", "boxd_cleanup")).toBe("ask")
 
@@ -178,7 +191,10 @@ describe("the access option (OD-29)", () => {
     const host = await startHost({ options: { access: "ask-changes" } })
     try {
       const build = await session(host)
-      for (const id of READ_TOOLS) expect((await rpcCall(host, id, { sessionID: build, input: { workId: "review-api" } })).output).toMatchObject(unknownWork(id, { workId: "review-api" }))
+      for (const id of READ_TOOLS) {
+        const input = id === "boxd_status" ? {} : { workId: "review-api" }
+        expect((await rpcCall(host, id, { sessionID: build, input })).output).toMatchObject(unknownWork(id, input))
+      }
       for (const id of CHANGING_TOOLS) expect({ id, code: await refusedCode(rpcCall(host, id, { sessionID: build, input: { workId: "review-api" } })) }).toEqual({ id, code: "PERMISSION_DENIED" })
       expect(await effect(host, "build", "boxd_exec")).toBe("ask")
       expect(await effect(host, "build", "boxd_read")).toBe("allow")

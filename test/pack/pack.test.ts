@@ -30,8 +30,9 @@ run("git", ["init", "--quiet", work], root)
 afterAll(() => rmSync(work, { recursive: true, force: true }), { timeout: 120_000 })
 
 const MAX_FILES = 30
-// The v0.1.0 redesign's runner, ledger, import and guest v1; still catches an accidentally bundled dependency. Re-checked at integration.
-const MAX_PACKED_BYTES = 160 * 1024
+// The v0.1.0 redesign's runner, ledger, import and guest v1, with the machine runs, the fleet view, the watcher and cost
+// (about 169 KB packed with C1, D and E); still catches an accidentally bundled dependency. Re-checked at integration.
+const MAX_PACKED_BYTES = 192 * 1024
 const DIST = ["dist/index.js", "dist/tui.js"]
 const SERVER_HOST_MODULES = [/^node:/, /^@opencode\/plugin(?:\/|$)/]
 const TUI_HOST_MODULES = [/^node:/, /^@opencode\/plugin(?:\/|$)/, /^@opentui\//, /^solid-js(?:\/|$)/]
@@ -185,20 +186,19 @@ describe.each(TESTED_HOSTS)("installed alone, in stock OpenCode %s", (version) =
       expect(build).toEqual(defaultRules())
 
       const { output } = await host.api<{ output: Record<string, unknown> }>("POST", "/api/rpc/boxd.machines/status", { input: {} })
-      // The v1 ledger (package B) and fleet view (package D) are not built on this branch yet, so status says it cannot
-      // read a ledger; the package's posture, hooks and tools are still reported.
+      // An empty ledger: the fleet is read (a stock host has no boxd CLI, so the listing fails and says so), and the
+      // package's posture, hooks and tools are reported.
       expect(output).toMatchObject({
         version: pkg.version,
-        state: "failed",
+        state: "connected",
         host: { version, range: SUPPORTED_HOST, tested: true },
-        snapshot: `oc-golden-${version}-2x8`,
+        image: `oc-golden-${version}-2x8`,
         guestVersion: version,
         openWorks: 0,
         unknownCount: 0,
         unguardedAgents: [],
         problems: [],
       })
-      expect(String(output.error)).toContain("not built yet")
       expect(StatusRpc.methods.status.output.required).toContain("nextStep")
 
       const { data: agents } = await host.api<{ data: { id: string }[] }>("GET", "/api/agent")

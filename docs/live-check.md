@@ -1,80 +1,50 @@
-# Live check on a real boxd machine
+# Live check against real boxd
 
-Everything in this file needs one real machine and your own boxd account. Nothing here runs in a check or a test: each
-item is a place where the plugin's assumption is boxd's behaviour, and a fake has hidden any gap.
+Everything in this file needs real boxd machines. Nothing here runs in a check or a test: each item is a place where the
+plugin relies on boxd's behaviour, and the fake CLI in the tests could hide a gap.
 
-Run it once before the first release, and again after a boxd CLI or API change. Use a throwaway work id and snapshot,
-and start from a clean ledger (`~/.local/share/opencode-boxd/works/` with no work you care about).
+## Where it runs
 
-## 1. The argv the CLI actually accepts
+Steps L1 to L11 run on a boxd machine with the **laptop** boxd CLI (0.3.5 or later) installed in an isolated `HOME`,
+signed in with a short-lived key that the owner mints for it:
 
-- `boxd machine new <name> --from-snapshot <snapshot> --label role=session --label work=<id> --json` — label syntax, and
-  the rules for a `work=` value.
-- `boxd machine config set <name> auto-hibernate.timeout 1800`, and `… 14400`.
-- `boxd machine config set <name> idle.ignore-outbound off`, and `… on`.
-- `boxd machine hibernate <name> --json`, `boxd machine wake <name> --json`, `boxd machine remove <name> -y`.
-- `boxd snapshots list --json`, `boxd snapshots save <machine> <name> --json`.
-- `boxd machine cp - <name>:/tmp/opencode-boxd/guest.py` reads stdin.
-- `boxd machine exec <name> -- python3 /tmp/opencode-boxd/guest.py` passes stdin through and returns stdout.
-- `boxd machine exec <name> -- ls -1a /tmp` prints the listing, `.` and `..` included, and lists `opencode-boxd`
-  while the helper is there.
-- `boxd machine list --json` lists every machine of the account, with `name`.
-- `boxd auth login` is how a user signs in; the plugin never runs it.
-- `boxd --help` on the laptop CLI does not carry both `boxd inside a machine` and `from inside the VM`, the two phrases
-  the in-VM CLI's help uses and `src/cli-flavor.ts` requires together. Only the in-VM help has been read; the laptop CLI's has not.
+```sh
+boxd auth keys create live-check --expires-in-secs 86400
+```
 
-If any key or flag differs, the whole control plane is inert and the fakes hid it. Note the exact shape in
-`docs/architecture.md` once confirmed.
+The key is passed as `BOXD_TOKEN` for the run only, and is never written to disk or to a transcript. The in-VM CLI is
+refused by the plugin, acts in one region, and cannot read organisation usage, so it cannot stand in. Machine usage is
+for organisation owners and admins: L3's cost part needs an owner's or admin's key, and with a member's key L3 checks
+only that machine cost answers `null` with boxd's reason. L12 and L13 run on the owner's Mac.
 
-## 2. The billing model
+Every machine the live check creates carries `--label role=live-check` and `--delete-after 2h`, so nothing it leaves
+behind outlives the run. Start each run from an empty ledger in the isolated `HOME`.
 
-- Whether a hibernated machine bills.
-- What `auto-hibernate.timeout` a new machine has before the plugin sets it, and whether `wake` resets it.
-- Whether inbound `machine exec` traffic resets idleness once `idle.ignore-outbound` is `off`: that is the claim that a
-  crashed laptop stops paying after 30 minutes.
-- Whether `hibernate` and `stop` differ in billing and in what survives.
+## The steps, and which have run
 
-## 3. Provisioning time
+No step has run against this release yet: no key has been provided. Until one is, the release rests on the unit and
+host suites and on the facts already measured in [architecture.md](architecture.md), and each step below stays ready
+for the owner to run. The README's known limits name what that leaves open.
 
-Time `machine new` from the golden snapshot, against the 30 s timeout, and confirm whether a create that times out still
-lands. Then check `boxd_status`: a machine that landed must appear as an orphan (or be adopted by `boxd_ensure`), never
-be invisible.
-
-## 4. The `machine get --json` vocabulary
-
-Record the exact `status`/`boot`/`sharing`/`isolated` strings for running, starting, hibernating, suspended/standby,
-destroyed and not-found. `src/cli-boxd.ts` maps them, and a wrong mapping lets a shared machine past `refuseUnsafe`.
-
-## 5. The golden image
-
-- Its OpenCode version, and whether it equals the laptop's (`boxd_status` shows the expected version).
-- Whether `opencode serve --hostname 127.0.0.1 --port 4096` accepts `OPENCODE_PASSWORD` from the guest helper.
-- That port 4096 is not published, and nothing else listens on it.
-- That `git`, `python3` and the in-VM `boxd` CLI exist, and that the machine is not created `--shared` or `--isolated`.
-
-## 6. One full work, then the failure paths
-
-1. `boxd_ensure` → `boxd_submit` → `boxd_job` → `boxd_harvest` → `boxd_sleep` → `boxd_resume` (wake).
-2. Destroy the machine from the boxd CLI, then `boxd_resume` (rebuild from the golden snapshot and the transcript), then
-   destroy and rebuild a second time in the same OpenCode run: the guest helper must be re-uploaded each time.
-   Then reboot or resize the machine from the boxd CLI in the same run: the next `boxd_job` must copy the helper again
-   (one `ls -1a /tmp` probe, one copy) and answer.
-3. `boxd_image` from a machine with a fresh proof; then a machine whose image version differs from the laptop's (expect
-   `GUEST_VERSION`, and `boxd_sleep` must still work).
-4. Kill the guest OpenCode mid-run: `boxd_job`, `boxd_harvest` and `boxd_resume` must each give a coded error, and
-   `boxd_sleep` must still hibernate.
-5. A drop with an untracked file, with an ignored file, in a non-git directory, and with a staged change (expect
-   `UNTRACKED`, `GIT_UNKNOWN`, or a stored patch and a successful drop).
-6. `boxd_job` on a hibernated work: `asleep`, no wake, no billing.
-7. After a wake, read `boxd machine get` and confirm `auto-hibernate.timeout` is 1800 and `idle.ignore-outbound` is off.
-
-## 7. Concurrency
-
-Two boxd tools in one `Promise.all` script (`boxd_submit` and `boxd_harvest`): the ledger must keep both, and the
-harvest must record the proof as stale when the submit wins. Then two `boxd` CLI commands at once: note whether boxd
-serialises them or refuses one.
+| # | What it checks | Run |
+|---|---|---|
+| L1 | `--region` on every verb the plugin uses; the keys of `machine list --region all --json` (the region column, and whether `id` and `isolated` are there); every verb the plugin uses accepts a machine **id**, `exec` and `cp` included; `machine new --json` carries `id`. | not run |
+| L2 | `machine new --from-snapshot X --auto-suspend-timeout 0 --auto-hibernate-timeout 7200 --idle-ignore-outbound=off --delete-after 1d` is accepted and `machine get` shows each value; `--vcpu` with `--from-snapshot` is refused, with its exact words. A guest left idle with an outbound poller stays `running`. `machine usage` of one work, running idle and then hibernated, confirms the per-hour figures of the design's cost section within boxd's 25-minute lag. | not run |
+| L3 | `manage machine-limit --json` with its per-region shape; the keys of `manage usage --json` and `machine usage --json`, and who may read them. Status's region headroom and machine cost read these shapes as boxd's documentation describes them until this step confirms them. | not run |
+| L4 | The exact stderr for a missing machine in each region, for a name that exists only in the other region (the "There is a machine … in nyc" hint), and for a `get` by an id that no longer exists. | not run |
+| L5 | `MACHINE_LIMIT`: a scratch organisation without a payment method is capped at 2 machines, so the third create shows boxd's exact words. | not run |
+| L6 | Resize ten or more machines at once; capture `cannot connect to VM agent`; check that one `machine reboot` fixes it. | not run |
+| L7 | `boxd_golden` from stock in `fra` and `nyc`: the time, the 401/200 password probe, the env file removed, and a work created from it at the image's size with no reboot. | not run |
+| L8 | `steer`, `queue` and `interrupt` against a real cheap model, on a task that steps every few seconds and on one blocked in `sleep 120`: steer lands at the next step, and only interrupt reaches the blocked one. | not run |
+| L9 | `machine rename <id> <new> -y` reboots the machine, and `machine label set <id> work=<new>` takes effect. | not run |
+| L10 | Harvest twice: the laptop copy changes the second time. A `boxd connect` prompt after the harvest makes drop answer `NOT_SAVED`. | not run |
+| L11 | The import of an earlier ledger, from a copy of a real one the owner provides, in an isolated `HOME`: kill it once mid-way, restart, and compare; then read one running guest through its earlier helper with no upload, and see the first change adopt it. | not run |
+| L12 | Owner's Mac: first reproduce the stall that 24 parallel `boxd_ensure` calls caused on the earlier release, with the real OpenCode server; then the same on this release, with `health.loopLagMaxMs` and no "Event stream stalled". | not run |
+| L13 | Owner's Mac: the macOS config path, and the `PATH` the OpenCode server sees. | not run |
 
 ## What to write down
 
-For each item, the exact command, the exact output and the date, in `docs/architecture.md` under "Platform facts", or as
-a corrected assumption in the code. An item that fails is a blocker for the release, not a note.
+For each step: the CLI version, the exact command, and what it answered, with any id or secret replaced by a
+placeholder. Put a confirmed shape in [architecture.md](architecture.md)'s platform facts, mark the step's row with the
+date it ran, and fix the stderr table or the CLI port where an answer differs from what the plugin reads. A step that
+finds a difference is a release blocker until the plugin reads boxd's real answer.

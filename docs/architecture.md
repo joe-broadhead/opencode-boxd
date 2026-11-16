@@ -1,316 +1,177 @@
 # Architecture
 
-The plugin has one job: keep the transcript on the laptop while the session runs on a boxd machine.
+The plugin has one job: let one coordinating agent on a laptop drive 1 to 300 or more OpenCode sessions on boxd
+machines, and keep every transcript on the laptop. [v1-design.md](v1-design.md) is the full design; this page is the
+map of what the code does.
 
 ```
-OpenCode (laptop)                     boxd machine                   laptop
-┌──────────────────┐   boxd CLI   ┌────────────────────┐   export   ┌──────────────┐
-│ boxd_* tools     │ ───────────▶ │ OpenCode on :4096  │ ─────────▶ │ opencode     │
-│ ledger + status  │ ◀─────────── │ guest/guest.py     │            │ session      │
-└──────────────────┘  JSON lines  └────────────────────┘            │ import       │
-        │                                                           └──────────────┘
-        └── ~/.local/share/opencode-boxd/works/<id>/  (exports, patch, work.json)
+OpenCode (laptop)                         boxd machine oc-<work id> (fra or nyc)
+┌───────────────────────────┐ boxd CLI ┌──────────────────────────────────┐
+│ boxd_* tools ── runner ───┼────────▶ │ ~/.opencode-boxd/guest.py         │
+│ watcher ── notices        │ ◀────────┤ opencode serve on 127.0.0.1:4096  │
+│ status, cost, automation  │ JSON     │ /home/boxd/work/<work id>         │
+└───────────┬───────────────┘ lines    └──────────────────────────────────┘
+            └── ~/.local/share/opencode-boxd/v1/ (works/<id>/work.json, exports, patch, untracked, events.jsonl)
 ```
 
 ## The pieces
 
-- `src/plugin.ts` — one `Plugin.define`: options, host check, the fleet, the default rules, the skill, `/boxd-status`,
-  the status RPC, the tools RPC and the tool transform.
-- `src/fleet.ts` — the control plane: ensure, submit, job, harvest, sleep, resume, image, drop. It refuses to sleep,
-  image or drop work whose laptop import is not fresh, and refuses to drop a machine it does not own.
-- `src/cli-flavor.ts` — reads `boxd --help` once per binary and refuses the in-VM CLI (its help carries two phrases, and both are required) with `BOXD_MISSING` before `cli-boxd.ts`
-  sends a command: the in-VM CLI takes `--vm <name>` for `config set` and `snapshots save`, where the laptop CLI takes the
-  machine as an argument. A CLI that cannot answer `--help` is not refused; its next command reports its own failure.
-- `src/cli-boxd.ts`, `src/cli-guest.ts`, `src/prover.ts` — the three ports, each a thin wrapper over a command. Every
-  argument is an argv array, never a shell string.
-- `guest/guest.py` — the helper copied to the machine. It speaks one JSON object in and one out, and talks only to
-  `127.0.0.1`. It lives in `/tmp/opencode-boxd` on the machine, which a reboot clears: a call that gets no answer lists
-  `/tmp`, and only when the listing clearly lacks the folder copies the helper again and runs the call once more. Python
-  never started the action in that case, so nothing runs twice; a boxd CLI that failed keeps the call's own error. Its
-  `health` action reads `/proc` and the server's port, never OpenCode: after a helper call times out, the plugin runs it
-  once, for at most 10 s. A machine short of memory or overloaded answers `GUEST_UNRESPONSIVE`, and one with nothing on
-  the OpenCode port `GUEST_SERVER_DOWN`, with the facts instead of a bare `TIMEOUT`. A process is named by its command
-  name, never its arguments.
-- `src/ledger.ts` — the laptop's store: atomic writes, one lock per work, 0700/0600 modes.
-- `src/paths.ts` — the laptop path policy for files in and out: the project and `allowedRoots`, no symlink, an 8 MiB file
-  and a 32 MiB call, and a temp-then-rename write that never replaces a local edit.
-- `src/status.ts` — one model for the tool, the command, the dialog and the RPC.
-- `src/tools.ts` — one table of nine tools: name, class, schema, description and run. The tools RPC, the transform, the
-  default rules and status all derive from it.
+Each package fills one entry module, and `src/plugin.ts` builds them once, in order: runtime, import, ledger, watcher,
+cost, the runs, then automation, the hooks and `/boxd-cleanup`. `src/ports.ts` and `src/services.ts` are the contract.
+
+- **The runtime** (`src/exec/*`, `src/boxd/*`, `src/guest/*`, `guest/guest.py`): the one runner every child process goes
+  through, the boxd CLI port with regions and by-id verbs, the guest port over the v1 helper, and the laptop's own
+  `opencode` for session imports.
+- **The ledger** (`src/ledger/*`): format 1 under `v1/`, one record per work, copy-on-write writes, a lock per work
+  across processes, the index, and `events.jsonl` with its cursor. `src/import-v0.ts` imports the earlier ledger once.
+- **The machine runs** (`src/fleet/machines.ts` and the files it names): ensure, resume, reassign and golden images,
+  and the shared list-form runner.
+- **The session runs** (`src/fleet/sessions.ts` and the files it names): submit, harvest, sleep, drop, exec and read,
+  the selectors, and the in-process actions automation and `/boxd-cleanup` use.
+- **The fleet view** (`src/fleet/status.ts`, `src/fleet/job.ts`, `src/fleet/model.ts`): `boxd_status` and `boxd_job`.
+- **The watcher and notices** (`src/watch.ts`, `src/notices.ts`): the sweep, phase events, the event stream, and the
+  notices to each work's coordinator.
+- **Cost and cleanup** (`src/cost/*`, `src/automation.ts`, `src/hooks.ts`, `src/cleanup.ts`): rates and estimates, the
+  budget, automatic harvest and sleep, the session hooks, and `/boxd-cleanup`.
+- **The registry** (`src/tools.ts`): one table of twelve tools, with their schemas, classes, descriptions and the one
+  place that asserts before a change. The tools RPC, the transform, the default rules, Jelly's declaration and status
+  derive from it.
+- **Status** (`src/status.ts`, `src/tui.ts`): one model for `/boxd-status`, the `/boxd` dialog and the status RPC.
+
+## One runner for every process
+
+Every child the plugin starts goes through `src/exec/runner.ts`:
+
+- At most 12 boxd children at once for tool calls and reads; the background (the watcher, status's guest reads) uses at
+  most 4 of them. `boxd_exec` has its own lane of 4, and the laptop's session imports a lane of 2, so at most 18
+  children exist at once.
+- Every child has an explicit timeout (SIGTERM, then SIGKILL 2 s later), the call's stop signal, and an 8 MiB output
+  cap. Transcripts and files go to disk with `machine cp`, never through stdout.
+- A machine change, or a helper action that changes the guest, holds that machine's lock, keyed by its boxd machine id.
+  A call takes a slot for one child at a time and gives it back before it waits, so a wait never holds a slot.
+- **Acting by id.** Before every change, `machine get` resolves `oc-<work id>` in its region; the call refuses `NOT_OURS`
+  unless the id is the one the ledger recorded, and then acts on the id.
+- **The read rule.** A read on a guest runs only for a machine that a listing at most 2 s old shows running, uses only
+  the helper already on the machine, and never uploads a file or writes the ledger. So a read never wakes a hibernated
+  machine, apart from one 2 s race that boxd's missing "exec without waking" leaves.
+- The runner samples the event loop's delay while a call runs; status reports the worst of the last 5 minutes.
 
 ## The work tree and the file trip
 
 Every work has two folders, both recorded in the ledger: the laptop folder it belongs to (the project by default), and
-the guest's own `/home/boxd/work/<work id>`, which the plugin creates and prepares. A laptop path is never sent to the
-machine: the guest's `mkdir`/`clone` runs only under `/home/boxd/work`, and a guest that cannot prepare its own folder
-fails `GUEST_WORKSPACE` with the guest's own words.
+the guest's own `/home/boxd/work/<work id>`. A laptop path is never sent to the machine.
 
-Data moves in and out of the work tree, never the whole disk:
-
-- `boxd_submit` reads each `files` entry's laptop file, checks it (inside a root, not a symlink, within the caps), uploads
-  it with `machine cp` before the prompt, and records name, size and sha256.
-- `boxd_harvest` copies the requested work-tree paths back after the transcript import, through a temp file and a rename,
-  0600, and refuses a symlink, a cap and a local edit since the last harvest. It records the same three facts.
-- `boxd_drop` counts a harvested path as recovered while the guest still has the digest that was harvested, so a task
-  that wrote `SUMMARY.md` can be dropped; a file that changed, or was never harvested, keeps the refusal.
-
-## Why the guest is not the session
-
-A boxd snapshot is an image. Booting one restores a disk, not a transcript, and a shared machine deletes OpenCode's
-sign-in. So the transcript moves by export and import: the guest exports the session tree, this laptop imports it parents
-first, and only then may the machine sleep, be imaged or be destroyed.
+- `boxd_submit` checks each `files` entry (inside a root, not a symlink, within 8 MiB a file and 32 MiB a call), copies
+  it up with `machine cp` before the prompt, and records name, size and sha256.
+- `boxd_harvest` has the helper write each session's export on the guest, copies each one to a temp file beside the
+  stored copy, checks its size and sha256 against the helper's report, and only then renames it into place; then it
+  deletes and re-imports the session on this laptop, parents first. The patch and the untracked files take the same
+  path. A copy that is cut off or has the wrong digest leaves the stored copy as it was.
+- `boxd_drop` compares the guest's own session marks (each session's last message id and message count) with what the
+  harvest stored, so a prompt that bypassed the plugin blocks the destroy too.
 
 ## Reading the fleet
 
-`boxd_status` is one call for every open work. Each work's machine is read with `machine get`, all in parallel. A running
-work whose last prompt is not harvested also gets one `phase` read from its guest, bounded at 6 s for the call and 15 s
-for the work with its probe, so a guest that hangs reads `unreachable` with its code and the others still report. A
-harvested work's guest is not read: its outcome is the harvest's, and an inbound `machine exec` resets the machine's idle
-clock (below), so reading it every round would keep an idle machine from hibernating. The account's sealed variables
-come from `env list --json`; only its `secret` list is read, whose entries carry a name, a scope and bound hosts and
-never a value, and boxd reports no time a secret was set.
+`boxd_status` costs one all-region `machine list` (shared, and reused for up to 10 s), the machine limit (cached for
+60 s), and guest reads only for works that are busy, starting or unknown, whose machine a listing at most 2 s old shows
+running, and whose last read is older than 60 s. Those reads run in the background lane, at most 8 s each and 20 s for
+the call; a work whose read misses the budget keeps its last phase, marked `stale`. An idle, ready or asleep work's guest
+is never read by status, because an inbound exec resets the machine's idle clock. An idle work's phase changes only by
+a change tool, which records it, or by its machine going to sleep, which the listing shows. A `machine list` that fails
+is never a guest failure: the reads that needed it are not made (`kind: "listing-failed"`), each work keeps its last
+known phase, marked stale, and status, the watcher and `boxd_job` still answer.
 
-`/boxd-status`, the dialog and the status RPC keep to the machine reads: they never call a guest or list variables.
+The answer is bounded: at most `limit` works in `attention` or `works`, worst first, with `more` for the rest, and more
+than 3 works that share a reason and a code fold into one `groups` line. `since` answers from `events.jsonl`, so it
+costs no guest read; a cursor older than the kept log answers the full view with `cursorExpired: true`.
 
-Every tool answer has a `state`. A refusal is `{ workId, machine, state, error, message, next }` and any facts its code
-carries (`field` for `NAME_INVALID` and `PATH_REFUSED`; `kind`, `count` and `paths` for `UNTRACKED`), so a loop over
-results needs one code path.
+`boxd_job` takes one listing at most 2 s old and reads each running work's guest once: an explicit job pays one reset of
+an idle machine's idle clock, and status never does. `/boxd-status` and the dialog read no guest at all.
 
-`boxd_ensure` and `boxd_submit` take `wait: true`, which polls a starting machine and its OpenCode every 3 s for at most
-30 s; nothing is copied or admitted until the machine answers, so a poll repeats no step. A size (`vcpu`) is applied by
-`machine resize … -y` right after the create, because boxd refuses a size on a machine restored from a snapshot; the
-resize reboots a machine nothing runs on yet, and the next guest call copies the helper the reboot cleared. A rebuilt
-machine gets the recorded size again. A `model` reaches OpenCode's own session API: `model` on the session create, and
-`POST /api/session/<id>/model` before a prompt, which the guest refuses for a running session rather than change the
-task under way.
+## The watcher and notices
+
+The watcher runs a local tick every 60 s, with no CLI call: it reads the ledger's index and tails `events.jsonl` when the
+file changed, so an event a change tool or another OpenCode process appended reaches the subscribers. While any open work
+is busy, creating or starting (or idle inside automation's window), each tick is also a sweep: one all-region listing,
+then one read-only `phase` read for each busy work the listing shows running. A phase change is appended to the event
+log (`unreachable` after two failed reads in a row, `gone` after two listings in a row without the machine) and handed
+to every subscriber in `seq` order; cost and automation subscribe. The sweep stops when nothing is busy, when the plugin
+stops, and after three failed sweeps in a row, which status reports; the next status call starts it again.
+
+A notice goes only to the work's root coordinator: the session that started or last drove the work from the model path,
+found by walking `parentID` up from the calling session. It is checked again just before posting, and a session that is
+gone, archived or now under another one gets no notice and is unsubscribed. Changes are coalesced per coordinator, at
+most one notice a minute, at most 20 works named, with the cursor for the rest. A notice holds only the plugin's words:
+work ids, phases, outcomes and codes from the table, never a guest's text. With `notices: "wake"` an idle coordinator
+starts a turn; a wake the host refuses is posted once more as queue only.
+
+## Cost
+
+boxd bills a running machine for active CPU and resident memory, a machine in standby for resident memory, a hibernated
+one for disk, and a deleted one nothing. An idle work costs about the same running or in standby, so the plugin sets
+auto-suspend off and relies on hibernation:
+
+1. **At creation**, at every `access` level: auto-hibernate after `autoHibernateMinutes` (2 h), `idle.ignore-outbound`
+   off, and a `delete-after` lease only with `leaseDays`.
+2. **Automation**, on the watcher's events, by one OpenCode process per laptop: a finished work is harvested and then
+   hibernated after `autoSleepMinutes`, and so is an orphan whose coordinator is gone. A work waiting on a person is
+   left. Nothing automatic ever drops. It runs at `access: "all"`, or with `automation: "on"`.
+3. **What agents see**: `cost` and `cleanup` in `boxd_status`, one fleet line on the tail of a coordinator's request
+   when the fleet changed (the system prompt is never touched, so the prompt cache holds), and an end-of-turn check
+   that speaks only when money burns and automation will not act.
+4. **What the person sees**: the Cost row in `/boxd-status`, `/boxd-cleanup` with a permission prompt per action, and
+   an optional daily `budget`.
+
+## Why the guest is not the session
+
+A golden image is an image: booting one restores a disk, not a transcript, and an image reaches every work made from
+it. So a transcript moves only by export and import, the laptop holds the newest copy, and no work's machine is ever
+saved as an image. Model credentials never enter an image: a guest gets its key from a sealed, host-bound `boxd env`
+secret that boxd injects at boot.
 
 ## Platform facts
 
-- `opencode session import` keeps the transcript's id on 2.2.3–2.2.7 and 2.3.0, and answers `Session already exists` (exit 0, no
-  id) for an id already present. `test/unit/prover.test.ts` runs this against each stock binary.
-- The ledger writes atomically (a unique temp file, a rename) and serialises per work, so two tools in one script cannot
-  lose each other's fields. `submit` stamps `lastSubmitAt` before the prompt, so a crash fails towards "stale".
-- The import runs with `--standalone`, so it never depends on a service being up.
-- A session's last run is `info.outcome` (`succeeded`, `failed`, `interrupted`) on `GET /api/session/<id>`, and the
-  same outcome with the failure's structured error on the last `idle` message from `GET /api/session/<id>/message`.
-  That list is newest first and 50 a page unless `order` and `limit` say otherwise, and `type` filters it before the
-  page is cut, on 2.2.3 and 2.2.6 alike. The helper asks for `?type=idle&order=desc&limit=1`: one message, the last
-  run's.
-- An assistant message is `{type: "assistant", time: {created, completed?}, content: [...]}`, where `content` holds
-  `text`, `reasoning` and `tool` parts. `boxd_job` reads the newest one (`?type=assistant&order=desc&limit=1`) and keeps
-  its `text` parts only, redacted and cut to 300 characters on the laptop. `lastActivityAt` is the latest of the
-  session's `time.updated`, `busy` and `idle` and that message's times, all epoch milliseconds.
-- `POST /api/session/<id>/prompt` admits a prompt for a running session too: it waits in `GET /api/session/<id>/inbox`
-  (`user`, `synthetic`, `compaction` and `move` items, in enqueue order) until the run takes it, as a steer by default.
-  `boxd_submit` reads `/api/session/active` first and says `queued`; `boxd_job` counts the inbox's `user` items as
-  `pending`. An
-  export carries both, so a harvest reads the outcome from the transcript and `boxd_job` from the live session: no model
-  call either way. `src/outcome.ts` maps them to `completed`, `failed` and `aborted`.
-- `POST /api/session` creates a session, `POST /api/session/<id>/prompt` admits one, and
-  `GET /api/experimental/session/<id>/export` and `POST /api/experimental/session/import` move one. The guest helper is
-  the only code that speaks these.
+Measured against the boxd CLI and OpenCode releases named in each item; [live-check.md](live-check.md) lists what to
+measure again.
 
-### The boxd CLI, confirmed against 0.2.29
+**OpenCode**
 
-Measured against `boxd` 0.2.29.
+- `opencode session import --standalone` keeps the transcript's id on 2.2.3–2.2.7 and 2.3.0. A second import of an id
+  already present answers `Session already exists`, exits 0 and changes nothing, so a harvest deletes the session
+  first; `opencode session delete` of an absent id exits 1 with its not-found words, which the plugin reads as absent.
+- `POST /api/session/<id>/prompt` takes `delivery: "steer" | "queue"`; the default is `steer`, which a running session
+  takes at its next step boundary. `POST /api/session/<id>/interrupt` stops a run.
+- A session's last run is `info.outcome` (`succeeded`, `failed`, `interrupted`) on `GET /api/session/<id>`, with the
+  failure's structured error on the last `idle` message. The helper asks for one message:
+  `?type=idle&order=desc&limit=1`.
+- `opencode serve --hostname 127.0.0.1 --port 4096` reads `OPENCODE_PASSWORD` on 2.x: `/api/info` answers 401 without
+  credentials and 200 with them. Port 4096 listens on `127.0.0.1` only.
+- `opencode auth login` needs a login shell: `boxd machine exec --tty` exits silently, `boxd connect` then
+  `opencode auth login` works.
 
-- `machine new <name> --from-snapshot <snapshot> --label role=session --label work=<id> --json` is accepted, and the labels
-  are set. `--label` is repeatable, `key=value`. A `work=` value is an opaque string; the plugin's short lowercase rule
-  is its own, not boxd's.
-- **`machine new --json` is not a machine.** It answers `{"boot":"11ms","id":…,"name":…,"paused_automations":0,
-  "source":"snapshot/<name>","url":…}`: no `status`, no `sharing`, no `isolated`. The CLI wrapper therefore reads the
-  machine back with `machine get` after a create; otherwise the create turn cannot see a shared or isolated machine,
-  and a `boot` duration such as `"11ms"` parses as no status at all.
-- `machine get <name> --json` prints `name, id, status, size, url, ssh, public_ip, domains, source, created,
-  auto_suspend, auto_hibernate, idle_ignore_outbound, bot_protection, auto_destroy, delete_after, sharing, networks,
-  isolated, egress, labels, vcpu, memory_bytes`. **`isolated` is the string `"no"` or `"yes"`, not a boolean**, and
-  `auto_hibernate`/`auto_suspend` are durations such as `"14400s"` or `"off"`.
-- The lifecycle strings `machine get` prints are `running`, `starting`, `hibernated`, `standby`, `stopped`, and
-  `hibernating`/`rebooting`/`waking` while a transition is in flight. `hibernate` answers `hibernating`, `wake` answers
-  `waking`, `pause` answers `standby`, `resume` answers `running`, `stop` answers `stopped`, `start` answers `starting`,
-  and `remove --json` answers `{"name":…,"status":"destroyed"}`. A removed machine's `get` is
-  `error: VM '<name>' not found` on stderr with exit 1, which the plugin reads as `missing`; `destroyed` is only the
-  remove command's answer. `suspended`, which an older mapping expected, is never printed.
-- `machine list --json` lists every machine in the account with `name, status, size, url, source, sharing, ttl, labels,
-  delete_at_ms, vcpu, memory_bytes` — no `isolated` and no `id`.
-- `machine config set <name> auto-hibernate.timeout <seconds>` and `… idle.ignore-outbound on|off` are accepted; the
-  matching `config get` answers `{"key":…,"value":"1800s"}` and `{"key":…,"value":"off"}`. A new machine defaults to
-  `auto_hibernate: "14400s"`, `auto_suspend: "off"`, `idle_ignore_outbound: "off"`, `bot_protection: "on"`.
-- `machine cp - <name>:/path` reads stdin (`copied - → <name>:/path (N bytes)`) and `machine cp <name>:/path -` writes
-  stdout. `machine exec <name> -- <cmd>` passes stdin through and returns the command's stdout; `--json` wraps it as
-  `{"output":"…","exit_code":0}`. A command that reads stdin works without `--tty`.
-  **The round trip is byte-exact**: a text file and a JSON file uploaded from stdin and downloaded to stdout kept their
-  sha256 on both sides, and so did a file the guest wrote with `machine exec`. Upload and download both use the work's
-  guest directory (`/home/boxd/work/<work id>`), never a laptop path.
-- **`boxd_ensure`'s `directory` is a laptop folder**, inside the project or an allowed root; the folder is created when
-  it does not exist, and the ledger records it as `laptopDirectory` beside the fixed guest folder
-  `/home/boxd/work/<work id>`. A laptop path never reaches the guest.
-- **boxd 0.3.3 changed the missing-machine wording.** 0.2.29 answered `error: VM '<name>' not found`; 0.3.3 answers
-  `error: no machine "<name>" in <region>` (for example `fra`). The plugin treats both as `missing`; a build that matched only
-  "not found" failed every `boxd_ensure` with `BOXD_FAILED` until it was widened. `machine list --json` and
-  `snapshots list --json` kept the same keys in 0.3.3.
-- `snapshots save <machine> <name> --json` answers `{"name":…,"paused_automations":0,"size_bytes":…,
-  "snapshot_id":…,"status":"ready","version":1}`; a 9 GiB disk took 2 s. `snapshots list --json` prints
-  `name, version, status, storage, archived, size, used`. `snapshots remove <name> -y --json` exists and answers
-  `{"deleted":…}`.
-- `machine pause` returns `{"status":"standby","suspend_us":…}` and `machine resume` `{"status":"running","resume_us":…}`;
-  a paused machine stays `standby` in `get`. `stop` keeps the disk and clears the running state; `hibernate` writes memory
-  and disk. Both come back by `machine wake`, not by `machine start`.
-- `boxd auth` with no subcommand lists the signed-in account and its orgs; `auth login` is the browser sign-in the plugin
-  never runs. One account can see exactly one org's machines and snapshots.
-- Two `boxd` commands can run at once (a concurrent `machine list` and `snapshots list` both exited 0); the client does
-  not serialise them behind a lock that a second command would fail on.
+**The boxd CLI** (0.2.29 and 0.3.3; the laptop CLI 0.3.5 for the verbs the design names)
 
-### Provisioning and money
-
-- A create from a 9 GiB snapshot answered in **0.55 s** wall time (the reported `boot` was 11 ms) and the machine was
-  `running` on the first `get`. A standalone create answered in 0.005 s of reported boot. The plugin's 30 s create
-  timeout was never approached, so its timed-out-create adoption path cannot be reached by a healthy account; it stays
-  covered only by the unit and host tests.
-- `machine usage --json` reports `running_seconds`, `standby_seconds`, `hibernated_seconds`, `stopped_seconds`,
-  `vcpu_hours`, `ram_gib_hours`, `disk_gib_hours`, `cost_micro` and the rate card (`vcpu_hour_micro: 39000`,
-  `ram_gib_hour_micro: 12000`, `disk_gib_hour_micro: 80` for a 2 vCPU / 8 GiB / 100 GiB machine). A `manage usage` window
-  shows the same states per machine.
-- A hibernated machine bills **disk only**: boxd's own FAQ says a machine "hibernates and pays for disk only". Compute
-  (vCPU and RAM hours) accrues only while running or in standby. `stop` and `hibernate` both bill disk only while down;
-  they differ in what survives (`hibernate` keeps memory and running processes, `stop` keeps the disk).
-- `auto-hibernate.timeout` is **14400 s (4 h)** on a new machine, before the plugin sets 1800 s. A `wake` does **not**
-  reset it: a machine the plugin put at 1800 s was still 1800 s after a hibernate/wake cycle.
-- With `idle.ignore-outbound off`, **inbound `machine exec` traffic resets the idle clock**: a machine with a 60 s
-  timeout auto-hibernated after 75 s of silence, and stayed `running` for 75 s when an exec arrived every 25 s. That is
-  the basis for the claim that a crashed laptop stops paying after the 30-minute bound: no calls, no traffic, sleep.
-
-### The golden image
-
-The golden image is built from a stock machine. It carries OpenCode 2.2.5 and holds no credential file of its own:
-
-- The stock boxd image (2 vCPU / 8 GiB, `source: "standalone"`) carries `python3` 3.12.3, `git` 2.43.0, Node 24, the
-  in-VM `boxd` CLI at `/usr/local/bin/boxd`, and **OpenCode 1.19.5** at `/usr/local/bin/opencode` →
-  `/home/boxd/.opencode/bin/opencode`. There is no stock snapshot to name: a stock machine is created with no
-  `--from-snapshot`. A fresh stock machine made on 14 November 2026 still reported `opencode --version` 1.19.5, so a
-  machine whose OpenCode is 2.x got it from a later install, not from the image.
-- `opencode upgrade 2.2.5` from 1.x refuses: "OpenCode 2.2.5 is OpenCode 2. Upgrade with `opencode upgrade --major`".
-  `opencode upgrade --major` installs the latest 2.x (2.2.6); a following `opencode upgrade 2.2.5` pins 2.2.5. Both
-  steps take about 4 s.
-- On 2.2.5, `opencode serve --hostname 127.0.0.1 --port 4096` reads **`OPENCODE_PASSWORD`** (falling back to
-  `OPENCODE_SERVER_PASSWORD`): `/api/info` answered 401 without credentials and 200 with `opencode:<password>`, and
-  reported `"version":"2.2.5"`. On 1.19.5 the same command ignores `OPENCODE_PASSWORD`, warns that the server is
-  unsecured, and `/api/info` answers 200 to everyone.
-- **`opencode auth login` needs a login shell.** `boxd machine exec --tty … -- opencode auth login` exits silently with
-  no picker (`test -t 0` is true and `TERM` is set); `ssh -t <name>.boxd opencode auth login` and
-  `boxd machine connect <name>` then `opencode auth login` both show it. `opencode auth list` names providers that come
-  from environment variables as well as stored credentials (`… environment`), so a bare list is not proof of a sign-in.
-- **`boxd-takeoff` injects the org and personal `boxd env` variables at every boot** into `/etc/profile.d/boxd-env.sh`
-  (root, 0644), with the domain-bound values and boxd's CA bundle. The image can therefore hold no key: delete the file
-  before `snapshots save`, and a machine created from the image regenerates it at boot (its mtime landed after the
-  create). `auth.json` stayed absent, and `OPENCODE_API_KEY` was set in the new machine's environment.
-- **A service-account key may not call model providers.** A provider answered a service-account key with 403
-  `provider.auth`, saying it covers workspace members, not service accounts. The route works; use a personal key with a
-  spending limit.
-- The 2.2.5 session export is `{info, messages}`, where each message is `{id, time, type, text?, model?, content?,
-  finish?, error?}` and the session info carries `cost`, `tokens` and `outcome` (`ok`/`failed`). An assistant error is
-  recorded on the message and the session outcome is `failed`, with cost 0.
-- Port 4096 listens on `127.0.0.1` only (`ss -ltn`), and a machine created without `--shared`/`--isolated` prints
-  `sharing: "private"`, `isolated: "no"`, `domains: "-"`: the port is not published.
-- `checkGuest` compares `opencode --version` on the machine with the host's own. A machine from the stock 1.19.5 image
-  fails it with `GUEST_VERSION`, and `boxd_sleep` still hibernates it.
-- Two tools in one `Promise.all`: a `boxd_submit` and a `boxd_harvest` on the same work both returned; the admitted
-  prompt made the guest busy, the harvest answered `SESSION_BUSY`, and the submit's `lastSubmitAt` left the previous
-  proof `stale` in `boxd_job`. The ledger kept both calls' fields.
-
-### boxd 0.3.3, measured on 2026-11-10
-
-Measured with `boxd` 0.3.3 on one account, a golden image on OpenCode 2.2.6, and throwaway machines named `oc-lc-*`, all
-removed afterwards. Each item gives the command and what it answered.
-
-**Argv and CLI shapes**
-- `machine new <name> --from-snapshot opencode-golden --label role=session --label work=<id> --json` answered
-  `{"boot":"10ms","name":…,"source":"snapshot/opencode-golden","url":…}`. The create took 1 s. `machine get --json`
-  then gave `auto_hibernate: "14400s"`, `auto_suspend: "off"`, `idle_ignore_outbound: "off"`, `sharing: "private"`,
-  `isolated: "no"`, and the labels.
-- `machine config set <name> auto-hibernate.timeout 1800` answered `auto-hibernate for <name>: 1800s`, and
-  `config get <name> auto-hibernate.timeout --json` answered `{"key":"auto-hibernate.timeout","value":"1800s"}`. The
-  same for `idle.ignore-outbound on` and `off`.
-- `machine hibernate` answered `{"status":"hibernating"}`, `wake` answered `waking`, `stop` `stopped`, `start` `starting`,
-  `pause` `{"status":"standby","suspend_us":…}` and `resume` `{"status":"running",…}`. `machine remove <name> -y --json`
-  answered `{"name":…,"status":"destroyed"}`.
-- `snapshots save <machine> <name> --json` answered `{"size_bytes":…,"status":"ready","version":1}` in 2 s for an
-  8.4 GiB snapshot.
-- `machine cp - <name>:<path>` read stdin and answered `copied - → <name>:<path> (12739 bytes)`. `machine exec <name> --
-  python3 <path>` passed stdin through and returned the helper's JSON. Downloading the helper back to stdout matched the
-  repository copy byte for byte.
-
-**Billing and idleness**
-- `boxd manage usage --json` reports `running_seconds`, `standby_seconds`, `hibernated_seconds` and `stopped_seconds` per
-  machine, with `ram_gib_hours`, `vcpu_hours`, `disk_gib_hours` and a cost in micro-EUR. The rates are 12000 for RAM,
-  39000 for vCPU and 80 for disk, per hour. Its values can lag by several minutes (`complete: false`).
-- Hibernated time bills disk only. Over 300 s of hibernation: `hibernated_seconds` +300, `running_seconds`
-  unchanged, `ram_gib_hours` and `vcpu_hours` unchanged, `disk_gib_hours` +0.62, cost +50 micro-EUR.
-- `wake` did not reset a configured `auto-hibernate.timeout`: 1800 s before the hibernate and after the wake.
-- With a 90 s timeout and `idle.ignore-outbound off`, one inbound `machine exec` at +60 s reset the timer. The machine
-  was still running at +128 s and hibernated by +220 s.
-- With a 90 s timeout and `idle.ignore-outbound on`, outbound requests from the guest did not keep the machine awake: it
-  was hibernated at +128 s while the requests ran until about +120 s.
-- Hibernate keeps the guest's memory: a background process survived hibernate and wake. `stop` and `start` clear `/tmp`
-  and the running processes, and keep `/home`.
-- Stop and hibernate cost are not separated by this run: the usage report lagged across the stop window.
-
-**Provisioning**
-- A create from the golden snapshot took 1 s.
-- A client killed 0.3 s and 0.8 s into `machine new` left no machine. Killed at 1.2 s, the machine landed and was
-  `running`. `boxd_status` listed it as an orphan, and `boxd_ensure` with the matching work id adopted it. Adoption
-  leaves its old `work=` label in place.
-
-**Status strings from `machine get --json`**
-- `running`; `hibernated` (for a few seconds after `hibernate`, `get` read `standby`); `standby` after `pause`; `stopped`
-  after `stop`; `starting` after `start`.
-- A removed or never-created machine: `error: no machine "<name>" in fra` on stderr, exit 1. `remove` answers
-  `destroyed` before that.
-
-**Golden image on OpenCode 2.2.6**
-- `opencode --version` is `2.2.6`. `git`, `python3` and `boxd` are present. `OPENCODE_API_KEY` is set in the environment
-  (its value was not printed), and `/etc/profile.d/boxd-env.sh` exists.
-- `OPENCODE_PASSWORD=probe opencode serve --hostname 127.0.0.1 --port 4096` answered `/api/info` with 401 without
-  credentials and 200 with `opencode:probe`. It listened on `127.0.0.1` only, and a connection from the laptop to the
-  machine's public address on port 4096 failed.
-
-**Work path**
-- `boxd_ensure`, `boxd_submit`, `boxd_job` (`idle`, `completed`), `boxd_harvest` (`proven`, `completed`), `boxd_sleep`
-  (`hibernated`) and `boxd_resume` (`wake`) ran in that order on one work.
-- After a `machine remove` from the CLI, `boxd_resume` rebuilt the work from the golden snapshot and imported the
-  transcript (`resumed: import`). This happened twice, and the guest helper was uploaded each time, with the same
-  sha256 as the repository's `guest/guest.py`.
-- `boxd_image` from a machine with a fresh proof saved the snapshot (`state: saved`).
-- A machine on OpenCode 2.2.5, made from a snapshot taken with the CLI: `boxd_ensure` answered `error: GUEST_VERSION`, and
-  `boxd_sleep` hibernated it.
-- With `opencode serve` killed during a run, `boxd_job` answered `MACHINE_STARTING` while the server was down. Once it
-  was back, `boxd_harvest` proved the partial transcript with `outcome: aborted`, and `boxd_resume` answered
-  `RUN_INTERRUPTED` with its next step. `boxd_job` then answered `state: idle` with `outcome: aborted`, and `boxd_sleep`
-  hibernated the machine. A new `boxd_submit` ran to `completed`, with no reset.
-- The guest's active list holds a running session (`{"<id>":{"type":"running"}}`), and a `boxd_job` read taken right
-  after a submit answered `busy`. A session whose server died keeps `time.busy` later than `time.idle` with nothing
-  active. The helper reads that as an interrupted run, and the plugin maps it to `aborted`.
-- Drop refusals and the one drop that succeeded: a non-git guest folder gives `GIT_UNKNOWN`. An untracked file gives
-  `UNTRACKED`, and so does an ignored file, which harvest lists under `ignored`. A staged change gives harvest
-  `dirty: true, patchStored: true`, and `boxd_drop` then answers `state: dropped` and the machine is gone.
-- `boxd_job` on a hibernated work answered `asleep` with `machineStatus: hibernated`. The machine stayed hibernated, and
-  its usage did not change.
-- After a wake from `boxd_ensure` or `boxd_resume`, `auto-hibernate.timeout` was 1800 s and `idle.ignore-outbound` was
-  `off`.
-- `boxd_sleep` on a work that never had a prompt warned that its prompt was not harvested. It now warns only when a
-  prompt was submitted.
-- Harvest's next step said "the tree is clean" for a tree with a stored patch. It now says the change is kept as a patch.
-- A killed run used to leave its session busy, so `SESSION_BUSY` never ended. It is now `aborted`, and `boxd_resume`
-  raises `RUN_INTERRUPTED` for it.
-- The first `boxd_submit` after an image answered `GUEST_FAILED`, and `boxd_job` 30 s later answered `MACHINE_STARTING`,
-  while the server process was still listed. It did not recur, and its cause is not known. A `GUEST_FAILED` message
-  now carries the helper's error and its detail, redacted, and the tool result keeps it as `message`.
-
-**Concurrency**
-- A `boxd_submit` and a `boxd_harvest` on one work, in flight together, both returned. The ledger kept the root session,
-  the submit's `lastSubmitAt` and the proof. The harvest was recorded after the submit's stamp, so the proof was fresh.
-  A submit made after a harvest marks the proof `stale` at once: status showed `stale`, and a harvest made it `fresh`.
-- Two `boxd machine config set` calls on one machine at once both exited 0, neither was refused, and one value stayed.
+- `machine get --json` prints the id, status, size, labels, `sharing`, `isolated` (the string `"yes"` or `"no"`), the
+  idle bounds and `delete_after`. `machine list --json` lists every machine with its status, size and labels, but no
+  `id` and no `isolated`.
+- A missing machine is `error: VM '<name>' not found` on 0.2 and `error: no machine "<name>" in <region>` on 0.3, exit 1.
+  The stderr table reads only those, anchored to the name and region asked, as missing; a hint that names another
+  region is `elsewhere`, and anything else is `BOXD_FAILED`.
+- Lifecycle strings: `running`, `starting`, `hibernated` (briefly `standby` after a hibernate), `standby`, `stopped`,
+  and `destroyed` only as `remove`'s own answer.
+- A create from a 9 GiB snapshot answered in about 1 s and was `running` at once. A client killed 1.2 s into
+  `machine new` still left a running machine, which the next ensure adopts.
+- `wake` keeps a configured auto-hibernate bound. With `idle.ignore-outbound off`, an inbound `machine exec` resets the
+  idle clock; with it on, a machine hibernated while its outbound requests ran.
+- Hibernation keeps memory and running processes; `stop` keeps only the disk.
+- `machine cp` round trips are byte-exact, from stdin and to stdout alike.
+- `manage usage --json` reports each machine's running, standby, hibernated and stopped seconds, its vCPU, RAM and disk
+  hours, and the cost in micro-units of the organisation's currency (rates 39000 per vCPU-hour, 12000 per GiB-hour of
+  RAM, 80 per GiB-hour of disk); it can lag by up to 25 minutes (`complete: false`), and is for owners and admins.
+- boxd regenerates `/etc/profile.d/boxd-env.sh` at every boot with the account's `boxd env` values, so an image built
+  without it still gets the key at boot.
+- The stock image carries OpenCode 1.19.5; `opencode upgrade --major` and then `opencode upgrade <version>` pins a 2.x
+  release, about 4 s each.
 
 ## The tools RPC
 
