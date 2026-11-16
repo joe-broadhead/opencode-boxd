@@ -56,7 +56,7 @@ export function createLaptopPort(options: LaptopPortOptions): LaptopPort {
       const result = await run(["session", "import", file, "--directory", directory, "--standalone"], context)
       const output = text(result)
       if (result.code !== 0) throw boxdError("IMPORT_FAILED", `This laptop's opencode session import failed (${said(result)}).`)
-      if (ALREADY.test(output)) throw boxdError("IMPORT_FAILED", "This laptop's OpenCode already held the session, so the import changed nothing; it is deleted first.")
+      if (ALREADY.test(output)) throw boxdError("IMPORT_FAILED", "This laptop's OpenCode still held the session, so the import changed nothing; delete it first, or harvest again.")
       const id = IMPORTED.exec(output)?.[1]
       if (!id) throw boxdError("IMPORT_FAILED", "This laptop's opencode session import printed no session id.")
       return { id }

@@ -101,7 +101,7 @@ for (const version of TESTED_HOSTS) {
         expect(await read(root1)).toEqual({ title: "first title", messages: 1 })
 
         // The stock behaviour the prover guards against: an import over an existing id changes nothing.
-        await expect(prover.importSession(store("root-plain.json", transcript(root1, work, "plain import", 3)), work, context)).rejects.toThrow(/IMPORT_FAILED: .*already held the session/)
+        await expect(prover.importSession(store("root-plain.json", transcript(root1, work, "plain import", 3)), work, context)).rejects.toThrow(/IMPORT_FAILED: .*still held the session/)
         expect(await read(root1)).toEqual({ title: "first title", messages: 1 })
 
         // The second harvest replaces both sessions.

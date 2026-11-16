@@ -4,7 +4,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { BoxdError } from "../../src/errors.js"
 import { createRuntime, type PluginRuntime } from "../../src/exec/runtime.js"
-import { CAPS, type MachineId, type OpContext } from "../../src/ports.js"
+import { CAPS, TIMEOUTS, type MachineId, type OpContext } from "../../src/ports.js"
 import { DISPOSE_BOUND_MS } from "../../src/services.js"
 import { startFakeCli, type FakeCli } from "../host/fake-cli.js"
 
@@ -58,7 +58,9 @@ describe("dispose", () => {
     expect(await queued).not.toBe("ran")
     expect(runtime.runner.health().children.now).toBe(0)
     expect(runtime.runner.lockedMachines()).toBe(0)
-    while (sleeping() !== "") await Bun.sleep(25)
+    // The children die with their CLI: SIGTERM, then SIGKILL after the grace, so a slow kill fails here too.
+    const killedBy = Date.now() + TIMEOUTS.killGraceMs + 3_000
+    while (sleeping() !== "" && Date.now() < killedBy) await Bun.sleep(25)
     expect(sleeping()).toBe("")
     // Nothing starts after a dispose.
     expect(await outcome(runtime.boxd.list({ maxAgeMs: 0 }, context("after")))).toBe("CANCELLED")
