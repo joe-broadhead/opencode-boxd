@@ -30,9 +30,10 @@ const escape = (file: string, seconds: number) =>
 
 let files = 0
 const pidFile = () => join(dir, `pid-${++files}`)
+/** The pid a test's script wrote, waiting up to 10 s: starting Python takes seconds on a slow test machine. */
 async function readPid(path: string): Promise<number> {
-  for (let tries = 0; tries < 200 && !existsSync(path); tries++) await sleep(10)
-  for (let tries = 0; tries < 50 && readFileSync(path, "utf8").trim() === ""; tries++) await sleep(10)
+  for (let tries = 0; tries < 1000 && !existsSync(path); tries++) await sleep(10)
+  for (let tries = 0; tries < 100 && readFileSync(path, "utf8").trim() === ""; tries++) await sleep(10)
   return Number(readFileSync(path, "utf8"))
 }
 
@@ -313,10 +314,13 @@ describe("process trees", () => {
     const file = pidFile()
     const runner = createRunner({ killGraceMs: 100 })
     const script = `${escape(file, 34)} & sleep 34`
-    const answer = await settle(runner.spawn({ ...ctx("t"), bin: "sh", args: ["-c", script], timeoutMs: 300 }))
+    // The bound outlasts the descendant's escape, so the timeout finds it out of the group, holding the pipes.
+    const run = settle(runner.spawn({ ...ctx("t"), bin: "sh", args: ["-c", script], timeoutMs: 12_000 }))
+    const escaped = await readPid(file)
+    const answer = await run
     expect(answer.ok ? "ran" : code(answer.error)).toBe("TIMEOUT")
     expect(runner.health().children.now).toBe(0)
-    process.kill(await readPid(file), "SIGKILL")
+    process.kill(escaped, "SIGKILL")
     await runner.dispose()
   }, 30_000)
 })
