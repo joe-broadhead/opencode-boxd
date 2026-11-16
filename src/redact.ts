@@ -56,6 +56,20 @@ export function excerpt(text: string, limit: number): string | undefined {
   return line === "" ? undefined : cut(line, limit)
 }
 
+/** Controls but line breaks and tabs, for text that keeps its lines. */
+const BLOCK_CONTROLS = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]+/g
+
+/**
+ * Many lines of guest output, such as a command's stdout, made safe the same way as `shortReason`, line by line: token
+ * shapes redacted, URLs without credentials, no controls or bidi characters. Its lines stay; nothing is cut.
+ */
+export const redactBlock = (text: string) =>
+  text
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => SECRETS.reduce((value, [pattern, replacement]) => value.replace(pattern, replacement), withoutUrlSecrets(line)).replace(BIDI, "").replace(BLOCK_CONTROLS, ""))
+    .join("\n")
+
 const redactedLine = (text: string) => oneLine(SECRETS.reduce((value, [pattern, replacement]) => value.replace(pattern, replacement), withoutUrlSecrets(text)))
 
 /** An error's message, or the value itself, as a short reason; `fallback` when nothing is left. */

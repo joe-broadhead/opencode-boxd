@@ -13,8 +13,9 @@
 //   end, which is how the spawn-count harness counts and times a call's children. `log` in the state holds every boxd
 //   call but `--help`, as one string each.
 import { spawnSync } from "node:child_process"
-import { appendFileSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { appendFileSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { dirname, join, normalize } from "node:path"
+import { acquire, release } from "./fake-lock.mjs"
 
 const statePath = process.env.BOXD_FAKE_STATE
 if (!statePath) {
@@ -40,21 +41,13 @@ const lock = `${statePath}.lock`
 let holdingLock = false
 // A command that fails while it holds the lock exits through process.exit, which skips `finally`: release it here.
 process.on("exit", () => {
-  if (holdingLock) rmdirSync(lock)
+  if (holdingLock) release(lock)
 })
 
-/** Every change to the state happens under a lock, on a fresh read, and lands by rename. */
+/** Every change to the state happens under the lock (`fake-lock.mjs`), on a fresh read, and lands by rename. */
 function update(change) {
-  for (let tries = 0; ; tries++) {
-    try {
-      mkdirSync(lock)
-      holdingLock = true
-      break
-    } catch {
-      if (tries > 4000) throw new Error("the fake boxd state lock was not released")
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2)
-    }
-  }
+  acquire(lock)
+  holdingLock = true
   try {
     const current = read()
     const result = change(current)
@@ -64,7 +57,7 @@ function update(change) {
     return result
   } finally {
     holdingLock = false
-    rmdirSync(lock)
+    release(lock)
   }
 }
 
@@ -475,6 +468,13 @@ function copy() {
     const path = toLocal(state, machine, down.path)
     if (!existsSync(path)) fail(`error: ${source}: no such file`)
     const cut = update((current) => current.cutCopies?.shift())
+    if (cut === "silent") {
+      // A copy that lands half the file and still exits 0.
+      const bytes = readFileSync(path)
+      writeFileSync(target, bytes.subarray(0, Math.floor(bytes.length / 2)))
+      process.stdout.write(`copied ${source} → ${target}\n`)
+      return
+    }
     if (cut) {
       // A copy cut off half-way: part of the file lands, and the CLI fails.
       const bytes = readFileSync(path)
@@ -509,6 +509,6 @@ function laptopOpencode() {
       return
     }
     state.laptopSessions[id] = { title: exported.info.title ?? id, messages: exported.messages?.length ?? 0 }
-    process.stdout.write(`Imported session ${id}\n`)
+    process.stdout.write(`Imported session: ${id}\n`)
   })
 }

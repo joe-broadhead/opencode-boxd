@@ -133,6 +133,8 @@ export async function startHost(input: HostInput = {}) {
   const host = {
     client,
     location,
+    /** The plugin's ledger root, for a test that seeds or reads records. */
+    ledger: join(base, "ledger"),
     guest,
     boxd,
     model,
