@@ -81,6 +81,8 @@ export interface FakeSpawn {
   readonly call: string | null
   readonly bin: "boxd" | "opencode"
   readonly argv: readonly string[]
+  /** For an exec of the guest helper: the action its request asked for (`prompt`, `phase`…). */
+  readonly action?: string
   readonly startedAt: number
   readonly endedAt: number
 }
@@ -115,6 +117,15 @@ case "$1" in
 esac
 `
 
+/** `timeout <seconds> <command…>`: the command's own exit, or 124 when the bound ran out, as coreutils answers. */
+const GUEST_TIMEOUT = `#!/usr/bin/env python3
+import subprocess, sys
+try:
+    sys.exit(subprocess.run(sys.argv[2:], timeout=float(sys.argv[1])).returncode)
+except subprocess.TimeoutExpired:
+    sys.exit(124)
+`
+
 export function startFakeCli(options: { readonly dir?: string; readonly version?: string; readonly guestPort?: number; readonly latencyMs?: [number, number] } = {}): FakeCli {
   const dir = options.dir ?? realpathSync(mkdtempSync(join(realpathSync(tmpdir()), "boxd-fake-")))
   mkdirSync(join(dir, "guest-bin"), { recursive: true })
@@ -129,6 +140,11 @@ export function startFakeCli(options: { readonly dir?: string; readonly version?
   const opencodeBin = shim("opencode", " --as-opencode")
   writeFileSync(join(dir, "guest-bin", "opencode"), GUEST_OPENCODE)
   chmodSync(join(dir, "guest-bin", "opencode"), 0o755)
+  // The guest's coreutils `timeout`, which the helper's detached clone uses, for a test machine that has none (macOS).
+  if (!Bun.which("timeout")) {
+    writeFileSync(join(dir, "guest-bin", "timeout"), GUEST_TIMEOUT)
+    chmodSync(join(dir, "guest-bin", "timeout"), 0o755)
+  }
   const root = join(dir, "disks")
   mkdirSync(root, { recursive: true })
   const initial: FakeState = {
@@ -206,12 +222,23 @@ export function startFakeCli(options: { readonly dir?: string; readonly version?
       const lines = readFileSync(`${statePath}.spawns.jsonl`, "utf8").split("\n").filter(Boolean)
       const starts = new Map<string, { id: string; pid: number; call: string | null; bin: "boxd" | "opencode"; argv: string[]; at: number }>()
       const ends = new Map<string, number>()
+      const actions = new Map<string, string>()
       for (const line of lines) {
-        const entry = JSON.parse(line) as { phase: "start" | "end"; id: string; pid: number; call: string | null; bin: "boxd" | "opencode"; argv: string[]; at: number }
+        const entry = JSON.parse(line) as { phase: "start" | "end" | "action"; id: string; pid: number; call: string | null; bin: "boxd" | "opencode"; argv: string[]; at: number; action?: string }
         if (entry.phase === "start") starts.set(entry.id, entry)
+        else if (entry.phase === "action") actions.set(entry.id, entry.action!)
         else ends.set(entry.id, entry.at)
       }
-      return [...starts.values()].map((start) => ({ id: start.id, pid: start.pid, call: start.call, bin: start.bin, argv: start.argv, startedAt: start.at, endedAt: ends.get(start.id) ?? Number.POSITIVE_INFINITY }))
+      return [...starts.values()].map((start) => ({
+        id: start.id,
+        pid: start.pid,
+        call: start.call,
+        bin: start.bin,
+        argv: start.argv,
+        ...(actions.has(start.id) ? { action: actions.get(start.id)! } : {}),
+        startedAt: start.at,
+        endedAt: ends.get(start.id) ?? Number.POSITIVE_INFINITY,
+      }))
     },
     dispose() {
       if (!options.dir) rmSync(dir, { recursive: true, force: true })

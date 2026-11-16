@@ -243,7 +243,17 @@ describe("package C2 on a stock host", () => {
       const spawns = host.boxd.fake.spawns().filter((spawn) => spawn.startedAt >= started)
       const boxd = spawns.filter((spawn) => spawn.bin === "boxd").map((spawn) => ({ call: spawn.call, bin: spawn.bin, argv: spawn.argv, verb: verbOf(spawn.bin, spawn.argv), startedAt: spawn.startedAt, endedAt: spawn.endedAt }))
       expect(peakOf(boxd)).toBeLessThanOrEqual(CAPS.shared)
-      expect(boxd.filter((spawn) => spawn.verb === "machine exec")).toHaveLength(300)
+      // Every exec in the window, by the helper action it asked for, its machine and its call. Exactly one prompt per
+      // work, each from the submit's own call: a submit never reaches a guest twice. A call that outlasts the watcher's
+      // 60 s interval (a slow test machine) also sees the watcher's phase reads of the works it made busy; anything
+      // else is a bug.
+      const execs = spawns.filter((spawn) => spawn.bin === "boxd" && verbOf(spawn.bin, spawn.argv) === "machine exec").map((spawn) => ({ machine: spawn.argv[2], action: spawn.action, call: spawn.call }))
+      const prompts = execs.filter((exec) => exec.action === "prompt")
+      expect(prompts).toHaveLength(300)
+      expect(new Set(prompts.map((exec) => exec.machine)).size).toBe(300)
+      expect(new Set(prompts.map((exec) => exec.call)).size).toBe(1)
+      expect(prompts[0]!.call?.startsWith("watcher-")).toBe(false)
+      expect(execs.filter((exec) => exec.action !== "prompt" && !(exec.action === "phase" && exec.call?.startsWith("watcher-")))).toEqual([])
       expect(lag).toBeLessThan(150)
     } finally {
       await host.close()

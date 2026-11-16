@@ -722,8 +722,12 @@ describe("auto counts the machines that landed (review MEDIUM-3)", () => {
 
 describe("the bound B holds for active steps (review MEDIUM-4)", () => {
   test("a single ensure with B of 1.5 s and 0.9 s of CLI latency answers creating and starts no create", async () => {
-    const k = await kit({ seam: { boundMs: 1_500 } })
+    // The image is built under the ordinary bound (a slow test machine needs more than 1.5 s for it); only the ensure
+    // under test runs with B of 1.5 s.
+    let bound = 4 * 60_000
+    const k = await kit({ seam: { boundMs: () => bound } })
     await k.golden("fra")
+    bound = 1_500
     k.counter.fake.update((state) => void (state.latencyMs = [900, 900]))
     const t0 = Date.now()
     const result = (await k.runs.boxd_ensure({ workId: "late", region: "fra" }, k.call())) as EnsureResult

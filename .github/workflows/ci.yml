@@ -4,6 +4,8 @@ on:
   push:
     branches: [master]
   pull_request:
+  # A run by hand on any branch: the full matrix, macOS included.
+  workflow_dispatch:
 
 permissions:
   contents: read

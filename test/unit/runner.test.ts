@@ -11,6 +11,7 @@ import { join } from "node:path"
 import { PassThrough, Writable } from "node:stream"
 import { BoxdError } from "../../src/errors.js"
 import { createRunner, type ChildLike, type Launch } from "../../src/exec/runner.js"
+import { stillRunning } from "../support/processes.js"
 import { CALL_TAG_ENV, CAPS, type MachineId, type OpContext, type Pool, type ReadTarget } from "../../src/ports.js"
 
 const dir = realpathSync(mkdtempSync(join(realpathSync(tmpdir()), "boxd-runner-")))
@@ -138,6 +139,19 @@ describe("the caps", () => {
     expect(fake.started.some((entry) => entry.args.includes("fifth"))).toBe(false)
     stop.abort()
     await Promise.all([...long, fifth])
+    await runner.dispose()
+  })
+
+  test("the front of a pool's queue is first in, first out: a request sent to the front never jumps an earlier one there", async () => {
+    const fake = fakeLaunch()
+    const runner = createRunner({ launch: fake.launch })
+    const blockers = Array.from({ length: CAPS.background }, () => spawnIn(runner, "background", 30))
+    const order: string[] = []
+    const queued = (name: string, front: boolean) =>
+      runner.spawn({ ...context(name, "background"), bin: "boxd", args: ["background", "1", name], timeoutMs: 5_000, ...(front ? { front: true } : {}) }).then(() => void order.push(name))
+    const all = [queued("back-1", false), queued("front-1", true), queued("back-2", false), queued("front-2", true), queued("front-3", true)]
+    await Promise.all([...blockers, ...all])
+    expect(fake.started.slice(CAPS.background).map((entry) => entry.args[2])).toEqual(["front-1", "front-2", "front-3", "back-1", "back-2"])
     await runner.dispose()
   })
 
@@ -327,10 +341,9 @@ describe("bounds and Stop", () => {
     const grandchild = Number(readFileSync(pidFile, "utf8"))
     stop.abort()
     expect(code(await run.catch((error) => error))).toBe("CANCELLED")
-    await Bun.sleep(100)
-    expect(() => process.kill(grandchild, 0)).toThrow()
+    expect(await stillRunning([grandchild])).toEqual([])
     await runner.dispose()
-  })
+  }, 30_000)
 
   test("health reports the event loop's worst delay while children run", async () => {
     const runner = createRunner({ launch: fakeLaunch().launch, loopSampleMs: 10 })

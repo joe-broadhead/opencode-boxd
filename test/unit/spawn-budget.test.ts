@@ -7,6 +7,7 @@ import { createRuntime, type PluginRuntime } from "../../src/exec/runtime.js"
 import { CAPS, type ChangeTarget, type MachineId, type OpContext, type ReadTarget } from "../../src/ports.js"
 import { startFakeGuest, type FakeGuest } from "../host/fake-guest.js"
 import { startSpawnCounter, type CountingFake } from "../host/spawn-counter.js"
+import { stillRunning } from "../support/processes.js"
 import { budgetProblems, SPAWN_BUDGETS, type BudgetRow } from "../support/spawn-count.js"
 
 let guestServer: FakeGuest
@@ -170,20 +171,25 @@ describe("under load", () => {
   }, 60_000)
 
   test("Stop mid-queue on real processes: the queued calls start no child, and no child outlives the call", async () => {
-    counter.fake.update((state) => void (state.latencyMs = [300, 300]))
     await runtime.boxd.assertLaptopCli(context("warm"))
+    // Long enough that no child finishes on its own, however slowly the machine starts processes.
+    counter.fake.update((state) => void (state.latencyMs = [20_000, 20_000]))
     counter.reset()
     const stop = new AbortController()
     const calls = Array.from({ length: 40 }, (_, index) => runtime.boxd.list({ maxAgeMs: 0 }, { ...context(`call_stop_${index}`), signal: stop.signal }).then(() => "ran", (error: { code?: string }) => error.code))
-    await Bun.sleep(100)
+    // Stop only once the runner holds its 12 shared slots and every one of those children is up (it logged its start).
+    const deadline = Date.now() + 20_000
+    while ((runtime.runner.health().pools.foreground.running < CAPS.shared || counter.spawns().length < CAPS.shared) && Date.now() < deadline) await Bun.sleep(20)
+    expect(runtime.runner.health().pools.foreground).toMatchObject({ running: CAPS.shared, queued: 40 - CAPS.shared })
     stop.abort()
     const answers = await Promise.all(calls)
-    expect(answers.every((answer) => answer === "CANCELLED")).toBe(true)
-    await Bun.sleep(400)
-    const spawns = counter.spawns()
-    expect(spawns.length).toBe(CAPS.shared)
-    // Each killed child logged its end when the runner stopped it.
-    expect(spawns.every((spawn) => Number.isFinite(spawn.endedAt))).toBe(true)
+    expect(answers).toEqual(Array.from({ length: 40 }, () => "CANCELLED"))
+    for (let tries = 0; tries < 250 && runtime.runner.health().children.now > 0; tries++) await Bun.sleep(20)
     expect(runtime.runner.health().children.now).toBe(0)
-  }, 30_000)
+    await Bun.sleep(200)
+    const spawns = counter.fake.spawns().filter((spawn) => spawn.call?.startsWith("call_stop_"))
+    // No queued call started a child after the Stop, and every child that started is gone.
+    expect(spawns).toHaveLength(CAPS.shared)
+    expect(await stillRunning(spawns.map((spawn) => spawn.pid))).toEqual([])
+  }, 60_000)
 })

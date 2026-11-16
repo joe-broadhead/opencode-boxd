@@ -141,7 +141,7 @@ describe("the helper on the machine", () => {
     await setup()
     fake.update((state) => void (state.log = []))
     const target = await readTarget()
-    await Promise.all([runtime.guest.health(target, context()), runtime.guest.health(target, context())])
+    await Promise.all([runtime.guest.serve(target, {}, context()), runtime.guest.serve(target, {}, context())])
     expect(verbs().filter((verb) => verb === "machine exec")).toHaveLength(1)
   })
 })
@@ -197,7 +197,9 @@ describe("sessions", () => {
     expect(phase.lastText).toStartWith("Done. The key is [redacted].")
     expect(Array.from(phase.lastText!).length).toBeLessThanOrEqual(300)
     expect(phase.tail).toHaveLength(1)
-    expect(phase.reading?.residentGiB).toBeGreaterThan(0)
+    // The helper reads /proc, which only the guest's Linux has; elsewhere the reading is there, at zero.
+    if (process.platform === "linux") expect(phase.reading?.residentGiB).toBeGreaterThan(0)
+    else expect(phase.reading).toEqual({ residentGiB: 0, load1: 0 })
     expect(await runtime.guest.phase(await readTarget(), { sessionId: "ses_none" }, context())).toMatchObject({ phase: "missing", outcome: null })
   })
 
@@ -396,7 +398,8 @@ describe("the work tree", () => {
 })
 
 describe("machine care", () => {
-  test("health: memory, load and the heaviest processes by name", async () => {
+  // The guest is Linux: health reads /proc, which a macOS test machine does not have.
+  test.skipIf(process.platform !== "linux")("health: memory, load and the heaviest processes by name", async () => {
     await setup()
     const health = await runtime.guest.health(await readTarget(), context())
     expect(health.memory.totalMb).toBeGreaterThan(0)
