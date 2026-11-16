@@ -186,8 +186,10 @@ export const SPAWN_BUDGETS: readonly BudgetRow[] = [
     call: "boxd_drop",
     scenario: "a work whose machine is gone in both regions",
     owner: "C2",
-    max: { "machine list": 1, "machine get": 2 },
-    total: 3,
+    // The by-id check's get of the name first (it answers not-found), then the gone rule: a fresh listing and a get of
+    // the recorded id in each region.
+    max: { "machine list": 1, "machine get": 3 },
+    total: 4,
   },
 ]
 

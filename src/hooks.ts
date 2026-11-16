@@ -52,7 +52,7 @@ export async function registerCostHooks(ctx: HookContext, services: CostServices
   const listening = (async () => {
     try {
       for await (const _event of ctx.event.subscribe({ types: [...SESSION_GONE_EVENTS], signal: events.signal })) {
-        // Package E: orphan the works whose session.notify this session is.
+        // Package E: pass the session to services.watch.sessionGone(sessionID, why); the watcher owns the orphan flag.
       }
     } catch {
       // A stream that ends with the plugin is not a problem; the watcher's sweep is the ground truth.

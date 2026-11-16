@@ -20,7 +20,9 @@
  * `src/plugin.ts`. A package that needs a contract change asks for it there. Every other file names its owner in its
  * header or in the table above.
  */
-import type { Plugin } from "@opencode/plugin"
+import type { Plugin, Rpc } from "@opencode/plugin"
+import { COMMAND_STEM, PLUGIN_ID } from "./constants.js"
+import type { Phase, SavedState } from "./ledger/types.js"
 import type { Options } from "./options.js"
 import type { BoxdPort, CallTag, FleetWatch, GuestPort, ImportV0Port, LaptopPort, LedgerPort, Runner } from "./ports.js"
 import type {
@@ -180,6 +182,93 @@ export interface CostPort {
    * `BUDGET_REACHED` when `budget.action` is `refuse` and the budget is reached; never for a member, who cannot measure it.
    */
   assertBudget(context: CallTag): Promise<void>
+}
+
+// ── E's cleanup view for D's TUI (design §C.5) ──────────────────────────────────────────────────────────────────
+
+/**
+ * What `/boxd-cleanup` and its TUI view show: what costs money now, and the cleanup actions with their savings. Package E
+ * builds it (`CleanupViewProvider`, in `src/cleanup.ts`); package D's `src/tui.ts` renders it through
+ * `CleanupViewRpc`, and its buttons run `command`, which confirms each action with the host's permission prompt. The
+ * view itself approves nothing.
+ */
+export interface CleanupView {
+  /** `unavailable` while the cost or the fleet cannot be read; `note` says why. */
+  readonly state: "ok" | "unavailable"
+  readonly currency: string | null
+  /** The fleet's estimate per hour; null when it cannot be estimated. */
+  readonly perHour: number | null
+  /** Each running work: its cost per hour, idle time and `saved`, costliest first. */
+  readonly works: ReadonlyArray<{
+    readonly workId: string
+    readonly phase: Phase
+    readonly saved: SavedState
+    readonly perHour: number | null
+    readonly idleMinutes: number | null
+  }>
+  readonly actions: readonly CleanupAction[]
+  readonly automation: AutomationState
+  /**
+   * How the command confirms each action at this `access`: the tool's own action (`ask-changes`), `boxd_cleanup`
+   * (`all`), or not at all, reporting only (`read-only`).
+   */
+  readonly confirm: "tool-action" | "cleanup-action" | "report-only"
+  /** The command the view's buttons run: `/boxd-cleanup`. */
+  readonly command: string
+  readonly note?: string
+}
+
+export interface CleanupViewProvider {
+  view(context: CallTag): Promise<CleanupView>
+}
+
+export const CLEANUP_COMMAND = `${COMMAND_STEM}-cleanup`
+
+const nullableNumber = { type: ["number", "null"] }
+
+/** The one read-only RPC the TUI calls for the view. Registered by `src/plugin.ts` with E's provider. */
+export const CleanupViewRpc = {
+  id: `${PLUGIN_ID}.cleanup`,
+  methods: {
+    view: {
+      input: { type: "object" },
+      output: {
+        type: "object",
+        required: ["state", "currency", "perHour", "works", "actions", "automation", "confirm", "command"],
+        properties: {
+          state: { enum: ["ok", "unavailable"] },
+          currency: { type: ["string", "null"] },
+          perHour: nullableNumber,
+          works: {
+            type: "array",
+            items: {
+              type: "object",
+              required: ["workId", "phase", "saved", "perHour", "idleMinutes"],
+              properties: { workId: { type: "string" }, phase: { type: "string" }, saved: { enum: ["fresh", "stale", "none"] }, perHour: nullableNumber, idleMinutes: nullableNumber },
+            },
+          },
+          actions: { type: "array", items: { type: "object" } },
+          automation: { type: "string" },
+          confirm: { enum: ["tool-action", "cleanup-action", "report-only"] },
+          command: { type: "string" },
+          note: { type: "string" },
+        },
+      },
+      errors: { unavailable: { type: "object", required: ["nextStep"], properties: { nextStep: { type: "string" } } } },
+    },
+  },
+  events: {},
+} satisfies Rpc.PortableDefinition
+
+export function registerCleanupView(rpc: Pick<Plugin.Context["rpc"], "register">, provider: CleanupViewProvider) {
+  return rpc.register(CleanupViewRpc, {
+    view: (_input, { error }) =>
+      provider.view({ callId: `cleanup-view-${Date.now()}`, source: "cleanup-command" }).catch((cause: unknown) =>
+        error("unavailable", `STATUS_UNAVAILABLE: Could not read boxd's cleanup view (${cause instanceof Error ? cause.message : String(cause)}).`, {
+          nextStep: "Restart OpenCode, then run /boxd-cleanup again.",
+        }),
+      ),
+  })
 }
 
 // ── The scaffold ──────────────────────────────────────────────────────────────────────────────────────────────────

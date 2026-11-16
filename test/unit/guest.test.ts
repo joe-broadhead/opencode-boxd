@@ -42,18 +42,15 @@ const verbs = () => fake.calls().map((call) => call.split(" ").slice(0, 2).join(
 
 /** A change as the fleet makes it: the by-id check, under the machine's lock. */
 function change<T>(fn: (target: ChangeTarget) => Promise<T>): Promise<T> {
-  return runtime.runner.withMachineLock({ id: machine.id as MachineId }, context(), async () => fn(await runtime.boxd.checkOwned("fra", "oc-review-api", machine.id as MachineId, context())))
+  return runtime.runner.withMachineLock({ id: machine.id as MachineId }, context(), async () => fn((await runtime.boxd.checkOwned("fra", "oc-review-api", machine.id as MachineId, context())).target))
 }
 
 async function readTarget(): Promise<ReadTarget> {
   return { region: "fra", name: "oc-review-api", listing: await runtime.boxd.list({ maxAgeMs: 0 }, context()), machineId: machine.id as MachineId }
 }
 
-/** The helper's serve read of one folder, which also reports that folder's detached clone. */
-async function serveOf(directory: string): Promise<{ server: string; clone?: string }> {
-  const result = await runtime.boxd.exec(await readTarget(), `python3 ${GUEST_HELPER_PATH}`, { timeoutSeconds: 8, json: false, stdin: JSON.stringify({ action: "serve", directory }) }, context())
-  return JSON.parse(result.stdout.trim())
-}
+/** The port's serve read of one folder, which also reports that folder's detached clone. */
+const serveOf = async (directory: string) => runtime.guest.serve(await readTarget(), { directory }, context())
 
 const setup = (input: Partial<Parameters<Runtime["guest"]["setup"]>[1]> = {}) => change((target) => runtime.guest.setup(target, { directory: DIRECTORY, opencode: "2.2.6", ...input }, context()))
 
@@ -93,7 +90,7 @@ describe("the helper on the machine", () => {
   })
 
   test("a read never uploads: a machine without the helper answers GUEST_FAILED with no copy", async () => {
-    const error = await fail(runtime.guest.serve(await readTarget(), context()))
+    const error = await fail(runtime.guest.serve(await readTarget(), {}, context()))
     expect(error?.code).toBe("GUEST_FAILED")
     expect(error?.what).toContain("a read never uploads one")
     expect(verbs()).not.toContain("machine cp")
@@ -103,14 +100,14 @@ describe("the helper on the machine", () => {
     await setup()
     fake.update((state) => void (state.machines[0]!.status = "hibernated"))
     fake.update((state) => void (state.log = []))
-    expect((await fail(runtime.guest.serve(await readTarget(), context())))?.code).toBe("MACHINE_ASLEEP")
+    expect((await fail(runtime.guest.serve(await readTarget(), {}, context())))?.code).toBe("MACHINE_ASLEEP")
     expect(verbs()).toEqual(["machine list"])
     expect(fake.read().wokenByExec ?? []).toEqual([])
   })
 
   test("serve reports the server and the release, and starts nothing", async () => {
     await setup()
-    expect(await runtime.guest.serve(await readTarget(), context())).toEqual({ server: "up", opencode: "2.2.6" })
+    expect(await runtime.guest.serve(await readTarget(), {}, context())).toEqual({ server: "up", opencode: "2.2.6" })
   })
 
   test("two identical reads in flight share one exec", async () => {
@@ -183,7 +180,10 @@ describe("sessions", () => {
     await change((target) => runtime.guest.prompt(target, { directory: DIRECTORY, sessionId: null, title: "t", text: "go", delivery: "steer" }, context()))
     guestServer.complete("ses_parent")
     guestServer.sessions.set("ses_child", { id: "ses_child", parentID: "ses_parent", busy: false, directory: DIRECTORY, messages: [{ type: "user", text: "sub" }], inbox: [], updated: 5 })
-    const exported = await change((target) => runtime.guest.export(target, { rootId: "ses_parent" }, context()))
+    const answer = await change((target) => runtime.guest.export(target, { rootId: "ses_parent" }, context()))
+    if (answer.outcome !== "exported") throw new Error(answer.reason)
+    const exported = answer
+    expect(exported).toMatchObject({ busy: false, run: { outcome: "completed" } })
     expect(exported.sessions.map((session) => [session.id, session.parentId, session.messages, session.lastMessageId])).toEqual([
       ["ses_parent", null, 2, "msg_1"],
       ["ses_child", "ses_parent", 1, "msg_0"],
@@ -193,6 +193,19 @@ describe("sessions", () => {
     expect(createHash("sha256").update(readFileSync(local)).digest("hex")).toBe(exported.sessions[0]!.sha256)
     expect(exported.guestVersion).toBe("2.2.6")
     expect((await fail(change((target) => runtime.guest.export(target, { rootId: "ses_missing" }, context()))))?.code).toBe("SESSION_MISSING")
+  })
+
+  test("export checks the tree is idle in the same exec: a running tree is busy and writes nothing, unless partial", async () => {
+    await setup()
+    guestServer.next("ses_parent")
+    await change((target) => runtime.guest.prompt(target, { directory: DIRECTORY, sessionId: null, title: "t", text: "go", delivery: "steer" }, context()))
+    fake.update((state) => void (state.log = []))
+    const busy = await change((target) => runtime.guest.export(target, { rootId: "ses_parent" }, context()))
+    expect(busy).toMatchObject({ outcome: "busy", guestVersion: "2.2.6" })
+    expect(existsSync(onDisk("/home/boxd/.opencode-boxd/exports/ses_parent.json"))).toBe(false)
+    expect(verbs()).toEqual(["machine get", "machine exec"])
+    const partial = await change((target) => runtime.guest.export(target, { rootId: "ses_parent", partial: true }, context()))
+    expect(partial).toMatchObject({ outcome: "exported", busy: true })
   })
 
   test("import puts a tree back, parents first, and answers its root", async () => {

@@ -150,6 +150,11 @@ describe("cost and cleanup's surfaces (design §C)", () => {
       expect(host.boxd.calls()).toEqual([])
       // The command's own action asks at every access level, so each cleanup action is a person's prompt.
       expect(await effect(host, "build", "boxd_cleanup")).toBe("ask")
+
+      // The view the TUI renders for /boxd-cleanup answers over its own RPC (package E builds it, package D renders it).
+      const { CleanupViewRpc } = await import("../../src/services.js")
+      const rpc = host.client.rpc as unknown as (definition: object) => { view: (input: object, options: object) => Promise<Record<string, unknown>> }
+      expect(await rpc(CleanupViewRpc).view({}, { location: host.location })).toMatchObject({ confirm: "cleanup-action", command: "/boxd-cleanup", works: [], actions: [] })
     } finally {
       await host.close()
     }

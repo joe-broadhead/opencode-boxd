@@ -8,7 +8,7 @@ import type { CoreServices, Dispose } from "./services.js"
 
 export function createWatch(_core: CoreServices): { readonly watch: FleetWatch; readonly dispose: Dispose } {
   return {
-    watch: { subscribe: () => () => {}, snapshot: () => ({ asOf: new Date(0).toISOString(), works: [] }) },
+    watch: { subscribe: () => () => {}, snapshot: () => ({ asOf: new Date(0).toISOString(), works: [] }), sessionGone: () => {} },
     dispose: async () => {},
   }
 }

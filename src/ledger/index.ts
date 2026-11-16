@@ -51,6 +51,12 @@ export function ledgerPort(store: Ledger, importV0: Pick<ImportV0Port, "state" |
       return store.get(workId)
     },
 
+    async phases(filter, context) {
+      await gate(context)
+      const { works } = await store.refresh()
+      return new Map(Object.entries(works).filter(([, entry]) => filter.closed || entry.state === "open"))
+    },
+
     async list(filter, context) {
       await gate(context)
       const records = await store.list({ closed: filter.closed ?? false })

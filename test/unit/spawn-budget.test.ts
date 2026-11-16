@@ -44,7 +44,7 @@ async function work(name = "oc-review-api") {
 }
 
 function change<T>(id: string, callId: string, fn: (target: ChangeTarget) => Promise<T>, name = "oc-review-api"): Promise<T> {
-  return runtime.runner.withMachineLock({ id: id as MachineId }, context(callId), async () => fn(await runtime.boxd.checkOwned("fra", name as `oc-${string}`, id as MachineId, context(callId))))
+  return runtime.runner.withMachineLock({ id: id as MachineId }, context(callId), async () => fn((await runtime.boxd.checkOwned("fra", name as `oc-${string}`, id as MachineId, context(callId))).target))
 }
 
 async function readTarget(callId: string): Promise<ReadTarget> {
@@ -96,8 +96,9 @@ describe("the steady-state sequences fit their rows", () => {
     expect(budgetProblems(row("boxd_drop", "a saved work"), counter.count(call))).toEqual([])
   })
 
-  test("boxd_drop of a gone machine: one fresh listing and a get in each region", async () => {
+  test("boxd_drop of a gone machine: the by-id check's name get, one fresh listing, and a get of the id in each region", async () => {
     const call = "call_gone"
+    await runtime.boxd.get("fra", "oc-gone", context(call, "boxd_drop")).catch(() => undefined)
     await runtime.boxd.list({ maxAgeMs: 0 }, context(call, "boxd_drop"))
     for (const region of ["fra", "nyc"] as const) await runtime.boxd.get(region, "vm_9999", context(call, "boxd_drop")).catch(() => undefined)
     expect(budgetProblems(row("boxd_drop", "a work whose machine is gone"), counter.count(call))).toEqual([])
@@ -107,7 +108,9 @@ describe("the steady-state sequences fit their rows", () => {
     const machine = await work()
     const call = "call_harvest"
     const exported = await change(machine.id, call, async (target) => {
+      // The export checks the tree is idle itself, in the same exec: no phase read, no listing (a change, not a read).
       const answer = await runtime.guest.export(target, { rootId: "ses_review_api" }, context(call, "boxd_harvest"))
+      if (answer.outcome !== "exported") throw new Error(answer.reason)
       await runtime.boxd.copyFrom(target, answer.sessions[0]!.file, `${counter.fake.dir}/export.json`, context(call, "boxd_harvest"))
       const git = await runtime.guest.git(target, { directory: DIRECTORY }, context(call, "boxd_harvest"))
       if (git.patch) await runtime.boxd.copyFrom(target, git.patch.file, `${counter.fake.dir}/patch.diff`, context(call, "boxd_harvest"))
@@ -137,7 +140,7 @@ describe("the steady-state sequences fit their rows", () => {
     expect(setup).toMatchObject({ server: "up", workspace: "ready", helperUploaded: false })
     // The wait's serve poll is a read: it needs a listing at most 2 s old that holds the new machine.
     const listing = await runtime.boxd.list({ maxAgeMs: 0 }, context(call, "boxd_ensure"))
-    expect(await runtime.guest.serve({ region: "fra", name: "oc-fresh", listing, machineId: null }, context(call, "boxd_ensure"))).toMatchObject({ server: "up" })
+    expect(await runtime.guest.serve({ region: "fra", name: "oc-fresh", listing, machineId: null }, { directory: "/home/boxd/work/fresh" }, context(call, "boxd_ensure"))).toMatchObject({ server: "up" })
     expect(budgetProblems(row("boxd_ensure", "a new work"), counter.count(call))).toEqual([])
     expect(counter.count(call)["machine cp"]).toBeUndefined()
   })
@@ -154,7 +157,7 @@ describe("under load", () => {
         const machine = machines[index % 40]!
         const call = `call_${index}`
         return runtime.runner.withMachineLock({ id: machine.id as MachineId }, { ...context(call), signal: stop.signal }, async () => {
-          const target = await runtime.boxd.checkOwned("fra", machine.name as `oc-${string}`, machine.id as MachineId, context(call))
+          const target = (await runtime.boxd.checkOwned("fra", machine.name as `oc-${string}`, machine.id as MachineId, context(call))).target
           await runtime.boxd.hibernate(target, context(call))
           await runtime.boxd.wake(target, context(call))
         })

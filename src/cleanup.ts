@@ -19,10 +19,9 @@
  *   through the tools RPC. Its children are tagged `cleanup-command`.
  */
 import type { Plugin } from "@opencode/plugin"
-import { COMMAND_STEM } from "./constants.js"
-import type { CostServices } from "./services.js"
+import { CLEANUP_COMMAND, type CleanupView, type CleanupViewProvider, type CostServices } from "./services.js"
 
-export const CLEANUP_COMMAND = `${COMMAND_STEM}-cleanup`
+export { CLEANUP_COMMAND }
 
 type CleanupContext = {
   readonly command: Pick<Plugin.Context["command"], "transform">
@@ -40,4 +39,22 @@ export function registerCleanupCommand(ctx: CleanupContext, _services: CostServi
       },
     }),
   )
+}
+
+/** The view `/boxd-cleanup`'s TUI renders (`CleanupViewRpc`). Package E fills it from `services.cost` and the watcher. */
+export function cleanupView(services: CostServices): CleanupViewProvider {
+  const confirm: CleanupView["confirm"] = services.options.access === "all" ? "cleanup-action" : services.options.access === "ask-changes" ? "tool-action" : "report-only"
+  return {
+    view: async () => ({
+      state: "unavailable",
+      currency: null,
+      perHour: null,
+      works: [],
+      actions: [],
+      automation: "off",
+      confirm,
+      command: `/${CLEANUP_COMMAND}`,
+      note: "The cleanup view is not built yet on this branch.",
+    }),
+  }
 }

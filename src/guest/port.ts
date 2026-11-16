@@ -123,7 +123,7 @@ export function createGuestPort(options: GuestPortOptions): GuestPort {
   }
 
   return {
-    serve: (target, context) => read("serve", target, {}, context, readServe),
+    serve: (target, input, context) => read("serve", target, input.directory !== undefined ? { directory: input.directory } : {}, context, readServe),
     phase: (target, input, context) => read("phase", target, { sessionId: input.sessionId, ...(input.tail ? { tail: input.tail } : {}) }, context, readPhase),
     read: (target, input, context) =>
       read(
@@ -156,7 +156,7 @@ export function createGuestPort(options: GuestPortOptions): GuestPort {
       ),
     interrupt: (target, input, context) => change("interrupt", target, { sessionId: input.sessionId }, context, TIMEOUTS.helperChange, () => undefined),
     upgrade: (target, input, context) => change("upgrade", target, { version: input.version }, context, TIMEOUTS.upgrade, readUpgrade),
-    export: (target, input, context) => change("export", target, { rootId: input.rootId }, context, TIMEOUTS.helperChange, readExport),
+    export: (target, input, context) => change("export", target, { rootId: input.rootId, ...(input.partial ? { partial: true } : {}) }, context, TIMEOUTS.helperChange, readExport),
     import: (target, input, context) => change("import", target, { directory: input.directory, files: input.files }, context, TIMEOUTS.helperChange, readImport),
     git: (target, input, context) => change("git", target, { directory: input.directory, ...(input.rootId ? { rootId: input.rootId } : {}) }, context, TIMEOUTS.helperChange, readGit),
     scrub: (target, context) => change("scrub", target, {}, context, TIMEOUTS.helperChange, readScrub),

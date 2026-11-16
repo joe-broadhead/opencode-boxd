@@ -15,10 +15,15 @@ import {
   WORK_LABELS,
   type BoxdPort,
   type ChangeTarget,
+  type CreatedMachine,
+  type FetchedMachine,
   type Listing,
+  type MachineId,
   type MachineInfo,
   type MachineLockKey,
   type MachineName,
+  type MachineStatus,
+  type Owned,
   type OpContext,
   type ReadTarget,
   type Region,
@@ -112,10 +117,20 @@ export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
     return { takenAt: now(), fresh: true, machines }
   }
 
-  async function get(region: Region, nameOrId: string, context: OpContext): Promise<MachineInfo> {
+  async function get(region: Region, nameOrId: string, context: OpContext): Promise<FetchedMachine> {
     const result = await cli(getArgs(region, nameOrId), context, TIMEOUTS.cliRead, { machine: nameOrId, region })
-    return parseMachine(parseJson(result.stdout, "boxd machine get"), region, "boxd machine get")
+    const info = parseMachine(parseJson(result.stdout, "boxd machine get"), region, "boxd machine get")
+    return ownsLabels(info) ? { ...info, owned: owned(info) } : info
   }
+
+  /**
+   * The one place a change target is made, for a machine this process just read or made with this id, with the status
+   * that same answer showed. Only `get`, `create` and `checkOwned` call it.
+   */
+  const owned = (info: { readonly region: Region; readonly name: string; readonly id: MachineId; readonly status: MachineStatus }): Owned => ({
+    target: { region: info.region, name: info.name as MachineName, machineId: info.id, checkedAt: now() } as ChangeTarget,
+    status: info.status,
+  })
 
   async function exec(target: ReadTarget | ChangeTarget, command: string, settings: { readonly timeoutSeconds: number; readonly json: boolean; readonly stdin?: string }, context: OpContext) {
     const guard = readGuard(target, context.pool)
@@ -183,11 +198,11 @@ export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
       if (info.id !== machineId) {
         throw boxdError("NOT_OURS", `${name} in ${region} is machine ${info.id}, not the recorded ${machineId}. Nothing was changed.`, { machine: name, region, found: info.id })
       }
-      // The one place a ChangeTarget is made: the name was resolved to the recorded id in this call.
-      return { region, name: name as MachineName, machineId, checkedAt: now() } as ChangeTarget
+      // The name was resolved to the recorded id in this call.
+      return owned(info)
     },
 
-    async create(input, context): Promise<MachineInfo> {
+    async create(input, context): Promise<CreatedMachine> {
       const key: MachineLockKey = { create: { region: input.region, name: input.name as MachineName } }
       if (holds && !holds(key)) throw new Error(`A create of ${input.name} must run inside runner.withMachineLock({ create: { region, name } }).`)
       const args = input.kind === "work" ? createWorkArgs(input) : createBuilderArgs(input)
@@ -203,7 +218,7 @@ export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
       listing = undefined
       // `machine new --json` names the machine and its id only. A create never asks for --shared or --isolated, so the
       // machine is private and not isolated; its labels are the ones set here, merged over the image's.
-      return {
+      const info: MachineInfo = {
         id: created.id,
         name: created.name,
         region: input.region,
@@ -213,6 +228,8 @@ export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
         sharing: "private",
         isolated: false,
       }
+      // This process made it and boxd answered its id: it is ours to change.
+      return { ...info, owned: owned(info) }
     },
 
     async wake(target, context) {
@@ -337,4 +354,13 @@ export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
 /** Only `checkOwned` makes a target with `checkedAt`: the proof that the name was resolved to the id in this call. */
 export function isChangeTarget(target: ReadTarget | ChangeTarget): target is ChangeTarget {
   return "checkedAt" in target && typeof (target as ChangeTarget).checkedAt === "number" && "machineId" in target && typeof target.machineId === "string" && !("listing" in target)
+}
+
+/**
+ * The plugin's ownership labels (design §3.4 step 2): `owner=opencode-boxd`, or v0's `role=session` with `work=<id>`
+ * whose `oc-<id>` is the machine's name.
+ */
+export function ownsLabels(info: Pick<MachineInfo, "name" | "labels">): boolean {
+  if (info.labels.owner === WORK_LABELS.owner) return true
+  return info.labels.role === WORK_LABELS.role && typeof info.labels.work === "string" && info.name === `oc-${info.labels.work}`
 }

@@ -8,7 +8,7 @@ import { homedir } from "node:os"
 import { delimiter, isAbsolute, join } from "node:path"
 import { Plugin } from "@opencode/plugin"
 import { startAutomation } from "./automation.js"
-import { registerCleanupCommand } from "./cleanup.js"
+import { cleanupView, registerCleanupCommand } from "./cleanup.js"
 import { PLUGIN_ID } from "./constants.js"
 import { createCost } from "./cost/index.js"
 import { createRuntime } from "./exec/runtime.js"
@@ -21,7 +21,7 @@ import { createImportV0 } from "./import-v0.js"
 import { createLedger } from "./ledger/index.js"
 import { parseOptions } from "./options.js"
 import { defaultRules, registerDefaultRules } from "./permissions.js"
-import { stopAll, type CoreServices, type CostServices, type Dispose, type FleetServices, type HostServices } from "./services.js"
+import { registerCleanupView, stopAll, type CoreServices, type CostServices, type Dispose, type FleetServices, type HostServices } from "./services.js"
 import { loadSkills, registerSkills } from "./skills.js"
 import { registerStatusCommand, registerStatusRpc, statusReader } from "./status.js"
 import { ownedMethods, toolTransform, type RegistryDeps } from "./tools.js"
@@ -106,6 +106,8 @@ export function createBoxdPlugin(seam: BoxdSeam = {}) {
         // Cost and cleanup (design §C): the session hooks and events, the person's /boxd-cleanup, and automation.
         ...(await registerCostHooks(ctx, costServices)),
         await registerCleanupCommand(ctx, costServices).then((registration) => registration.dispose),
+        // The view D's TUI renders for /boxd-cleanup, built by E.
+        await registerCleanupView(ctx.rpc, cleanupView(costServices)).then((registration) => registration.dispose),
         startAutomation(costServices),
       ]
       return () => stopAll(stops.reverse(), (problem) => report("dispose", problem))

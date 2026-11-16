@@ -30,7 +30,7 @@ describe("the runtime on a stock host", () => {
             const op = { call: { callId: context.id, source: "boxd_exec" as const }, signal: context.signal, pool: "exec" as const }
             try {
               await runtime.runner.withMachineLock({ id: machine.id as MachineId }, op, async () => {
-                const target = await runtime.boxd.checkOwned("fra", "oc-stop", machine.id as MachineId, op)
+                const target = (await runtime.boxd.checkOwned("fra", "oc-stop", machine.id as MachineId, op)).target
                 return runtime.boxd.exec(target, marker, { timeoutSeconds: 120, json: false }, op)
               })
               return { output: { state: "ran" }, content: "ran" }

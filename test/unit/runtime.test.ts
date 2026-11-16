@@ -30,12 +30,12 @@ describe("dispose", () => {
     await runtime.boxd.assertLaptopCli(context("warm"))
     // Four boxd_execs (the exec pool, no machine lock), and a change that holds oc-a's lock while it runs one more.
     const long = Array.from({ length: CAPS.exec }, async (_, index) => {
-      const target = await runtime.boxd.checkOwned("fra", "oc-a", id, context(`long_${index}`))
+      const target = (await runtime.boxd.checkOwned("fra", "oc-a", id, context(`long_${index}`))).target
       return outcome(runtime.boxd.exec(target, "sleep 597", { timeoutSeconds: 600, json: false }, context(`long_${index}`)))
     })
     const holder = outcome(
       runtime.runner.withMachineLock({ id }, context("holder"), async () => {
-        const target = await runtime.boxd.checkOwned("fra", "oc-a", id, context("holder"))
+        const target = (await runtime.boxd.checkOwned("fra", "oc-a", id, context("holder"))).target
         return runtime.boxd.exec(target, "sleep 597", { timeoutSeconds: 600, json: false }, { ...context("holder"), pool: "foreground" })
       }),
     )

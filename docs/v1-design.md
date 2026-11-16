@@ -932,9 +932,9 @@ asserts its row.
 | `boxd_ensure`, new work, wait | 20–40 | 1 all-region listing (§3.4 step 2) + create + `setup` + 1 fresh listing for the `serve` poll (a read, so the read rule needs it) + polls (at most 6, with the limit and snapshot caches warm); adopting: listing + 1 `get` + `setup` + fresh listing + polls (at most 6) |
 | `boxd_submit` | 6–8 | 1 listing (≤ 2 s) + 1 `get` (the by-id check, §4.1) + 1 prompt exec (+1 `cp` per file) |
 | `boxd_job` | 4–5 | 1 listing (≤ 2 s) + 1 read exec |
-| `boxd_harvest`, 1 session | 7–9 | 1 `get` + 1 export exec + 1 `cp` + 1 git exec + 1 patch `cp` + 2 laptop imports (delete, import) |
+| `boxd_harvest`, 1 session | 7–9 | 1 `get` + 1 export exec (which checks the tree is idle and reads the run's outcome itself; a change exec, so no listing) + 1 `cp` + 1 git exec + 1 patch `cp` + 2 laptop imports (delete, import) |
 | `boxd_sleep` | 3 | 1 `get` + 1 `hibernate` |
-| `boxd_drop` | 4–6 | 1 git exec + 1 `get` + 1 `remove`; gone: 1 fresh list + 1 `get` per region |
+| `boxd_drop` | 4–6 | 1 git exec + 1 `get` + 1 `remove`; gone: the by-id check's `get` of the name, then 1 fresh list + 1 `get` of the id per region (3 `get`s) |
 
 (Day 0) Every change to an existing work's machine pays the one `get` of §4.1's by-id check; the table counts it.
 `test/support/spawn-count.ts` holds these rows as `SPAWN_BUDGETS`.
@@ -1668,6 +1668,19 @@ A list the owner can forward:
 - **Staged writes.** Harvest never writes a ledger path itself: `LedgerPort.stageFile`/`commitFile` replace an export or
   `patch.diff`, and `stageFolder`/`commitFolder` swap `untracked/` in with one rename after checking every file;
   `discard` drops a staged copy that failed.
+- **Cached phases.** `LedgerPort.phases` returns the index's phase per work (the `to` of its last event), with state,
+  region and `saved`, so the watcher starts without replaying `events.jsonl` or reading a guest.
+- **Orphans.** `WorkSnapshot.orphaned` (`deleted`, `archived` or `reparented`, with the session) is written only by the
+  watcher (D), in memory, from its sweep's `ctx.session.get` check and from `FleetWatch.sessionGone`, which E's
+  session-events subscription calls. E reads it to harvest and sleep the orphan; `orphanHours` stays E's own test.
+- **The cleanup view.** `CleanupView` and `CleanupViewRpc` (`src/services.ts`): E's `cleanupView` provider builds it,
+  D's TUI renders it and its buttons run `/boxd-cleanup`, which confirms each action with the host's prompt.
+- **Owned targets.** `checkOwned` returns `{ target, status }`; `create` and a `get` of a machine with the plugin's
+  labels carry the same as `owned`, so a fresh create or adoption needs no second `get`. Only the boxd port makes a
+  target.
+- **Serve and export.** `GuestPort.serve` takes the work `directory` and reports its detached clone. `export` checks the
+  tree is idle in the same exec and answers `exported` (with `busy` for a partial export, and the root's run outcome)
+  or `busy` with its reason, writing nothing; harvest needs no phase read or listing first.
 - **Disposal.** The runtime, the ledger and the import port each have `dispose()`. The plugin's cleanup stops, in order:
   the registrations and E's loops, the watcher, the ledger and the import (heartbeats stopped, locks released), and the
   runtime last (`runner.dispose()` aborts every in-flight child, a long `boxd_exec` included). Each stop is bounded at

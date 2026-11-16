@@ -178,6 +178,17 @@ describe("the ledger port over a published ledger", () => {
     expect((await store.refresh()).works.alpha?.phase).toBe("idle")
   })
 
+  test("phases: the index's cached phase per work, open ones unless closed is asked for, with no event replay", async () => {
+    const { ledger } = await port()
+    await ledger.update(["alpha", "beta", "gone"], async () => ({ write: [record("alpha"), record("beta"), record("gone", { state: "closed", closed: { at: "2026-11-15T12:00:00.000Z", how: "dropped" } })], value: undefined }), context)
+    await ledger.appendEvent({ at: "2026-11-15T12:00:00.000Z", workId: "alpha", from: null, to: "busy" }, context)
+    const open = await ledger.phases({}, context)
+    expect([...open.keys()].sort()).toEqual(["alpha", "beta"])
+    expect(open.get("alpha")).toMatchObject({ state: "open", region: "fra", phase: "busy", saved: "none" })
+    expect(open.get("beta")?.phase).toBeNull()
+    expect((await ledger.phases({ closed: true }, context)).get("gone")).toMatchObject({ state: "closed", phase: "closed" })
+  })
+
   test("staged writes pass the gate: a blocked id is refused, a verified file lands, a bad one is discarded", async () => {
     const { ledger } = await port()
     expect((await errorOf(ledger.stageFile("blocked-id", "patch.diff", context))).code).toBe("IMPORT_V0_FAILED")

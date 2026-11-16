@@ -4,7 +4,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { createBoxdCli } from "../../src/boxd/cli.js"
+import { createBoxdCli, isChangeTarget } from "../../src/boxd/cli.js"
 import { BoxdError } from "../../src/errors.js"
 import { createRunner } from "../../src/exec/runner.js"
 import type { BoxdPort, ChangeTarget, MachineId, OpContext, ReadTarget } from "../../src/ports.js"
@@ -30,7 +30,7 @@ afterAll(() => {})
 
 /** A change as the fleet makes it: the by-id check under the machine lock. */
 async function owned<T>(region: "fra" | "nyc", name: `oc-${string}`, id: string, fn: (target: ChangeTarget) => Promise<T>): Promise<T> {
-  return runner.withMachineLock({ id: id as MachineId }, context(), async () => fn(await boxd.checkOwned(region, name, id as MachineId, context())))
+  return runner.withMachineLock({ id: id as MachineId }, context(), async () => fn((await boxd.checkOwned(region, name, id as MachineId, context())).target))
 }
 
 describe("reads", () => {
@@ -49,6 +49,17 @@ describe("reads", () => {
     // A fresh listing is its own call, and is marked fresh.
     expect((await boxd.list({ maxAgeMs: 0 }, context())).fresh).toBe(true)
     expect(fake.calls()).toHaveLength(2)
+  })
+
+  test("get hands back a change target only for a machine whose labels show the plugin owns it", async () => {
+    const ours = fake.machine({ name: "oc-a", region: "fra", labels: { role: "session", owner: "opencode-boxd", work: "a" } })
+    const v0 = fake.machine({ name: "oc-b", region: "fra", labels: { role: "session", work: "b" } })
+    fake.machine({ name: "oc-c", region: "fra", labels: { role: "session", work: "other" } })
+    fake.machine({ name: "oc-d", region: "fra" })
+    expect((await boxd.get("fra", "oc-a", context())).owned).toMatchObject({ target: { region: "fra", name: "oc-a", machineId: ours.id }, status: "running" })
+    expect((await boxd.get("fra", "oc-b", context())).owned?.target).toMatchObject({ machineId: v0.id })
+    expect((await boxd.get("fra", "oc-c", context())).owned).toBeUndefined()
+    expect((await boxd.get("fra", "oc-d", context())).owned).toBeUndefined()
   })
 
   test("get answers the machine and its id in the region asked; a not-found answer is classified, never guessed", async () => {
@@ -97,6 +108,9 @@ describe("changes", () => {
     )
     const stored = fake.read().machines[0]!
     expect(info).toMatchObject({ id: stored.id, name: "oc-review-api", region: "nyc", sharing: "private", isolated: false })
+    // This process made it with this id, so the create hands back a change target: no second get to act on it.
+    expect(info.owned).toMatchObject({ target: { region: "nyc", name: "oc-review-api", machineId: stored.id }, status: "starting" })
+    expect(isChangeTarget(info.owned.target)).toBe(true)
     expect(stored).toMatchObject({ vcpu: 4, autoSuspend: 0, autoHibernate: 7200, ignoreOutbound: "off", labels: { role: "session", owner: "opencode-boxd", work: "review-api", tier: "x" } })
     expect(stored.deleteAfter).toBeUndefined()
   })
@@ -159,9 +173,14 @@ describe("changes", () => {
     expect(fake.read().snapshots[0]).toMatchObject({ region: "nyc", name: "oc-golden-2.2.6-4x16", vcpu: 4 })
   })
 
+  test("checkOwned yields the target and the status the same get showed", async () => {
+    const machine = fake.machine({ name: "oc-a", region: "fra", status: "hibernated" })
+    expect(await boxd.checkOwned("fra", "oc-a", machine.id as MachineId, context())).toMatchObject({ target: { machineId: machine.id }, status: "hibernated" })
+  })
+
   test("a change outside the machine lock, or on a target checkOwned did not make, is a bug and runs nothing", async () => {
     const machine = fake.machine({ name: "oc-a", region: "fra" })
-    const target = await boxd.checkOwned("fra", "oc-a", machine.id as MachineId, context())
+    const target = (await boxd.checkOwned("fra", "oc-a", machine.id as MachineId, context())).target
     await expect(boxd.hibernate(target, context())).rejects.toThrow(/withMachineLock/)
     const forged = { region: "fra", name: "oc-a", machineId: machine.id } as unknown as ChangeTarget
     await expect(runner.withMachineLock({ id: machine.id as MachineId }, context(), () => boxd.remove(forged, context()))).rejects.toThrow(/checkOwned/)
@@ -170,7 +189,7 @@ describe("changes", () => {
 
   test("boxd_exec, in the exec pool, takes no machine lock; any other exec on a change target needs it", async () => {
     const machine = fake.machine({ name: "oc-a", region: "fra" })
-    const target = await boxd.checkOwned("fra", "oc-a", machine.id as MachineId, context())
+    const target = (await boxd.checkOwned("fra", "oc-a", machine.id as MachineId, context())).target
     expect((await boxd.exec(target, "echo ok", { timeoutSeconds: 5, json: false }, { ...context(), pool: "exec" })).stdout).toBe("ok\n")
     await expect(boxd.exec(target, "echo ok", { timeoutSeconds: 5, json: false }, context())).rejects.toThrow(/withMachineLock/)
   })

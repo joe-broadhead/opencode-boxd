@@ -193,13 +193,21 @@ function marks(action: string, raw: unknown): SessionMarks {
 }
 
 export function readExport(answer: Json): ExportAnswer {
-  if (!Array.isArray(answer.sessions) || answer.sessions.length === 0 || !string(answer.guestVersion)) throw shape("export")
+  if (!string(answer.guestVersion)) throw shape("export")
+  if (answer.outcome === "busy") {
+    if (!string(answer.reason)) throw shape("export")
+    return { outcome: "busy", reason: excerpt(answer.reason, TEXT_LIMIT) ?? "The session is running.", guestVersion: answer.guestVersion }
+  }
+  if (answer.outcome !== "exported" || typeof answer.busy !== "boolean" || !Array.isArray(answer.sessions) || answer.sessions.length === 0) throw shape("export")
   const sessions = answer.sessions.map((raw) => {
     const item = raw as Json
     if (!count(item?.bytes) || !string(item.sha256) || !SHA.test(item.sha256)) throw shape("export")
     return { ...marks("export", item), file: guestFile("export", item.file), bytes: item.bytes, sha256: item.sha256 }
   })
-  return { sessions, guestVersion: answer.guestVersion }
+  const run = (answer.run ?? {}) as Json
+  const outcome = string(run.outcome) && OUTCOMES.has(run.outcome) ? (run.outcome as RunOutcome) : null
+  const error = outcome === "failed" ? errorLine(run.error) : undefined
+  return { outcome: "exported", busy: answer.busy, run: { outcome, ...(error ? { error } : {}) }, sessions, guestVersion: answer.guestVersion }
 }
 
 const files = (action: string, value: unknown) => {

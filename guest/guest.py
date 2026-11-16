@@ -797,17 +797,49 @@ def action_upgrade(request):
     emit({"opencode": current})
 
 
+def export_run(request, sid):
+    """The root session's last run, for the export's answer: the same reading as phase's, in the same exec."""
+    info = session_info(request, sid)
+    if not isinstance(info, dict):
+        return {"outcome": None}
+    time_info = info.get("time") if isinstance(info.get("time"), dict) else {}
+    busy, idle = stamp(time_info.get("busy")), stamp(time_info.get("idle"))
+    if busy is not None and (idle is None or busy > idle):
+        return {"outcome": "aborted"}
+    run = {"outcome": OUTCOMES.get(info.get("outcome"))}
+    try:
+        last = newest(request, sid, "idle")
+    except GuestError:
+        last = []
+    if last:
+        run["outcome"] = run["outcome"] or OUTCOMES.get(last[0].get("outcome"))
+        failure = last[0].get("error")
+        if run["outcome"] == "failed" and isinstance(failure, dict):
+            run["error"] = {"type": str(failure.get("type") or "error")[:60], "message": str(failure.get("message") or "")[:400]}
+    return run
+
+
 def action_export(request):
+    """Exports the tree, after its own busy check in this one exec: a running tree answers `busy` and writes nothing,
+    unless the harvest is partial."""
     root = session_id(request.get("rootId"))
+    partial = request.get("partial") is True
+    version = server_version(request) or opencode_version() or ""
+    sessions_tree = tree(request, root)
+    active = http(request, "GET", "/api/session/active") or {}
+    running = [sid for sid, _parent in sessions_tree if sid in active]
+    if running and not partial:
+        emit({"outcome": "busy", "reason": f"{len(running)} session(s) of the tree are running; a harvest needs the tree idle, or partial: true.", "guestVersion": version})
+        return
     os.makedirs(EXPORTS, mode=0o700, exist_ok=True)
     sessions = []
-    for sid, parent in tree(request, root):
+    for sid, parent in sessions_tree:
         exported = export_of(request, sid)
         path = os.path.join(EXPORTS, f"{sid}.json")
         write_file(path, json.dumps(exported, separators=(",", ":")).encode(), 0o600)
         size, sha = digest(path)
         sessions.append({**marks(exported, sid, parent), "file": guest(path), "bytes": size, "sha256": sha})
-    emit({"sessions": sessions, "guestVersion": server_version(request) or opencode_version() or ""})
+    emit({"outcome": "exported", "busy": bool(running), "run": export_run(request, root), "sessions": sessions, "guestVersion": version})
 
 
 def action_import(request):

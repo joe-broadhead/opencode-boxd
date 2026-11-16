@@ -18,7 +18,7 @@
  *   while waiting for a lock, a golden build, a poll interval or another pool.
  */
 
-import type { Phase, SavedState, SleptBy, WorkRecord } from "./ledger/types.js"
+import type { IndexEntry, Phase, SavedState, SleptBy, WorkRecord } from "./ledger/types.js"
 
 // ── Vocabulary ────────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -69,6 +69,25 @@ export interface MachineInfo extends Omit<MachineRow, "id" | "isolated"> {
   readonly id: MachineId
   readonly isolated: boolean
 }
+
+/**
+ * A machine the plugin may change, as every owning call yields it: the branded target and the status the same boxd
+ * answer showed. `checkOwned` returns one; `create` and `get` carry one as `owned`.
+ */
+export interface Owned {
+  readonly target: ChangeTarget
+  readonly status: MachineStatus
+}
+
+/**
+ * A machine this process just read, with `owned` when it is provably ours: its labels carry the plugin's ownership
+ * (`owner=opencode-boxd`, or v0's `role=session` with `work=<id>` matching `oc-<id>`). Saves the second `get` a
+ * `checkOwned` would spend. Without those labels there is no `owned`: adopting it (`adopt: true`) goes through
+ * `checkOwned` with the id this `get` read.
+ */
+export type FetchedMachine = MachineInfo & { readonly owned?: Owned }
+/** A machine this process just made: `owned` targets the id `machine new --json` answered. */
+export type CreatedMachine = MachineInfo & { readonly owned: Owned }
 
 /** A listing and when it was taken. Phases may reuse one up to 10 s old; a guest read needs one at most 2 s old. */
 export interface Listing {
@@ -337,14 +356,18 @@ export interface BoxdPort {
   assertLaptopCli(context: OpContext): Promise<void>
   /** One call for every machine in every region. `maxAgeMs: 0` takes a fresh one; concurrent readers share a flight. */
   list(options: { readonly maxAgeMs: number }, context: OpContext): Promise<Listing>
-  /** `machine get <name or id> --region R --json`. A failure throws with `details.kind`, a `BoxdFailureKind`. */
-  get(region: Region, nameOrId: string, context: OpContext): Promise<MachineInfo>
+  /**
+   * `machine get <name or id> --region R --json`. A failure throws with `details.kind`, a `BoxdFailureKind`. `owned` is
+   * set only when the labels show the plugin owns it (`FetchedMachine`); the id is the one this `get` just read.
+   */
+  get(region: Region, nameOrId: string, context: OpContext): Promise<FetchedMachine>
   /**
    * Resolves `oc-<id>` in its region to the recorded id: the check before every change (design §4.1). Throws `NOT_OURS`
    * when the name now has another id, and a classified failure when the name is not found.
    */
-  checkOwned(region: Region, name: MachineName, machineId: MachineId, context: OpContext): Promise<ChangeTarget>
-  create(input: CreateWork | CreateBuilder, context: OpContext): Promise<MachineInfo>
+  checkOwned(region: Region, name: MachineName, machineId: MachineId, context: OpContext): Promise<Owned>
+  /** Creates the machine and records nothing; `owned` targets the id `machine new --json` answered. */
+  create(input: CreateWork | CreateBuilder, context: OpContext): Promise<CreatedMachine>
   wake(target: ChangeTarget, context: OpContext): Promise<void>
   hibernate(target: ChangeTarget, context: OpContext): Promise<void>
   remove(target: ChangeTarget, context: OpContext): Promise<void>
@@ -485,11 +508,21 @@ export interface PromptAnswer {
   readonly model?: string
 }
 
-/** `export`: each session of the tree written to `~/.opencode-boxd/exports/<id>.json` on the guest, and its marks. */
-export interface ExportAnswer {
-  readonly sessions: ReadonlyArray<SessionMarks & { readonly file: string; readonly bytes: number; readonly sha256: string }>
-  readonly guestVersion: string
-}
+/**
+ * `export`, with its own busy check in the same exec (no phase read first): a running tree answers `busy` with the
+ * reason and writes nothing, unless the call is `partial`. Otherwise each session of the tree is written to
+ * `~/.opencode-boxd/exports/<id>.json` on the guest, with its marks, and the root's last run (`run`) comes back too.
+ */
+export type ExportAnswer =
+  | {
+      readonly outcome: "exported"
+      /** True only for a partial export of a running tree. */
+      readonly busy: boolean
+      readonly run: { readonly outcome: RunOutcome | null; readonly error?: string }
+      readonly sessions: ReadonlyArray<SessionMarks & { readonly file: string; readonly bytes: number; readonly sha256: string }>
+      readonly guestVersion: string
+    }
+  | { readonly outcome: "busy"; readonly reason: string; readonly guestVersion: string }
 
 /** `git`: the tree's state, with the patch and the untracked files written on the guest, and the session marks. */
 export interface GitAnswer {
@@ -515,7 +548,8 @@ export interface ScrubAnswer {
 export interface GuestPort {
   // Reads: the read rule, the v1 helper already on the machine, no upload, no ledger write. A guest with only v0's
   // helper is read through `ImportV0Port.readPhase`, never through this port.
-  serve(target: ReadTarget, context: OpContext): Promise<ServeAnswer>
+  /** With `directory`, also the detached clone's progress for that work folder, so a wait needs no second `setup`. */
+  serve(target: ReadTarget, input: { readonly directory?: string }, context: OpContext): Promise<ServeAnswer>
   phase(target: ReadTarget, input: { readonly sessionId: string; readonly tail?: number }, context: OpContext): Promise<PhaseAnswer>
   read(
     target: ReadTarget,
@@ -529,7 +563,7 @@ export interface GuestPort {
   prompt(target: ChangeTarget, input: PromptInput, context: OpContext): Promise<PromptAnswer>
   interrupt(target: ChangeTarget, input: { readonly sessionId: string }, context: OpContext): Promise<void>
   upgrade(target: ChangeTarget, input: { readonly version: string }, context: OpContext): Promise<{ readonly opencode: string }>
-  export(target: ChangeTarget, input: { readonly rootId: string }, context: OpContext): Promise<ExportAnswer>
+  export(target: ChangeTarget, input: { readonly rootId: string; readonly partial?: boolean }, context: OpContext): Promise<ExportAnswer>
   /** Imports stored exports copied up with `machine cp`, parents first (`boxd_resume`). */
   import(target: ChangeTarget, input: { readonly directory: string; readonly files: readonly string[] }, context: OpContext): Promise<{ readonly rootId: string }>
   git(target: ChangeTarget, input: { readonly directory: string; readonly rootId?: string }, context: OpContext): Promise<GitAnswer>
@@ -586,6 +620,14 @@ export interface WorkSnapshot {
   readonly touchedAt?: string
   /** The root coordinator session its notices go to. */
   readonly notify?: string
+  /**
+   * The work's coordinator session is gone: deleted, archived, or moved under another session (design §3.13, §C.3).
+   * Only the watcher (package D) writes it, in memory: its sweep's `ctx.session.get` check is the ground truth, and
+   * `FleetWatch.sessionGone` is the fast path for the session events. Package E reads it to harvest and sleep the
+   * orphan (a busy one after it finishes). A work untouched for `orphanHours` is E's own test, from `touchedAt`, not
+   * this flag. Cleared when a model-path call subscribes a live coordinator again.
+   */
+  readonly orphaned?: { readonly why: "deleted" | "archived" | "reparented"; readonly session: string; readonly at: string }
 }
 
 export interface FleetSnapshot {
@@ -599,6 +641,12 @@ export interface FleetWatch {
   /** Calls `listener` for every phase change after the ledger appended it, in `seq` order; returns the unsubscribe. */
   subscribe(listener: (event: WorkEvent) => void): () => void
   snapshot(): FleetSnapshot
+  /**
+   * A coordinator session is gone, from package E's `session.deleted`/`session.archived` subscription (the fast path):
+   * the watcher marks every open work whose `notify` is that session `orphaned`, and clears their `notify`. The
+   * watcher's own sweep finds the same within one sweep when an event is missed. Never throws.
+   */
+  sessionGone(sessionID: string, why: "deleted" | "archived"): void
 }
 
 // ── The ledger port (package B: `src/ledger/*`) ─────────────────────────────────────────────────────────────────────
@@ -652,6 +700,13 @@ export interface LedgerPort {
   ready(context: OpContext): Promise<void>
   /** One record, or undefined for an id the ledger has never seen (open or closed). */
   get(workId: string, context: OpContext): Promise<WorkRecord | undefined>
+  /**
+   * The phase the index holds for each work, with its state, region and `saved`: what the ledger already knows (the
+   * `to` of each work's last appended event), with no guest or CLI call and no replay of `events.jsonl`. The watcher
+   * starts from it. `phase` is null for a work that has had no event yet; a closed work is `closed`. Open works only,
+   * unless `closed` is set.
+   */
+  phases(filter: { readonly closed?: boolean }, context: OpContext): Promise<ReadonlyMap<string, IndexEntry>>
   /** Open records from the index (refreshed by mtime); closed ones only when asked for. */
   list(filter: { readonly closed?: boolean; readonly workIds?: readonly string[]; readonly region?: Region }, context: OpContext): Promise<readonly WorkRecord[]>
   /**
