@@ -18,6 +18,7 @@ import type { SubmitResult } from "../results.js"
 import type { CallContext } from "../tools.js"
 import {
   adoptIfV0,
+  asleep,
   assertWorkIdInput,
   checkStop,
   listed,
@@ -27,6 +28,7 @@ import {
   openRecord,
   optionalString,
   pause,
+  untilRunning,
   withTarget,
   type ItemContext,
   type Services,
@@ -102,18 +104,23 @@ export async function submitWork(services: Services, item: SubmitItem, context: 
   assertTotal(files)
   const notify = await subscription(services, first, item, context.call)
 
-  // The machine must be up: a starting one is waited for, and a hibernated one is woken.
+  // The machine must be up: a starting one is waited for here, and a hibernated one is woken under its lock.
   const machine = await machineOf(services, first, op)
-  const wake = await waitUntilUp(services, first, machine.region, op)
-  if (wake) await services.cost.assertBudget(op.call)
+  await waitUntilUp(services, first, machine.region, op)
 
   return services.ledger.update(
     [item.workId],
     async (current) => {
       const record = openRecord(current.get(item.workId), item.workId)
       checkStop(op.signal, false)
-      const { answer, adopted } = await withTarget(services, record, machine, op, async (target) => {
-        if (wake) await services.boxd.wake(target, op)
+      const lastSubmit = { at: nowIso(services), delivery: item.mode, ...(context.call ? { by: context.call.sessionID } : {}) }
+      const { answer, adopted } = await withTarget(services, record, machine, op, async ({ target, status }) => {
+        if (asleep(status)) {
+          // A submit is a decision to spend: a reached refuse budget wakes nothing.
+          await services.cost.assertBudget(op.call)
+          await services.boxd.wake(target, op)
+          await untilRunning(services, target, op)
+        }
         const adopted = await adoptIfV0(services, record, target, op)
         const staged = []
         for (const [index, file] of files.entries()) {
@@ -121,6 +128,9 @@ export async function submitWork(services: Services, item: SubmitItem, context: 
           await services.boxd.copyTo(target, file.path, guestPath, op)
           staged.push({ staged: guestPath, to: file.to })
         }
+        // The prompt is recorded before it is sent (L-1): a call stopped or failed after the guest admitted it still
+        // leaves the work not saved, so status, the selectors and sleep's warning never take it for saved.
+        await services.ledger.update([record.workId], async (now) => ({ write: [{ ...openRecord(now.get(record.workId), record.workId), lastSubmit }], value: undefined }), op)
         const answer = await services.guest.prompt(
           target,
           {
@@ -136,7 +146,7 @@ export async function submitWork(services: Services, item: SubmitItem, context: 
         )
         return { answer, adopted }
       })
-      const at = nowIso(services)
+      const at = lastSubmit.at
       const moved: MovedFile[] = files.map((file) => ({ path: file.to, bytes: file.bytes, sha256: file.sha256, at }))
       const session = { ...record.session, rootId: answer.sessionId, ...(notify.value ? { notify: notify.value } : {}) }
       if (notify.clear) delete (session as { notify?: string }).notify
@@ -144,8 +154,8 @@ export async function submitWork(services: Services, item: SubmitItem, context: 
         ...record,
         machineId: machine.machineId,
         session,
-        lastSubmit: { at, delivery: item.mode, ...(context.call ? { by: context.call.sessionID } : {}) },
-        touchedAt: at,
+        lastSubmit,
+        touchedAt: nowIso(services),
         ...(adopted ? { guestHelper: "v1" as const } : {}),
         ...(moved.length ? { files: { in: [...(record.files?.in ?? []).filter((file) => !moved.some((item) => item.path === file.path)), ...moved], out: record.files?.out ?? [] } } : {}),
       }
@@ -176,20 +186,17 @@ const nextAfter = (workId: string, delivery: SubmitResult["delivery"]) =>
     : `A notice says when the work goes idle; boxd_job({ workId: "${workId}" }) reads it now. Then boxd_harvest({ workId: "${workId}" }).`
 
 /**
- * Waits until the machine is up (design §3.5): a listing at most 2 s old, then every 3 s while it is starting, for at
- * most 45 s, probed fresh once before the refusal. Returns true when it is hibernated and must be woken. A machine the
- * listing does not show goes on to the by-id check, which says what boxd found.
+ * Waits while the machine is starting (design §3.5): a listing at most 2 s old, then every 3 s, for at most 45 s,
+ * probed fresh once before the refusal. Any other state goes on to the by-id check, whose own answer decides a wake.
  */
-async function waitUntilUp(services: Services, record: WorkRecord, region: NonNullable<WorkRecord["region"]>, op: OpContext): Promise<boolean> {
+async function waitUntilUp(services: Services, record: WorkRecord, region: NonNullable<WorkRecord["region"]>, op: OpContext): Promise<void> {
   const deadline = Date.now() + TIMEOUTS.submitStarting
   let fresh = false
   for (;;) {
     const status: MachineStatus | undefined = fresh
       ? (await services.boxd.list({ maxAgeMs: 0 }, op)).machines.find((row) => row.name === record.machine && row.region === region)?.status
       : (await listed(services, region, record.machine, op)).row?.status
-    if (status === undefined || status === "running") return false
-    if (status === "hibernated" || status === "standby" || status === "stopped") return true
-    if (status === "destroyed") return false
+    if (status === undefined || status === "running" || status === "destroyed" || asleep(status)) return
     if (fresh) throw boxdError("MACHINE_STARTING", `${record.machine} is still ${status} after ${TIMEOUTS.submitStarting / 1000} s.`)
     checkStop(op.signal, false)
     if (Date.now() >= deadline) {

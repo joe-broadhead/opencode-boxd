@@ -60,6 +60,16 @@ export async function resolveLaptopPath(path: string, roots: readonly string[], 
   return real
 }
 
+/**
+ * An existing laptop folder, resolved through every symlink, is still inside a real root: the check after a `mkdir`, so
+ * a symlink put in a destination's way since it was resolved is refused before anything is written there.
+ */
+export async function assertInsideRoots(folder: string, roots: readonly string[]): Promise<void> {
+  const real = await realpath(folder)
+  const realRoots = await Promise.all(roots.map(async (root) => realpath(root).catch(() => resolve(root))))
+  if (!realRoots.some((root) => inside(root, real))) throw refused(folder, roots)
+}
+
 /** The root list: the project first, then the user's allowed roots. */
 export function rootsOf(projectDirectory: string, allowedRoots: readonly string[]): string[] {
   return [projectDirectory, ...allowedRoots]

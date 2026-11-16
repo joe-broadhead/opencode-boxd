@@ -36,6 +36,8 @@ export function checkDrop(input: Record<string, unknown>): DropItem {
 const notFound = (error: unknown) => error instanceof BoxdError && error.code === "BOXD_FAILED" && error.details.kind === "missing"
 
 export async function dropWork(services: Services, item: DropItem, context: ItemContext): Promise<DropResult> {
+  // Nothing automatic ever drops (design §C.3): a defence beside package E's own rule, not a refusal a person sees.
+  if (context.by === "automation") throw new Error("boxd_drop is never run by automation.")
   const { op } = context
   const closed = await services.ledger.update(
     [item.workId],
@@ -57,7 +59,7 @@ export async function dropWork(services: Services, item: DropItem, context: Item
         gone = await services.runner.withMachineLock({ id: machineId! }, op, async () => {
           let target: ChangeTarget
           try {
-            target = await services.boxd.checkOwned(region, record.machine as MachineName, machineId!, op)
+            target = (await services.boxd.checkOwned(region, record.machine as MachineName, machineId!, op)).target
           } catch (error) {
             if (error instanceof BoxdError && error.code === "BOXD_FAILED" && (error.details.kind === "missing" || error.details.kind === "elsewhere")) return true
             throw error

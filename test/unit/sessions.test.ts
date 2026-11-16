@@ -4,7 +4,7 @@
 // sleep, exec's own pool and quoting, read's read rule, the list forms, the selectors, package E's actions, Stop, and
 // the spawn budget rows of §4.4.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test"
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { BoxdError, boxdError } from "../../src/errors.js"
 import { createRuntime, type PluginRuntime } from "../../src/exec/runtime.js"
@@ -112,7 +112,7 @@ beforeEach(async () => {
     dispose: () => runtime.dispose(),
     ledger,
     importV0,
-    watch: { subscribe: () => () => {}, snapshot: () => ({ asOf: new Date().toISOString(), works: snapshot }) },
+    watch: { subscribe: () => () => {}, snapshot: () => ({ asOf: new Date().toISOString(), works: snapshot }), sessionGone: () => {} },
     cost,
   }
   ;({ runs, selectors, actions } = sessionRuns(services))
@@ -136,7 +136,7 @@ const sid = (workId: string) => `ses_${workId.replace(/-/g, "_")}`
 
 function change<T>(machine: FakeMachine, fn: (target: ChangeTarget) => Promise<T>): Promise<T> {
   const context = op()
-  return runtime.runner.withMachineLock({ id: machine.id as MachineId }, context, async () => fn(await runtime.boxd.checkOwned(machine.region, machine.name as `oc-${string}`, machine.id as MachineId, context)))
+  return runtime.runner.withMachineLock({ id: machine.id as MachineId }, context, async () => fn((await runtime.boxd.checkOwned(machine.region, machine.name as `oc-${string}`, machine.id as MachineId, context)).target))
 }
 
 /** The work's folder on the fake machine's disk, as a git repository with one commit. */
@@ -394,6 +394,27 @@ describe("boxd_harvest", () => {
     expect(ledger.saved((await record("conflict"))!)).toBe("fresh")
   })
 
+  test("saved is complete only for a harvest that is neither partial nor busy, and an unknown outcome is never recorded as aborted", async () => {
+    await openWork("complete")
+    guest.next(sid("complete"))
+    await runs.boxd_submit({ workId: "complete", text: "Long task." }, call())
+    // The first run is still active: a partial copy records no outcome for it.
+    expect(await runs.boxd_harvest({ workId: "complete", partial: true }, call())).toMatchObject({ state: "partial" })
+    let stored = (await record("complete"))!
+    expect(stored.saved?.complete).toBe(false)
+    expect(stored.run).toBeUndefined()
+    // Idle, with no outcome recorded for the run by the guest: the outcome stays unknown, not aborted.
+    guest.idle(sid("complete"))
+    const full = await runs.boxd_harvest({ workId: "complete" }, call())
+    expect(full).toMatchObject({ state: "saved", outcome: null })
+    stored = (await record("complete"))!
+    expect(stored.saved?.complete).toBe(true)
+    expect(stored.run).toBeUndefined()
+    // A partial harvest of an idle tree is still only a copy.
+    expect(await runs.boxd_harvest({ workId: "complete", partial: true }, call())).toMatchObject({ state: "partial" })
+    expect((await record("complete"))!.saved?.complete).toBe(false)
+  })
+
   test("a guest on another OpenCode release is refused before a transcript moves", async () => {
     await ranWork("version")
     guest.setVersion("2.2.5")
@@ -405,18 +426,25 @@ describe("boxd_harvest", () => {
     }
   })
 
-  test("spawns: a partial harvest fits its §4.4 row; the idle check adds one listing and one phase read", async () => {
+  test("spawns: a harvest fits its §4.4 row, partial or not: the export checks idleness in its own exec, with no listing or read", async () => {
     const machine = await ranWork("budget-harvest")
     writeFileSync(join(treeOf(machine, "budget-harvest"), "README.md"), "# changed\n")
-    const partial = call()
-    await runs.boxd_harvest({ workId: "budget-harvest", partial: true }, partial)
-    expect(budgetProblems(row("boxd_harvest", "an idle work"), countOf(partial.id))).toEqual([])
-    const full = call()
-    await runs.boxd_harvest({ workId: "budget-harvest" }, full)
-    // The listing is shared for 2 s, so the idle check's listing may be the one the partial call took.
-    const { "machine list": lists = 0, ...rest } = noHelp(countOf(full.id))
-    expect(lists).toBeLessThanOrEqual(1)
-    expect(rest).toEqual({ "machine get": 1, "machine exec": 3, "machine cp": 2, "opencode session delete": 1, "opencode session import": 1 })
+    for (const partial of [true, false]) {
+      const context = call()
+      await runs.boxd_harvest({ workId: "budget-harvest", ...(partial ? { partial } : {}) }, context)
+      expect(budgetProblems(row("boxd_harvest", "an idle work"), countOf(context.id))).toEqual([])
+      expect(countOf(context.id)["machine list"]).toBeUndefined()
+    }
+  })
+
+  test("a hibernated work is woken, listed running, then harvested (L-5)", async () => {
+    const machine = await ranWork("woken")
+    await setMachine(machine, (item) => void (item.status = "hibernated"))
+    const context = call()
+    expect(await runs.boxd_harvest({ workId: "woken" }, context)).toMatchObject({ state: "saved" })
+    expect(machineState(machine).status).toBe("running")
+    expect(countOf(context.id)["machine wake"]).toBe(1)
+    expect(countOf(context.id)["machine list"]).toBeGreaterThanOrEqual(1)
   })
 })
 
@@ -529,6 +557,26 @@ describe("boxd_sleep", () => {
     expect(stored.warnings?.map((warning) => warning.code)).toEqual(["UNHARVESTED_SLEEP"])
     // An already hibernated machine still answers asleep.
     expect(await runs.boxd_sleep({ workId: "nap" }, call())).toMatchObject({ state: "asleep" })
+  })
+
+  test("every change targets the recorded id through the by-id check: a re-pointed name that carries the plugin's labels is NOT_OURS for each tool", async () => {
+    const machine = await savedWork("labelled")
+    // Another machine now holds oc-labelled, with the plugin's own labels: labels never make it this work's.
+    await setMachine(machine, (item) => void (item.id = "vm_impostor"))
+    const before = counter.fake.calls().length
+    for (const [tool, input] of [
+      ["boxd_submit", { workId: "labelled", text: "x" }],
+      ["boxd_harvest", { workId: "labelled" }],
+      ["boxd_sleep", { workId: "labelled" }],
+      ["boxd_exec", { workId: "labelled", command: ["true"] }],
+      ["boxd_drop", { workId: "labelled" }],
+    ] as const) {
+      const run = runs[tool] as (input: Record<string, unknown>, call: CallContext) => Promise<unknown>
+      expect({ tool, code: (await errorOf(run(input, call()))).code }).toEqual({ tool, code: "NOT_OURS" })
+    }
+    const after = counter.fake.calls().slice(before)
+    expect(after.filter((line: string) => !line.startsWith("machine get") && !line.startsWith("machine list"))).toEqual([])
+    expect(counter.fake.read().machines.find((item) => item.id === "vm_impostor")!.status).toBe("running")
   })
 
   test("a saved work sleeps with no warning; a re-pointed name is NOT_OURS", async () => {
@@ -691,6 +739,31 @@ describe("selectors and dryRun (§C.4)", () => {
     expect((await record("done-saved"))!.slept).toBeUndefined()
   })
 
+  test("automation never drops: FleetActions.drop by automation is refused before anything runs", async () => {
+    const machine = await savedWork("never-auto")
+    const context = { by: "automation" as const, call: { callId: "automation_drop", source: "automation" as const } }
+    await expect(actions.drop(["never-auto"], context)).rejects.toThrow(/never run by automation/)
+    expect(machineState(machine).status).toBe("running")
+    expect((await record("never-auto"))!.state).toBe("open")
+  })
+
+  test("a select run without the ids the registry matched and asserted throws, and resolves nothing again (L-3)", async () => {
+    await savedWork("unasserted")
+    counter.reset()
+    await expect(runs.boxd_drop({ select: "saved-finished" }, call())).rejects.toThrow(/matched and asserted/)
+    expect(counter.spawns()).toEqual([])
+  })
+
+  test("dryRun answers from the facts its match used: one listing for the select and the answer (L-4)", async () => {
+    await savedWork("dry")
+    const context = call()
+    const matched = await selectors.boxd_drop("saved-finished", context)
+    expect(matched).toEqual(["dry"])
+    const answer = await runs.boxd_drop({ select: "saved-finished", dryRun: true }, { ...context, matched })
+    expect(answer).toMatchObject({ dryRun: true, results: [{ state: "matched", workId: "dry", phase: "idle" }] })
+    expect(noHelp(countOf(context.id))).toEqual({ "machine list": 1 })
+  })
+
   test("package E's actions run the same code: automation's sleep is recorded as automation, and drop keeps its guard", async () => {
     const auto = await ranWork("auto")
     await savedWork("auto-saved")
@@ -717,4 +790,223 @@ describe("events", () => {
     ])
     expect(existsSync(join(ledger.workFolder("evented"), "work.json"))).toBe(true)
   })
+})
+
+// ── From the review of #24: drop against races, harvest copies, the read rule under load, and laptop paths ────────
+
+/** Every `.tmp` file left under a folder. */
+function tmpFiles(dir: string): string[] {
+  const out: string[] = []
+  const walk = (path: string) => {
+    for (const name of readdirSync(path)) {
+      const full = join(path, name)
+      if (statSync(full).isDirectory()) walk(full)
+      if (name.includes(".tmp")) out.push(full)
+    }
+  }
+  walk(dir)
+  return out
+}
+
+describe("drop never removes unsaved work", () => {
+  test("a drop racing a submit: never both, and a removed machine got no prompt", async () => {
+    const ids = ["race-a", "race-b", "race-c", "race-d"]
+    for (const id of ids) await savedWork(id)
+    counter.fake.update((state) => void (state.latencyMs = [40, 160]))
+    for (const id of ids) {
+      const machine = counter.fake.read().machines.find((item) => item.name === `oc-${id}`)!
+      const before = guest.sessions.get(sid(id))!.messages.length
+      const [, submitted] = await Promise.allSettled([runs.boxd_drop({ workId: id }, call()), runs.boxd_submit({ workId: id, text: "A late prompt." }, call())])
+      const removed = machineState(machine).status === "destroyed"
+      expect(removed && submitted.status === "fulfilled").toBe(false)
+      if (removed) expect(guest.sessions.get(sid(id))!.messages.length).toBe(before)
+    }
+  }, 60_000)
+
+  test("a submit stopped after the guest admitted it still leaves the work not saved, and drop refuses (L-1)", async () => {
+    const machine = await savedWork("stopped-submit")
+    counter.fake.update((state) => void (state.latencyMs = [600, 600]))
+    const stop = new AbortController()
+    const before = guest.prompts.length
+    const pending = runs.boxd_submit({ workId: "stopped-submit", text: "Admitted, then stopped." }, call({ signal: stop.signal })).catch((error: unknown) => error)
+    for (let tries = 0; tries < 800 && guest.prompts.length === before; tries++) await Bun.sleep(5)
+    expect(guest.prompts.length).toBe(before + 1)
+    stop.abort()
+    expect(await pending).toMatchObject({ code: "CANCELLED" })
+    expect(ledger.saved((await record("stopped-submit"))!)).toBe("stale")
+    counter.fake.update((state) => void delete state.latencyMs)
+    guest.complete(sid("stopped-submit"))
+    expect((await errorOf(runs.boxd_drop({ workId: "stopped-submit" }, call()))).code).toBe("NOT_SAVED")
+    expect(machineState(machine).status).toBe("running")
+  }, 30_000)
+
+  test("a select that matched a work which then moved on: the run's guard refuses it", async () => {
+    const machine = await savedWork("mid-change")
+    snapshot = [{ workId: "mid-change", region: "fra", machineId: machine.id as MachineId, size: "2x8", phase: "idle", outcome: "completed", saved: "fresh" }]
+    const matched = await selectors.boxd_drop("saved-finished", call())
+    expect(matched).toEqual(["mid-change"])
+    await runs.boxd_submit({ workId: "mid-change", text: "One more thing." }, call())
+    expect(await runs.boxd_drop({ select: "saved-finished" }, call({ matched }))).toMatchObject({ results: [{ state: "refused", error: "NOT_SAVED" }] })
+    guest.complete(sid("mid-change"))
+    await runs.boxd_harvest({ workId: "mid-change" }, call())
+    const again = await selectors.boxd_drop("saved-finished", call())
+    expect(again).toEqual(["mid-change"])
+    guest.sessions.get(sid("mid-change"))!.messages.push({ type: "user", text: "From boxd connect." })
+    expect(await runs.boxd_drop({ select: "saved-finished" }, call({ matched: again }))).toMatchObject({ results: [{ state: "refused", error: "NOT_SAVED" }] })
+    expect(machineState(machine).status).toBe("running")
+  })
+
+  test("a failed listing while resolving a select acts on nothing", async () => {
+    const machine = await savedWork("select-fails")
+    counter.fake.fault("machine list", { stderr: "error: service unavailable" })
+    expect((await errorOf(selectors.boxd_drop("saved-finished", call()))).code).toBe("BOXD_FAILED")
+    expect(machineState(machine).status).toBe("running")
+  })
+})
+
+describe("harvest copies", () => {
+  test("two harvests and a drop of one work run one after another; nothing is half-written", async () => {
+    const machine = await ranWork("serial")
+    writeFileSync(join(treeOf(machine, "serial"), "README.md"), "# changed\n")
+    writeFileSync(join(treeOf(machine, "serial"), "u.txt"), "u\n")
+    counter.fake.update((state) => void (state.latencyMs = [30, 120]))
+    const answers = await Promise.allSettled([runs.boxd_harvest({ workId: "serial" }, call()), runs.boxd_harvest({ workId: "serial" }, call()), runs.boxd_drop({ workId: "serial" }, call())])
+    expect(answers.map((answer) => (answer.status === "fulfilled" ? (answer.value as { state: string }).state : (answer.reason as BoxdError).code))).toEqual(["saved", "saved", "dropped"])
+    expect(tmpFiles(ledger.workFolder("serial"))).toEqual([])
+    const exported = JSON.parse(readFileSync(join(ledger.workFolder("serial"), "exports", `${sid("serial")}.json`), "utf8")) as { messages: unknown[] }
+    expect(exported.messages.length).toBe(guest.sessions.get(sid("serial"))!.messages.length)
+  }, 30_000)
+
+  test("a copy that exits 0 with half the bytes is refused; the stored export stays byte for byte", async () => {
+    await savedWork("silent")
+    const file = join(ledger.workFolder("silent"), "exports", `${sid("silent")}.json`)
+    const good = readFileSync(file)
+    const saved = (await record("silent"))!.saved
+    await runs.boxd_submit({ workId: "silent", text: "More." }, call())
+    guest.say(sid("silent"), "More done.", Date.now())
+    guest.complete(sid("silent"))
+    counter.fake.update((state) => void (state.cutCopies = ["silent"]))
+    expect((await errorOf(runs.boxd_harvest({ workId: "silent" }, call()))).code).toBe("EXPORT_INVALID")
+    expect(readFileSync(file).equals(good)).toBe(true)
+    expect((await record("silent"))!.saved).toEqual(saved!)
+    expect(tmpFiles(ledger.workFolder("silent"))).toEqual([])
+  })
+
+  test("the patch copy cut off after a good export copy: nothing is committed", async () => {
+    const machine = await savedWork("patch-cut")
+    const folder = ledger.workFolder("patch-cut")
+    const stored = readFileSync(join(folder, "exports", `${sid("patch-cut")}.json`))
+    await runs.boxd_submit({ workId: "patch-cut", text: "More." }, call())
+    guest.say(sid("patch-cut"), "More done.", Date.now())
+    guest.complete(sid("patch-cut"))
+    writeFileSync(join(treeOf(machine, "patch-cut"), "README.md"), "# dirty\n")
+    const before = (await record("patch-cut"))!.saved
+    counter.fake.update((state) => void (state.cutCopies = [false, true]))
+    expect((await errorOf(runs.boxd_harvest({ workId: "patch-cut" }, call()))).code).toBe("EXPORT_INVALID")
+    expect(readFileSync(join(folder, "exports", `${sid("patch-cut")}.json`)).equals(stored)).toBe(true)
+    expect(existsSync(join(folder, "patch.diff"))).toBe(false)
+    expect((await record("patch-cut"))!.saved).toEqual(before!)
+    expect(tmpFiles(folder)).toEqual([])
+  })
+
+  test("a guest folder that is not a git repository still saves the transcript: git facts are optional to a harvest", async () => {
+    const machine = await ranWork("no-git")
+    rmSync(join(treeOf(machine, "no-git"), ".git"), { recursive: true, force: true })
+    expect(await runs.boxd_harvest({ workId: "no-git" }, call())).toMatchObject({ state: "saved", sessions: [{ id: sid("no-git") }], git: { known: false } })
+    expect(counter.fake.read().laptopSessions?.[sid("no-git")]).toBeDefined()
+    const stored = (await record("no-git"))!
+    expect(ledger.saved(stored)).toBe("fresh")
+    expect(stored.gitState?.known).toBe(false)
+    expect((await errorOf(runs.boxd_drop({ workId: "no-git" }, call()))).code).toBe("GIT_UNKNOWN")
+  })
+})
+
+describe("harvest files stay inside the roots (laptop paths)", () => {
+  test("a symlinked folder that leads out of every root is refused before any copy, and nothing is written outside", async () => {
+    const outside = mkdtempSync(join(root, "outside-"))
+    const machine = await ranWork("escape")
+    mkdirSync(join(treeOf(machine, "escape"), "link"))
+    writeFileSync(join(treeOf(machine, "escape"), "link", "x.txt"), "from the guest\n")
+    symlinkSync(outside, join(project, "link"))
+    const context = call()
+    expect(await errorOf(runs.boxd_harvest({ workId: "escape", files: ["link/x.txt"] }, context))).toMatchObject({ code: "PATH_REFUSED", details: { field: "files[0]" } })
+    expect(readdirSync(outside)).toEqual([])
+    expect(noHelp(countOf(context.id))).toEqual({})
+    expect((await record("escape"))!.saved).toBeUndefined()
+  })
+
+  test("a file that is itself a symlink is refused, and its target is left alone", async () => {
+    const outside = mkdtempSync(join(root, "outside-"))
+    writeFileSync(join(outside, "target.txt"), "mine\n")
+    const machine = await ranWork("linked-file")
+    writeFileSync(join(treeOf(machine, "linked-file"), "out.txt"), "from the guest\n")
+    symlinkSync(join(outside, "target.txt"), join(project, "out.txt"))
+    expect((await errorOf(runs.boxd_harvest({ workId: "linked-file", files: ["out.txt"] }, call()))).code).toBe("PATH_REFUSED")
+    expect(readFileSync(join(outside, "target.txt"), "utf8")).toBe("mine\n")
+  })
+
+  test("a path with .. or an absolute path is refused before anything runs", async () => {
+    await ranWork("dots")
+    for (const path of ["../escape.txt", "a/../../escape.txt", "/etc/passwd"]) {
+      expect(await errorOf(runs.boxd_harvest({ workId: "dots", files: [path] }, call()))).toMatchObject({ code: "PATH_REFUSED", details: { field: "files[0]" } })
+    }
+    expect(counter.spawns().filter((spawn) => spawn.verb !== "help")).toEqual([])
+  })
+
+  test("a to folder that is a symlink is refused, and the answer names the real path a file was written to", async () => {
+    const machine = await ranWork("real-path")
+    mkdirSync(join(treeOf(machine, "real-path"), "docs"))
+    writeFileSync(join(treeOf(machine, "real-path"), "docs", "a.md"), "a\n")
+    const inside = join(project, "real")
+    mkdirSync(inside)
+    symlinkSync(inside, join(project, "alias"))
+    expect(await errorOf(runs.boxd_harvest({ workId: "real-path", files: ["docs/a.md"], to: join(project, "alias") }, call()))).toMatchObject({ code: "PATH_REFUSED", details: { field: "to" } })
+    const answer = (await runs.boxd_harvest({ workId: "real-path", files: ["docs/a.md"], to: inside }, call())) as unknown as { files: Array<{ laptopPath: string }> }
+    expect(answer.files[0]!.laptopPath).toBe(join(realpathSync(inside), "docs", "a.md"))
+    expect(readFileSync(join(inside, "docs", "a.md"), "utf8")).toBe("a\n")
+  })
+})
+
+describe("the read rule under load", () => {
+  test("a read refused by the read rule is tried once more on a fresh listing; a listing that stays stale is a TIMEOUT to retry, never BOXD_FAILED", async () => {
+    const machine = await openWork("stale-read")
+    writeFileSync(join(treeOf(machine, "stale-read"), "notes.md"), "hello\n")
+    const stale = boxdError("BOXD_FAILED", "A guest read needs a machine listing at most 2 s old.", { rule: "listing-age", kind: "listing-stale" })
+    let refusals = 1
+    const flaky = sessionRuns({
+      ...services,
+      guest: {
+        ...services.guest,
+        read: (target, input, context) => {
+          if (refusals-- > 0) throw stale
+          return services.guest.read(target, input, context)
+        },
+      },
+    }).runs
+    expect(await flaky.boxd_read({ workId: "stale-read", path: "notes.md" }, call())).toMatchObject({ state: "read", text: "hello\n" })
+    refusals = 2
+    expect(await errorOf(flaky.boxd_read({ workId: "stale-read", path: "notes.md" }, call()))).toMatchObject({ code: "TIMEOUT", state: "unreachable", details: { kind: "listing-stale" } })
+  })
+
+  test("saturation: three harvest lists of 16 and 48 reads at about 1 s per CLI call; no read or harvest fails on the read rule", async () => {
+    const ids = Array.from({ length: 48 }, (_, index) => `sat${index}`)
+    for (const id of ids) writeFileSync(join(treeOf(await ranWork(id), id), "notes.md"), "hello\n")
+    counter.fake.update((state) => void (state.latencyMs = [800, 1100]))
+    const lists = [ids.slice(0, 16), ids.slice(16, 32), ids.slice(32)].map((works) => runs.boxd_harvest({ works }, call()))
+    const reads = ids.map((id) => runs.boxd_read({ workId: id, path: "notes.md" }, call()).catch((error: unknown) => error))
+    const harvested = (await Promise.all(lists)).flatMap((answer) => (answer as unknown as { results: Array<{ state: string; error?: string; message?: string }> }).results)
+    const answers = await Promise.all(reads)
+    // A harvest makes no read exec: its export checks idleness itself, so the read rule cannot refuse it. At this load
+    // a fake CLI call can still fail for its own reasons; a harvest that did not save then left saved as it was.
+    const readRule = /listing at most|read never wakes/
+    expect(harvested.filter((item) => item.state !== "saved" && readRule.test(item.message ?? ""))).toEqual([])
+    for (const [index, item] of harvested.entries()) if (item.state !== "saved") expect(ledger.saved((await record(ids[index]!))!)).not.toBe("fresh")
+    expect(harvested.filter((item) => item.state === "saved").length).toBeGreaterThan(harvested.length * 0.9)
+    // A read the read rule refused is retried on a fresh listing; one that still cannot be made is a TIMEOUT to retry,
+    // never BOXD_FAILED. (How many succeed at this load is the runner's: its refresh at dequeue is package D's.)
+    for (const answer of answers) {
+      if (answer instanceof BoxdError) expect({ code: answer.code, kind: answer.details.kind }).toEqual({ code: "TIMEOUT", kind: "listing-stale" })
+      else expect(answer).toMatchObject({ state: "read", text: "hello\n" })
+    }
+  }, 600_000)
 })

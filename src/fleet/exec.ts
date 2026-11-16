@@ -16,7 +16,7 @@ import { boxdError } from "../errors.js"
 import type { MachineId, MachineName, OpContext } from "../ports.js"
 import { redactBlock } from "../redact.js"
 import type { ExecResult } from "../results.js"
-import { assertWorkIdInput, listed, loadOpen, machineOf, nowIso, optionalBoolean, optionalInteger, withTarget, type ItemContext, type Services } from "./sessions-common.js"
+import { asleep, assertWorkIdInput, loadOpen, machineOf, untilRunning, nowIso, optionalBoolean, optionalInteger, withTarget, type ItemContext, type Services } from "./sessions-common.js"
 
 /** The tail of each stream an answer keeps. */
 const STDOUT_TAIL = 32 * 1024
@@ -48,16 +48,19 @@ export async function execWork(services: Services, item: ExecItem, context: Item
   const op: OpContext = context.op
   const record = await loadOpen(services, item.workId, op)
   const machine = await machineOf(services, record, op)
-  const status = (await listed(services, machine.region, record.machine, op)).row?.status
-  if (status === "hibernated" || status === "standby" || status === "stopped") {
+  // The by-id check, which also shows the status; only a wake takes the machine's lock, never the command.
+  let { target, status } = await services.boxd.checkOwned(machine.region, record.machine as MachineName, machine.machineId, op)
+  if (asleep(status)) {
     if (!item.wake) throw boxdError("MACHINE_ASLEEP", `${record.machine} is ${status}, and boxd_exec wakes it only with wake: true.`)
     await services.cost.assertBudget(op.call)
-    await withTarget(services, record, machine, op, (target) => services.boxd.wake(target, op))
-  } else if (status === "starting") {
-    throw boxdError("MACHINE_STARTING", `${record.machine} is still starting.`)
+    target = await withTarget(services, record, machine, op, async (owned) => {
+      if (asleep(owned.status)) await services.boxd.wake(owned.target, op)
+      await untilRunning(services, owned.target, op)
+      return owned.target
+    })
+    status = "running"
   }
-  // The by-id check, then the command in the exec pool, with no lock held while it runs.
-  const target = await services.boxd.checkOwned(machine.region, record.machine as MachineName, machine.machineId, op)
+  if (status === "starting") throw boxdError("MACHINE_STARTING", `${record.machine} is still starting.`)
   const result = await services.boxd.exec(target, item.command.map(quote).join(" "), { timeoutSeconds: item.timeout, json: false }, { ...op, pool: "exec" })
   await touch(services, item.workId, machine.machineId, op)
   const stdout = tail(withoutBanner(result.stdout), STDOUT_TAIL)

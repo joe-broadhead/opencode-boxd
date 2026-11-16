@@ -46,8 +46,10 @@ export function sessionRuns(services: FleetServices): { readonly runs: SessionRu
     return async (input, call) => {
       const context = toolContext(tool, call)
       if (input.select !== undefined && tool !== "boxd_submit") {
-        const ids = call.matched ?? (await resolve(services, tool, input.select as SelectorValues[SelectTool], context.op))
-        if (input.dryRun === true) return matches(services, ids, input.select as ListResult<T>["select"], context.op)
+        // The registry resolved the select and asserted exactly these ids; a run never resolves a second match.
+        const ids = call.matched
+        if (!ids) throw new Error(`${tool} ran a select without the ids the registry matched and asserted.`)
+        if (input.dryRun === true) return matches(ids, input.select as ListResult<T>["select"], seen.take(call.id) ?? (await factsOf(services, context.op)))
         const items = ids.map((workId) => check({ workId }))
         return { ...(await runList(items, call.signal, (item) => act(item, context))), select: input.select as ListResult<T>["select"] }
       }
@@ -77,16 +79,21 @@ export function sessionRuns(services: FleetServices): { readonly runs: SessionRu
     },
   }
 
-  const selectors: Selectors = {
-    boxd_sleep: (select, call) => resolve(services, "boxd_sleep", select, opOf("boxd_sleep", call)),
-    boxd_harvest: (select, call) => resolve(services, "boxd_harvest", select, opOf("boxd_harvest", call)),
-    boxd_drop: (select, call) => resolve(services, "boxd_drop", select, opOf("boxd_drop", call)),
-  }
+  /** The facts a select call matched on, kept for its `dryRun` answer, so both come from one listing (L-4). */
+  const seen = recentFacts()
+  const selectTool =
+    <K extends SelectTool>(tool: K) =>
+    async (select: SelectorValues[K], call: CallContext) => {
+      const facts = await factsOf(services, opOf(tool, call))
+      seen.keep(call.id, facts)
+      return match(tool, select, facts)
+    }
+  const selectors: Selectors = { boxd_sleep: selectTool("boxd_sleep"), boxd_harvest: selectTool("boxd_harvest"), boxd_drop: selectTool("boxd_drop") }
 
   /** Package E's in-process actions: pre-authorised by its caller, through the same code as the tools. */
   const actionContext = (context: ActionContext): ItemContext => ({ op: { call: context.call, ...(context.signal ? { signal: context.signal } : {}) }, by: context.by })
   const actions: FleetActions = {
-    match: (tool, select, context) => resolve(services, tool, select, actionContext(context).op),
+    match: async (tool, select, context) => match(tool, select, await factsOf(services, actionContext(context).op)),
     harvest: (workIds, context): Promise<ListResult<HarvestResult>> =>
       runList(workIds.map((workId) => checkHarvest({ workId })), context.signal, (item) => harvestWork(services, item, actionContext(context))),
     sleep: (workIds, context): Promise<ListResult<SleepResult>> =>
@@ -112,11 +119,13 @@ interface Facts {
 
 /**
  * Every open work's facts, from a fresh all-region listing, the ledger and the watcher's last look (no guest read). A
- * work the watcher has not seen running falls back to the ledger: idle once a run was recorded after its last prompt.
+ * work the watcher has not seen is idle when the record holds a run newer than its last prompt (a harvest read it from
+ * the guest); otherwise the index's phase (its last event) decides, and with no event the record does.
  */
 async function factsOf(services: Services, op: OpContext): Promise<Facts[]> {
-  const [records, listing] = await Promise.all([services.ledger.list({}, op), services.boxd.list({ maxAgeMs: 0 }, op)])
+  const [records, listing, indexed] = await Promise.all([services.ledger.list({}, op), services.boxd.list({ maxAgeMs: 0 }, op), services.ledger.phases({}, op)])
   const seen = new Map(services.watch.snapshot().works.map((work) => [work.workId, work]))
+  const live: readonly Phase[] = ["busy", "idle", "ready", "unreachable"]
   return records.map((record) => {
     const row = listing.machines.find((machine) => machine.name === record.machine && machine.region === record.region)
     const watched = seen.get(record.workId)
@@ -126,9 +135,11 @@ async function factsOf(services: Services, op: OpContext): Promise<Facts[]> {
         ? "asleep"
         : row.status !== "running"
           ? "starting"
-          : watched && ["busy", "idle", "ready", "unreachable"].includes(watched.phase)
+          : watched && live.includes(watched.phase)
             ? watched.phase
-            : ledgerPhase(record)
+            : ledgerPhase(record) === "idle"
+              ? "idle"
+              : (live.find((phase) => phase === indexed.get(record.workId)?.phase) ?? ledgerPhase(record))
     return {
       record,
       row,
@@ -154,15 +165,31 @@ const MATCHERS: { readonly [K in SelectTool]: (select: SelectorValues[K], facts:
   boxd_drop: (_select, facts) => (facts.phase === "idle" || facts.phase === "asleep") && facts.saved === "fresh" && facts.outcome === "completed",
 }
 
-/** The ids a selector matches now, in work-id order. A read: it changes nothing. */
-async function resolve<K extends SelectTool>(services: Services, tool: K, select: SelectorValues[K], op: OpContext): Promise<readonly string[]> {
+/** The ids a selector matches in these facts, in work-id order. */
+function match<K extends SelectTool>(tool: K, select: SelectorValues[K], facts: readonly Facts[]): readonly string[] {
   const matcher = MATCHERS[tool] as (select: SelectorValues[K], facts: Facts) => boolean
-  return (await factsOf(services, op)).filter((facts) => matcher(select, facts)).map((facts) => facts.record.workId)
+  return facts.filter((item) => matcher(select, item)).map((item) => item.record.workId)
 }
 
-/** `dryRun`: the matched works and what was read about each, with nothing changed. */
-async function matches<T extends { readonly state: string }>(services: Services, ids: readonly string[], select: ListResult<T>["select"], op: OpContext): Promise<ListResult<T>> {
-  const facts = new Map((await factsOf(services, op)).map((item) => [item.record.workId, item]))
+/** The last few select calls' facts, by call id, each taken once; a call that never asks for them ages out. */
+function recentFacts() {
+  const kept = new Map<string, readonly Facts[]>()
+  return {
+    keep(callId: string, facts: readonly Facts[]) {
+      kept.set(callId, facts)
+      while (kept.size > 16) kept.delete(kept.keys().next().value as string)
+    },
+    take(callId: string): readonly Facts[] | undefined {
+      const facts = kept.get(callId)
+      kept.delete(callId)
+      return facts
+    },
+  }
+}
+
+/** `dryRun`: the matched works and what was read about each, from the facts the match used, with nothing changed. */
+function matches<T extends { readonly state: string }>(ids: readonly string[], select: ListResult<T>["select"], from: readonly Facts[]): ListResult<T> {
+  const facts = new Map(from.map((item) => [item.record.workId, item]))
   const results: SelectMatch[] = ids.flatMap((workId) => {
     const item = facts.get(workId)
     if (!item) return []

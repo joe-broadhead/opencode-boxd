@@ -66,8 +66,8 @@ export interface FakeState {
   inVm?: boolean
   /** A resize leaves the VM agent silent until a reboot (#14 §6). */
   resizeSilencesAgent?: boolean
-  /** Downloads cut off half-way, one per entry. */
-  cutCopies?: boolean[]
+  /** Downloads cut off half-way, one per entry: true fails the copy, "silent" lands half the file and exits 0. */
+  cutCopies?: Array<boolean | "silent">
   wokenByExec?: string[]
   laptopSessions?: Record<string, { title: string; messages: number }>
 }

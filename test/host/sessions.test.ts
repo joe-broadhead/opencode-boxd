@@ -48,7 +48,7 @@ async function seedWork(host: Host, ledger: Awaited<ReturnType<typeof ledgerOf>>
     const runtime = createRuntime({ boxdBin: host.boxd.bin })
     try {
       await runtime.runner.withMachineLock({ id: machine.id as MachineId }, op("seed"), async () => {
-        const target = await runtime.boxd.checkOwned("fra", machine.name as `oc-${string}`, machine.id as MachineId, op("seed"))
+        const { target } = await runtime.boxd.checkOwned("fra", machine.name as `oc-${string}`, machine.id as MachineId, op("seed"))
         await runtime.guest.setup(target, { directory: `/home/boxd/work/${workId}`, opencode: VERSION_OF(host) }, op("seed"))
       })
     } finally {

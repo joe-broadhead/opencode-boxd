@@ -22,7 +22,8 @@ export async function sleepWork(services: Services, item: SleepItem, context: It
     async (current) => {
       const record = openRecord(current.get(item.workId), item.workId)
       const machine = await machineOf(services, record, op)
-      await withTarget(services, record, machine, op, (target) => hibernate(services, target, op))
+      // A machine the by-id check already shows hibernated is slept: no second hibernate.
+      await withTarget(services, record, machine, op, async (owned) => (owned.status === "hibernated" ? undefined : hibernate(services, owned.target, op)))
       const at = nowIso(services)
       const unsaved = record.lastSubmit !== undefined && services.ledger.saved(record) !== "fresh"
       const next: WorkRecord = {

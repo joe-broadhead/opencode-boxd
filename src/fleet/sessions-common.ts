@@ -20,7 +20,9 @@ import {
   type MachineId,
   type MachineName,
   type MachineRow,
+  type MachineStatus,
   type OpContext,
+  type Owned,
   type Region,
 } from "../ports.js"
 import type { ListResult, Refusal } from "../results.js"
@@ -85,15 +87,40 @@ export async function machineOf(services: Services, record: WorkRecord, context:
 }
 
 /**
- * Runs `fn` under the machine's lock with a target the name was resolved to in this call (H2): `NOT_OURS` when
- * `oc-<id>` now has another id, and a classified failure when the name is not found.
+ * Runs `fn` under the machine's lock with a target the name was resolved to in this call (H2), and the status that same
+ * `machine get` showed: `NOT_OURS` when `oc-<id>` now has another id, and a classified failure when the name is not
+ * found.
  */
-export function withTarget<T>(services: Services, record: WorkRecord, machine: { readonly region: Region; readonly machineId: MachineId }, context: OpContext, fn: (target: ChangeTarget) => Promise<T>): Promise<T> {
-  return services.runner.withMachineLock({ id: machine.machineId }, context, async () => {
-    const target = await services.boxd.checkOwned(machine.region, record.machine as MachineName, machine.machineId, context)
-    return fn(target)
-  })
+export function withTarget<T>(services: Services, record: WorkRecord, machine: { readonly region: Region; readonly machineId: MachineId }, context: OpContext, fn: (owned: Owned) => Promise<T>): Promise<T> {
+  return services.runner.withMachineLock({ id: machine.machineId }, context, async () => fn(await services.boxd.checkOwned(machine.region, record.machine as MachineName, machine.machineId, context)))
 }
+
+/** boxd's states that keep a machine from running a command until it is woken. */
+export const asleep = (status: MachineStatus | undefined) => status === "hibernated" || status === "standby" || status === "stopped"
+
+/**
+ * After a wake: the shared listing, polled every second for at most `TIMEOUTS.submitStarting`, until it shows the machine
+ * running (L-5). A machine still not running then answers `MACHINE_STARTING`, and nothing else was done.
+ */
+export async function untilRunning(services: Services, target: ChangeTarget, op: OpContext): Promise<void> {
+  const deadline = Date.now() + TIMEOUTS.submitStarting
+  for (let fresh = true; ; fresh = false) {
+    const listing = await services.boxd.list({ maxAgeMs: fresh ? 0 : 1_000 }, op)
+    const status = listing.machines.find((row) => row.name === target.name && row.region === target.region)?.status
+    if (status === "running") return
+    checkStop(op.signal, true)
+    if (Date.now() >= deadline) throw boxdError("MACHINE_STARTING", `${target.name} was woken, and is still ${status ?? "not listed"} after ${TIMEOUTS.submitStarting / 1000} s.`)
+    await pause(1_000, op.signal)
+  }
+}
+
+/**
+ * The read rule's refusals, as the runner and the CLI port mark them: no listing young enough could be had
+ * (`kind: "listing-stale"`, or `rule: "listing-age"` before that marker), or the listing does not show the machine
+ * running (`kind: "not-readable"`). Neither is a guest's answer: nothing was read.
+ */
+export const listingStale = (error: unknown) => error instanceof BoxdError && (error.details.kind === "listing-stale" || error.details.rule === "listing-age")
+export const notReadable = (error: unknown) => error instanceof BoxdError && (error.details.kind === "not-readable" || error.code === "MACHINE_ASLEEP")
 
 /**
  * The machine as a listing at most 2 s old shows it (shared with every caller that accepts that age), taken fresh once
@@ -243,11 +270,6 @@ export function envelope<T extends { readonly state: string }>(results: Readonly
   return { state, counts, results }
 }
 
-/** The work a single-form call names, checked before anything runs. */
-export function singleWorkId(input: Record<string, unknown>): string {
-  return assertWorkIdInput(input.workId)
-}
-
 /** Exactly one of `path` and `log`, and the like: a field that must be one of a fixed set. */
 export function oneOf<T extends string>(value: unknown, values: readonly T[], field: string): T | undefined {
   if (value === undefined) return undefined
@@ -275,11 +297,4 @@ export function optionalString(value: unknown, field: string, maxLength = 4096):
   if (value === undefined) return undefined
   if (typeof value !== "string" || value === "" || value.length > maxLength) throw boxdError("NAME_INVALID", `${field} must be a non-empty string.`, { field })
   return value
-}
-
-/** Every key the call may pass; any other is refused by name, so a typo never runs a different call. */
-export function onlyKeys(input: Record<string, unknown>, allowed: readonly string[], where = ""): void {
-  for (const key of Object.keys(input)) {
-    if (!allowed.includes(key)) throw boxdError("NAME_INVALID", `${where}${key} is not an input of this tool.`, { field: key })
-  }
 }

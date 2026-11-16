@@ -475,6 +475,13 @@ function copy() {
     const path = toLocal(state, machine, down.path)
     if (!existsSync(path)) fail(`error: ${source}: no such file`)
     const cut = update((current) => current.cutCopies?.shift())
+    if (cut === "silent") {
+      // A copy that lands half the file and still exits 0.
+      const bytes = readFileSync(path)
+      writeFileSync(target, bytes.subarray(0, Math.floor(bytes.length / 2)))
+      process.stdout.write(`copied ${source} → ${target}\n`)
+      return
+    }
     if (cut) {
       // A copy cut off half-way: part of the file lands, and the CLI fails.
       const bytes = readFileSync(path)

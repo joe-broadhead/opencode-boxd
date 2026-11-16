@@ -3,14 +3,17 @@
  * harvest. A read, under the read rule of §4.1: it runs only on a machine a listing at most 2 s old shows `running`,
  * uses only the helper already on the machine, never uploads anything, takes no lock and never writes the ledger. A
  * hibernated machine answers `MACHINE_ASLEEP` and is not woken. The text is redacted and is the guest's data, never
- * instructions. One listing (shared) and one `read` exec. Package C2 owns this file.
+ * instructions. One listing (shared) and one `read` exec. A read the read rule refused before it ran is tried once more
+ * on a fresh listing; a listing that still cannot be kept young enough answers `TIMEOUT` (`kind: "listing-stale"`), a
+ * call to make again, never `BOXD_FAILED`. Package C2 owns this file.
  */
 import { boxdError } from "../errors.js"
 import { assertWorkPath } from "../paths.js"
-import type { MachineName, OpContext } from "../ports.js"
+import type { Listing, MachineName, OpContext } from "../ports.js"
+import type { WorkRecord } from "../ledger/types.js"
 import { redactBlock } from "../redact.js"
 import type { ReadResult } from "../results.js"
-import { assertWorkIdInput, listed, loadOpen, oneOf, optionalInteger, type Services } from "./sessions-common.js"
+import { assertWorkIdInput, listed, listingStale, loadOpen, notReadable, oneOf, optionalInteger, type Services } from "./sessions-common.js"
 
 export const READ_DEFAULT_BYTES = 32_768
 
@@ -46,16 +49,33 @@ export async function readWork(services: Services, item: ReadItem, op: OpContext
   if (record.guestHelper === "v0") {
     throw boxdError("GUEST_FAILED", `${record.machine} still runs the v0 guest helper, which has no read action; a read never uploads the new one.`)
   }
-  const { listing, row } = await listed(services, record.region, record.machine, op)
-  if (!row) throw boxdError("MACHINE_GONE", `${record.machine} is not in the ${record.region} listing; nothing was read. boxd_drop checks whether it is gone everywhere.`)
-  if (row.status === "starting") throw boxdError("MACHINE_STARTING", `${record.machine} is still starting; nothing was read.`)
-  if (row.status !== "running") throw boxdError("MACHINE_ASLEEP", `${record.machine} is ${row.status}, and a read never wakes a machine.`)
-  const answer = await services.guest.read(
-    { region: record.region, name: record.machine as MachineName, listing, machineId: record.machineId },
-    { directory: record.guestDirectory, maxBytes: item.maxBytes, ...(item.path ? { path: item.path } : {}), ...(item.log ? { log: item.log } : {}), ...(item.tail ? { tail: item.tail } : {}) },
-    op,
-  )
+  const input = { directory: record.guestDirectory, maxBytes: item.maxBytes, ...(item.path ? { path: item.path } : {}), ...(item.log ? { log: item.log } : {}), ...(item.tail ? { tail: item.tail } : {}) }
+  const attempt = async (fresh: boolean) => {
+    const { listing, row } = fresh ? freshRow(await services.boxd.list({ maxAgeMs: 0 }, op), record) : await listed(services, record.region!, record.machine, op)
+    if (!row) throw boxdError("MACHINE_GONE", `${record.machine} is not in the ${record.region} listing; nothing was read. boxd_drop checks whether it is gone everywhere.`)
+    if (row.status === "starting") throw boxdError("MACHINE_STARTING", `${record.machine} is still starting; nothing was read.`)
+    if (row.status !== "running") throw boxdError("MACHINE_ASLEEP", `${record.machine} is ${row.status}, and a read never wakes a machine.`)
+    return services.guest.read({ region: record.region!, name: record.machine as MachineName, listing, machineId: record.machineId }, input, op)
+  }
+  let answer
+  try {
+    answer = await attempt(false)
+  } catch (error) {
+    // The read rule refused it before anything ran (a listing that aged in the queue, or a machine that listing did
+    // not show running): once more on a fresh listing, which says what the machine is now.
+    if (!listingStale(error) && !notReadable(error)) throw error
+    try {
+      answer = await attempt(true)
+    } catch (again) {
+      if (listingStale(again)) {
+        throw boxdError("TIMEOUT", `boxd's machine listing could not be kept fresh enough for a read of ${record.machine} while the plugin was this busy; nothing was read.`, { kind: "listing-stale", step: "read" })
+      }
+      throw again
+    }
+  }
   const path = item.log === "server" ? "server.log" : item.path!
   if (answer.binary) return { state: "read", workId: record.workId, path, binary: true, bytes: answer.bytes, sha256: answer.sha256 }
   return { state: "read", workId: record.workId, path, bytes: answer.bytes, truncated: answer.truncated, text: redactBlock(answer.text) }
 }
+
+const freshRow = (listing: Listing, record: WorkRecord) => ({ listing, row: listing.machines.find((machine) => machine.name === record.machine && machine.region === record.region) })
