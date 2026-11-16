@@ -207,12 +207,14 @@ const sleeping = (status: string) => status === "hibernated" || status === "stan
 
 /**
  * True for a guest read the read rule did not make, rather than one that failed: the machine is not running in the
- * listing (`MACHINE_ASLEEP`, `kind: "not-readable"`), or the read waited in the runner's queue past the listing's 2 s
- * (`kind: "listing-stale"`, `rule: "listing-age"`). It is "not read yet", never a guest failure.
+ * listing (`MACHINE_ASLEEP`, `kind: "not-readable"`), the read waited in the runner's queue past the listing's 2 s
+ * (`kind: "listing-stale"`, `rule: "listing-age"`), or the fresh listing the read needed failed (`kind:
+ * "listing-failed"`). It is "not read yet", never a guest failure.
  */
 export function notReadYet(error: unknown): boolean {
   if (!(error instanceof BoxdError)) return false
-  return error.code === "MACHINE_ASLEEP" || error.details.kind === "not-readable" || error.details.kind === "listing-stale" || error.details.rule === "listing-age"
+  const kind = error.details.kind
+  return error.code === "MACHINE_ASLEEP" || kind === "not-readable" || kind === "listing-stale" || kind === "listing-failed" || error.details.rule === "listing-age"
 }
 
 /** One read, made again once when the read rule did not make it; undefined when it still could not be made. */
@@ -274,7 +276,15 @@ export async function guestStep<T>(machines: Machines, target: ChangeTarget, inp
 
 /** A read target from a listing at most 2 s old: what the read rule needs. */
 export async function readTarget(machines: Machines, region: Region, name: MachineName, machineId: MachineId | null, op: OpContext): Promise<ReadTarget> {
-  return { region, name, listing: await machines.services.boxd.list({ maxAgeMs: TIMEOUTS.readListingMaxAgeMs }, op), machineId }
+  try {
+    return { region, name, listing: await machines.services.boxd.list({ maxAgeMs: TIMEOUTS.readListingMaxAgeMs }, op), machineId }
+  } catch (error) {
+    // The listing a read needs failed, not the guest: the read was not made (`kind: "listing-failed"`), as the CLI
+    // port says when its own refresh fails, so a wait keeps waiting and a session read is tried once more.
+    // A signed-out or missing CLI (`BOXD_MISSING`) is no reason to wait: only a transient failure is marked.
+    if (!(error instanceof BoxdError) || (error.code !== "BOXD_FAILED" && error.code !== "TIMEOUT")) throw error
+    throw boxdError(error.code, `${error.what.replace(/\.$/, "")}; nothing was read.`, { ...error.details, kind: "listing-failed", retryable: true })
+  }
 }
 
 /**
