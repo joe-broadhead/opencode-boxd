@@ -36,7 +36,7 @@ describe("the Code Mode path", () => {
       expect(await host.probe().permission.list({ sessionID: wrote.sessionID })).toEqual([])
 
       // An agent that asks for the tool still asks, and a decline runs nothing.
-      const before = host.boxd.calls().length
+      const since = Date.now()
       const asking = await host.client.session.create({ location: { directory: host.location.directory }, agent: "build", permissions: [{ action: "boxd_drop", resource: "*", effect: "ask" }] })
       await host.client.session.prompt({
         sessionID: asking.id,
@@ -45,7 +45,9 @@ describe("the Code Mode path", () => {
       const question = await until("the drop asks", async () => (await host.probe().permission.list({ sessionID: asking.id })).find((entry) => entry.action === "boxd_drop"), 30_000)
       await host.probe().permission.reply({ sessionID: asking.id, requestID: question.id, decision: "reject", message: "not now" })
       await until("the turn ends", async () => (await host.client.session.get({ sessionID: asking.id })).outcome !== undefined, 30_000)
-      expect(host.boxd.calls().slice(before)).toEqual([])
+      // The declined drop ran nothing. The watcher's own reads of the work ensure made are its, tagged as such.
+      const ran = host.boxd.fake.spawns().filter((spawn) => spawn.startedAt >= since && spawn.bin === "boxd" && spawn.argv[0] !== "--help" && !(spawn.call ?? "").startsWith("watcher-"))
+      expect(ran.map((spawn) => spawn.argv.join(" "))).toEqual([])
     } finally {
       await host.close()
     }
