@@ -992,6 +992,37 @@ describe("the read rule under load", () => {
     expect(await errorOf(flaky.boxd_read({ workId: "stale-read", path: "notes.md" }, call()))).toMatchObject({ code: "TIMEOUT", state: "unreachable", details: { kind: "listing-stale" } })
   })
 
+  test("a listing that fails transiently is retried like a refused read and answers a retryable TIMEOUT; a signed-out CLI fails at once", async () => {
+    const machine = await openWork("failing-list")
+    writeFileSync(join(treeOf(machine, "failing-list"), "notes.md"), "hello\n")
+    const failed = boxdError("BOXD_FAILED", "The machine listing a read of oc-failing-list needs failed (network unreachable); nothing was read.", { kind: "listing-failed", retryable: true })
+    let refusals = 1
+    const flaky = sessionRuns({
+      ...services,
+      guest: {
+        ...services.guest,
+        read: (target, input, context) => {
+          if (refusals-- > 0) throw failed
+          return services.guest.read(target, input, context)
+        },
+      },
+    }).runs
+    expect(await flaky.boxd_read({ workId: "failing-list", path: "notes.md" }, call())).toMatchObject({ state: "read", text: "hello\n" })
+    refusals = 2
+    expect(await errorOf(flaky.boxd_read({ workId: "failing-list", path: "notes.md" }, call()))).toMatchObject({ code: "TIMEOUT", state: "unreachable", details: { kind: "listing-failed", retryable: true } })
+    // The read's own listing failing transiently on the real port: retried on a fresh one, and read.
+    counter.fake.fault("machine list", { stderr: "error: network unreachable", code: 1 })
+    await new Promise((resolve) => setTimeout(resolve, 2_100))
+    expect(await runs.boxd_read({ workId: "failing-list", path: "notes.md" }, call())).toMatchObject({ state: "read", text: "hello\n" })
+    // Signed out: the CLI's own refusal at once, with no second try and nothing read.
+    await new Promise((resolve) => setTimeout(resolve, 2_100))
+    counter.fake.fault("machine list", { stderr: "Not logged in. Run `boxd auth login` first.", code: 1 })
+    counter.fake.fault("machine list", { stderr: "Not logged in. Run `boxd auth login` first.", code: 1 })
+    const signedOut = await errorOf(runs.boxd_read({ workId: "failing-list", path: "notes.md" }, call()))
+    expect(signedOut.code).toBe("BOXD_MISSING")
+    expect(signedOut.details.retryable).toBeUndefined()
+  })
+
   test("saturation: three harvest lists of 16 and 48 reads at about 1 s per CLI call; every harvest saves, and no read fails on the read rule", async () => {
     const ids = Array.from({ length: 48 }, (_, index) => `sat${index}`)
     for (const id of ids) writeFileSync(join(treeOf(await ranWork(id), id), "notes.md"), "hello\n")
@@ -1006,7 +1037,7 @@ describe("the read rule under load", () => {
     // A read the read rule refused is retried on a fresh listing; one that still cannot be made is a TIMEOUT to retry,
     // never BOXD_FAILED. (How many succeed at this load is the runner's: its refresh at dequeue is package D's.)
     for (const answer of answers) {
-      if (answer instanceof BoxdError) expect({ code: answer.code, kind: answer.details.kind }).toEqual({ code: "TIMEOUT", kind: "listing-stale" })
+      if (answer instanceof BoxdError) expect({ code: answer.code, kind: answer.details.kind }).toEqual({ code: "TIMEOUT", kind: answer.details.kind === "listing-failed" ? "listing-failed" : "listing-stale" })
       else expect(answer).toMatchObject({ state: "read", text: "hello\n" })
     }
   }, 600_000)
