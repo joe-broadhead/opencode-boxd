@@ -1,8 +1,5 @@
 /**
- * `/boxd-cleanup` (design §C.5): the person's command. Package E owns this file and fills it; Day 0 registers the
- * command so its name and its place are settled, and it says it is not built yet.
- *
- * The contract E keeps:
+ * `/boxd-cleanup` (design §C.5): the person's command. Package E owns this file.
  *
  * - It posts a report with `ctx.session.synthetic` (`resume: false`): counts, costs, ids and phases only, nothing the
  *   model could use to approve anything.
@@ -14,14 +11,22 @@
  * - **A declined prompt is caught per action** (review note N-2): `assert` rejects with an error that would end the
  *   current step, so each action's assert is caught on its own, logged as "declined", and the command moves on to the
  *   next action. A "no" or a deny changes nothing, and the session stays usable.
- * - The report's matches come from `services.actions.match`, and a "yes" runs that one action in the plugin's process
- *   through `services.actions` (C2's code: drop's whole guard per work), against the ids that were in the prompt, never
- *   through the tools RPC. Its children are tagged `cleanup-command`.
+ * - The matches come from `services.actions.match`, and a "yes" runs that one action in the plugin's process through
+ *   `services.actions` (C2's code: drop's whole guard per work), against the ids that were in the prompt, never through
+ *   the tools RPC. Its children are tagged `cleanup-command`.
  */
 import type { Plugin } from "@opencode/plugin"
-import { CLEANUP_COMMAND, type CleanupView, type CleanupViewProvider, type CostServices } from "./services.js"
+import { internalsOf } from "./cost/index.js"
+import { figures, shown, sign, workPerHour } from "./cost/fleet.js"
+import { isRunning } from "./cost/rates.js"
+import { CLEANUP_ACTION } from "./permissions.js"
+import type { WorkSnapshot } from "./ports.js"
+import type { CostBlock, ListResult } from "./results.js"
+import { CLEANUP_COMMAND, type ActionContext, type CleanupView, type CleanupViewProvider, type CostServices, type SelectorValues } from "./services.js"
 
 export { CLEANUP_COMMAND }
+/** The report lists at most this many running works, costliest first. */
+export const REPORT_MAX_WORKS = 30
 
 type CleanupContext = {
   readonly command: Pick<Plugin.Context["command"], "transform">
@@ -29,32 +34,180 @@ type CleanupContext = {
   readonly permission: Pick<Plugin.Context["permission"], "assert">
 }
 
-export function registerCleanupCommand(ctx: CleanupContext, _services: CostServices) {
+type Step = {
+  readonly [K in keyof SelectorValues]: { readonly tool: K; readonly select: SelectorValues[K]; readonly verb: string; readonly run: "sleep" | "harvest" | "drop" }
+}[keyof SelectorValues]
+
+/** The actions the command offers, in order: sleep what is finished, save what is unsaved, drop what is saved. */
+export const CLEANUP_STEPS: readonly Step[] = [
+  { tool: "boxd_sleep", select: "finished", verb: "Sleep finished works", run: "sleep" },
+  { tool: "boxd_harvest", select: "unsaved-finished", verb: "Harvest unsaved finished works", run: "harvest" },
+  { tool: "boxd_drop", select: "saved-finished", verb: "Drop saved finished works", run: "drop" },
+]
+
+const minutesSince = (at: string | undefined, now: Date) => (at ? Math.max(0, Math.round((now.getTime() - Date.parse(at)) / 60_000)) : null)
+
+interface Picture {
+  readonly works: readonly WorkSnapshot[]
+  readonly rates: ReturnType<ReturnType<typeof internalsOf>["rates"]>
+  readonly running: ReadonlyArray<{ readonly work: WorkSnapshot; readonly hour: number; readonly idle: number | null }>
+  readonly block?: CostBlock
+  readonly blockError?: string
+}
+
+/** What costs money now: today's figures first (so the organisation's rates are known), then each running work. */
+async function picture(services: CostServices, call: ActionContext["call"]): Promise<Picture> {
+  const works = services.watch.snapshot().works.filter((work) => work.phase !== "closed" && work.phase !== "gone")
+  let block: CostBlock | undefined
+  let blockError: string | undefined
+  // No open works: nothing is read from boxd.
+  if (works.length) {
+    try {
+      block = await services.cost.block({ works: false, limit: 0 }, call)
+    } catch (error) {
+      blockError = error instanceof Error ? error.message.split("\n")[0]!.slice(0, 160) : String(error)
+    }
+  }
+  const rates = internalsOf(services.cost).rates()
+  const now = services.clock.now()
+  const running = works
+    .filter((work) => isRunning(work.phase))
+    .map((work) => ({ work, hour: workPerHour(work, rates), idle: work.phase === "busy" ? null : minutesSince(work.idleSince, now) }))
+    .sort((a, b) => b.hour - a.hour || a.work.workId.localeCompare(b.work.workId))
+  return { works, rates, running, ...(block ? { block } : {}), ...(blockError ? { blockError } : {}) }
+}
+
+/** The report: what costs money now and the suggested actions. Plugin fields only. */
+export async function cleanupReport(services: CostServices, call: ActionContext["call"]): Promise<string> {
+  const { works, rates, running, block } = await picture(services, call)
+  if (!works.length) return "boxd cleanup: no open works, so no machine of this plugin costs money. Nothing was changed."
+  const fleet = figures(works, rates)
+  const line = ({ work, hour, idle }: Picture["running"][number]) =>
+    `- ${work.workId}: ${work.phase}${work.needsInput ? " (waits on a person)" : ""}, ~${sign(rates.currency)}${hour.toFixed(4)}/h${idle !== null ? `, idle ${idle} min` : ""}, saved ${work.saved}`
+  const lines = [
+    `boxd cleanup: ${fleet.running} running, ${fleet.asleep} asleep; ~${shown(rates.currency, fleet.perHour)}/h (an estimate${rates.source === "public" ? `, from boxd's public ${rates.currency} rates: this sign-in cannot read the organisation's` : ""}).`,
+  ]
+  const today = block?.today
+  lines.push(
+    !today || today.machines === null
+      ? `Machine cost today: not available (${today?.unavailable ?? "boxd's usage could not be read"}).`
+      : `Machine cost today: ${shown(block.currency, today.machines)}, boxd's estimate${today.complete ? "" : " (boxd lags up to 25 minutes)"}.`,
+  )
+  if (running.length) {
+    lines.push("Running works, costliest first:", ...running.slice(0, REPORT_MAX_WORKS).map(line))
+    if (running.length > REPORT_MAX_WORKS) lines.push(`- and ${running.length - REPORT_MAX_WORKS} more`)
+  }
+  const actions = await services.cost.cleanup(call)
+  if (actions.length) {
+    lines.push("Suggested:")
+    for (const action of actions) {
+      const saving = action.savesPerHour !== undefined ? `, saves ~${shown(rates.currency, action.savesPerHour)}/h` : action.savesPerDay !== undefined ? `, saves ~${shown(rates.currency, action.savesPerDay)}/day` : ""
+      lines.push(`- ${action.action} ${action.select}: ${action.works} ${action.works === 1 ? "work" : "works"}${saving}`)
+    }
+  } else lines.push("Nothing to clean up.")
+  if (services.options.access === "read-only") lines.push("access is read-only, so this command only reports.")
+  else if (actions.length) lines.push("Each action asks you in OpenCode's permission prompt; a no skips only that action.")
+  return lines.join("\n")
+}
+
+/** How the command confirms each action at this `access` (design §C.5). */
+const confirmOf = (access: CostServices["options"]["access"]): CleanupView["confirm"] => (access === "all" ? "cleanup-action" : access === "ask-changes" ? "tool-action" : "report-only")
+
+/**
+ * The view `/boxd-cleanup`'s TUI renders (`CleanupViewRpc`): the same figures as the report, as data. It approves
+ * nothing: its buttons run the command, which asks the person for each action.
+ */
+export function cleanupView(services: CostServices): CleanupViewProvider {
+  return {
+    async view(call): Promise<CleanupView> {
+      const base = { automation: services.cost.automation(), confirm: confirmOf(services.options.access), command: `/${CLEANUP_COMMAND}` } as const
+      try {
+        const { works, rates, running, block, blockError } = await picture(services, call)
+        const note = [
+          rates.source === "public" ? `Figures use boxd's public ${rates.currency} rates: this sign-in cannot read the organisation's rates or billing currency.` : undefined,
+          blockError ? `Today's machine cost could not be read: ${blockError}` : undefined,
+        ].filter((text): text is string => text !== undefined)
+        return {
+          state: "ok",
+          currency: rates.currency,
+          perHour: figures(works, rates).perHour,
+          works: running.slice(0, REPORT_MAX_WORKS).map(({ work, hour, idle }) => ({ workId: work.workId, phase: work.phase, saved: work.saved, perHour: Math.round(hour * 10_000) / 10_000, idleMinutes: idle })),
+          actions: works.length ? await services.cost.cleanup(call) : [],
+          ...base,
+          ...(note.length ? { note: note.join(" ") } : {}),
+          ...(block === undefined && !works.length ? { note: "No open works." } : {}),
+        }
+      } catch (error) {
+        return { state: "unavailable", currency: null, perHour: null, works: [], actions: [], ...base, note: error instanceof Error ? error.message.split("\n")[0]!.slice(0, 160) : String(error) }
+      }
+    },
+  }
+}
+
+const counted = (result: ListResult<{ state: string }>) =>
+  Object.entries(result.counts)
+    .map(([state, count]) => `${count} ${state}`)
+    .join(", ")
+
+/** One run of the command: the report, then each action behind its own permission prompt. */
+export async function runCleanup(ctx: Omit<CleanupContext, "command">, services: CostServices, sessionID: string, callId: string): Promise<{ readonly report: string; readonly outcomes: readonly string[] }> {
+  const call = { callId, source: "cleanup-command" } as const
+  const context: ActionContext = { by: "cleanup-command", call }
+  const report = await cleanupReport(services, call)
+  await ctx.session.synthetic({ sessionID, text: report, description: "boxd cleanup", resume: false })
+  const outcomes: string[] = []
+  const open = services.watch.snapshot().works.some((work) => work.phase !== "closed" && work.phase !== "gone")
+  if (services.options.access === "read-only" || !open) return { report, outcomes }
+  let changed = false
+  for (const step of CLEANUP_STEPS) {
+    let ids: readonly string[]
+    try {
+      ids = await (services.actions.match as (tool: string, select: string, context: ActionContext) => Promise<readonly string[]>)(step.tool, step.select, context)
+    } catch (error) {
+      outcomes.push(`${step.verb}: could not match (${error instanceof Error ? error.message.split("\n")[0]!.slice(0, 160) : String(error)}).`)
+      continue
+    }
+    if (!ids.length) {
+      outcomes.push(`${step.verb}: nothing to do.`)
+      continue
+    }
+    const rates = internalsOf(services.cost).rates()
+    const matched = services.watch.snapshot().works.filter((work) => ids.includes(work.workId))
+    const saving = Math.round(matched.reduce((sum, work) => sum + workPerHour(work, rates) - (step.run === "sleep" ? workPerHour({ ...work, phase: "asleep" }, rates) : 0), 0) * 10_000) / 10_000
+    try {
+      await ctx.permission.assert({
+        sessionID,
+        action: services.options.access === "ask-changes" ? step.tool : CLEANUP_ACTION,
+        resources: [...ids],
+        metadata: { command: CLEANUP_COMMAND, tool: step.tool, select: step.select, works: ids.length, savesPerHour: saving, currency: rates.currency },
+      })
+    } catch {
+      // A "no", a deny rule, or a prompt that could not be shown: this action changes nothing, the next one is asked.
+      outcomes.push(`${step.verb}: declined; nothing changed.`)
+      continue
+    }
+    try {
+      const result = await services.actions[step.run](ids, context)
+      changed = true
+      outcomes.push(`${step.verb}: ${counted(result as ListResult<{ state: string }>)}.`)
+    } catch (error) {
+      outcomes.push(`${step.verb}: failed (${error instanceof Error ? error.message.split("\n")[0]!.slice(0, 160) : String(error)}).`)
+    }
+  }
+  const done = `boxd cleanup, done:\n${outcomes.map((outcome) => `- ${outcome}`).join("\n")}${changed ? "" : "\nNothing was changed."}`
+  await ctx.session.synthetic({ sessionID, text: done, description: "boxd cleanup", resume: false })
+  return { report, outcomes }
+}
+
+export function registerCleanupCommand(ctx: CleanupContext, services: CostServices) {
+  let runs = 0
   return ctx.command.transform((editor) =>
     editor.add({
       name: CLEANUP_COMMAND,
       description: "Show what boxd machines cost now, and confirm each cleanup action",
       execute: async ({ sessionID }) => {
-        await ctx.session.synthetic({ sessionID, text: "boxd cleanup: not built yet on this branch. Nothing was changed.", description: "boxd cleanup", resume: false })
+        await runCleanup(ctx, services, sessionID, `cleanup-${++runs}`)
       },
     }),
   )
-}
-
-/** The view `/boxd-cleanup`'s TUI renders (`CleanupViewRpc`). Package E fills it from `services.cost` and the watcher. */
-export function cleanupView(services: CostServices): CleanupViewProvider {
-  const confirm: CleanupView["confirm"] = services.options.access === "all" ? "cleanup-action" : services.options.access === "ask-changes" ? "tool-action" : "report-only"
-  return {
-    view: async () => ({
-      state: "unavailable",
-      currency: null,
-      perHour: null,
-      works: [],
-      actions: [],
-      automation: "off",
-      confirm,
-      command: `/${CLEANUP_COMMAND}`,
-      note: "The cleanup view is not built yet on this branch.",
-    }),
-  }
 }
