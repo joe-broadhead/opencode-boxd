@@ -177,6 +177,16 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
    * log's newest cursor, then tails the log whenever the file changed.
    */
   async function sync(op: OpContext): Promise<void> {
+    // The events of one tail go out together: nothing is posted until the whole page is dispatched.
+    notices.hold()
+    try {
+      await tail(op)
+    } finally {
+      notices.release()
+    }
+  }
+
+  async function tail(op: OpContext): Promise<void> {
     if (!seeded) {
       const phases = await core.ledger.phases({}, op)
       const at = now()
