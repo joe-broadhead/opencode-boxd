@@ -37,6 +37,7 @@ function core(root: string, boxd: FakeImportBoxd) {
     boxd: { ...notBuilt<Runtime["boxd"]>("boxd"), list: boxd.list, get: boxd.get },
     guest: notBuilt("guest"),
     laptop: notBuilt("laptop"),
+    dispose: async () => {},
   }
   const importV0 = createImportV0(host)
   return { importV0, ledger: createLedger({ ...host, importV0 }), problems }

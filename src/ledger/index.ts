@@ -99,6 +99,8 @@ export function ledgerPort(store: Ledger, importV0: Pick<ImportV0Port, "state" |
       if (!final.startsWith(`${join(store.root, "v1", "works")}/`)) throw boxdError("LEDGER_FAILED", `${final} is not inside the ledger's works folder.`)
       await commitFile(temp, final, expected)
     },
+
+    dispose: () => store.dispose(),
   }
 }
 

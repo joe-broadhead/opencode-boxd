@@ -23,7 +23,7 @@ import { readdir, readFile, rename, stat, writeFile, mkdir } from "node:fs/promi
 import { join, relative } from "node:path"
 import { boxdError, BoxdError, WARNINGS, type WarningCode } from "./errors.js"
 import { copyFileAtomic, digestFile, ensureDir, errnoOf, exists, fsyncDir, remove, writeFileAtomic, writeJsonAtomic } from "./ledger/fsx.js"
-import { acquireLock, readNote } from "./ledger/lock.js"
+import { LockSet, readNote } from "./ledger/lock.js"
 import { readMarks } from "./ledger/marks.js"
 import { Ledger, WORK_ID, withoutUserinfo, type LedgerOptions } from "./ledger/store.js"
 import {
@@ -73,6 +73,8 @@ export interface ImportOptions {
   /** The `machine get` calls at once; the runner's own caps apply beneath. */
   readonly getConcurrency?: number
   readonly lock?: { readonly staleMs?: number; readonly heartbeatMs?: number }
+  /** The owner of the import lock: its disposal stops a run at its next step and releases the lock. */
+  readonly locks?: LockSet
   readonly ledger?: LedgerOptions
   /** Called at each step; `record` once per record written. Tests use it to stop a run at an exact point. */
   readonly onStep?: (step: ImportStep, progress: Progress) => void | Promise<void>
@@ -115,6 +117,7 @@ export class LedgerGate {
   private running: Promise<GateState> | undefined
   private published: Ledger | undefined
   private blocked = new Set<string>()
+  private readonly locks = new LockSet()
 
   constructor(options: ImportOptions) {
     this.options = options
@@ -130,12 +133,24 @@ export class LedgerGate {
 
   /** Starts the import when no complete `v1/` exists, or reruns blocked ids into one that does; joins a running one. */
   start(): Promise<GateState> {
+    if (this.locks.disposed) return Promise.resolve(this.current)
     if (!this.running) {
-      this.running = this.attempt().finally(() => {
-        this.running = undefined
-      })
+      this.running = this.locks.track(
+        this.attempt().finally(() => {
+          this.running = undefined
+        }),
+      )
     }
     return this.running
+  }
+
+  /**
+   * On plugin disposal or reload: a running import stops at its next step (its staging folder is discarded by the next
+   * run), the import lock's heartbeat stops and the lock is released, and so are the work locks of a blocked-id rerun.
+   */
+  async dispose(graceMs?: number): Promise<void> {
+    await this.locks.dispose(graceMs)
+    await this.published?.dispose(graceMs)
   }
 
   /** The published ledger for a tool call; never a partial one. */
@@ -179,6 +194,7 @@ export class LedgerGate {
     if (!publishedBefore) {
       const outcome = await runImport({
         ...this.options,
+        locks: this.locks,
         onProgress: (progress) => {
           this.current = { state: "importing", progress }
         },
@@ -196,7 +212,7 @@ export class LedgerGate {
     await this.adoptPublished()
     await writeNoteOnce(root)
     if (publishedBefore && this.blocked.size) {
-      await rerunBlocked(this.options, this.published!)
+      await rerunBlocked({ ...this.options, locks: this.locks }, this.published!)
       await this.adoptPublished()
     }
     return this.current
@@ -210,12 +226,15 @@ export type RunOutcome0 = { readonly state: "published" | "present" | "busy" } |
 /** One full run: steps 1–8 of §6.1. Exported for the crash tests, which run it in a child process. */
 export async function runImport(options: ImportOptions & { readonly onProgress?: (progress: Progress) => void }): Promise<RunOutcome0> {
   const { root } = options
+  const locks = options.locks ?? new LockSet()
   const step = async (name: ImportStep, progress: Progress) => {
     options.onProgress?.(progress)
     await options.onStep?.(name, progress)
+    // A disposed plugin stops here; the next run discards the staging folder and starts over.
+    if (locks.disposed) throw locks.signal.reason
   }
   await ensureDir(root)
-  const lock = await acquireLock(join(root, LEDGER_PATHS.importLock), { purpose: "import-v0", waitMs: 0, ...options.lock })
+  const lock = await locks.acquire(join(root, LEDGER_PATHS.importLock), { purpose: "import-v0", waitMs: 0, ...options.lock })
   if (!lock) return { state: "busy" }
   let staging: string | undefined
   try {
@@ -303,13 +322,15 @@ export async function runImport(options: ImportOptions & { readonly onProgress?:
  */
 async function rerunBlocked(options: ImportOptions, ledger: Ledger): Promise<void> {
   const root = options.root
-  const lock = await acquireLock(join(root, LEDGER_PATHS.importLock), { purpose: "import-v0 blocked ids", waitMs: 0, ...options.lock })
+  const locks = options.locks ?? new LockSet()
+  const lock = await locks.acquire(join(root, LEDGER_PATHS.importLock), { purpose: "import-v0 blocked ids", waitMs: 0, ...options.lock })
   if (!lock) return
   try {
     let report = await readReport(root)
     if (!report?.blocked.length) return
     let listing: Listing | undefined
     for (const workId of report.blocked) {
+      if (locks.disposed) return
       const folder = join(root, LEDGER_PATHS.v0Works, workId)
       const present = WORK_ID.test(workId) && (await exists(join(folder, "work.json")))
       // A v0 record removed since frees its id; a fixed one is imported; one that still fails stays blocked.
@@ -842,7 +863,8 @@ export function createImportV0(core: HostServices & Runtime): ImportV0Port {
       const current = gate.state()
       core.report("import", current.state === "failed" ? `IMPORT_V0_FAILED: ${current.reason}` : undefined)
     } catch (error) {
-      core.report("import", reasonText(error))
+      // A stop at plugin disposal is not a problem to show; the next start runs the import again.
+      if (!(error instanceof BoxdError && error.code === "CANCELLED")) core.report("import", reasonText(error))
     }
     return state()
   }
@@ -852,5 +874,6 @@ export function createImportV0(core: HostServices & Runtime): ImportV0Port {
     run: () => run(),
     readPhase: (target, input, opContext) => v0Phase(core.boxd, target, input, opContext),
     adopt: (target, opContext) => adoptV0(core.boxd, target, opContext),
+    dispose: () => gate.dispose(),
   }
 }

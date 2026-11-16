@@ -13,7 +13,7 @@ import { join } from "node:path"
 import { boxdError, isCode } from "../errors.js"
 import { EVENTS_ROTATE_BYTES, type EventLine } from "./types.js"
 import { errnoOf, FILE_MODE } from "./fsx.js"
-import { acquireLock } from "./lock.js"
+import { acquireLock, type LockSet } from "./lock.js"
 
 /** The rotated file beside `events.jsonl`. */
 export const ROTATED_EVENTS = "events.1.jsonl"
@@ -36,13 +36,15 @@ export class EventLog {
   private readonly lockPath: string
   private readonly rotateBytes: number
   private readonly now: () => Date
+  private readonly locks: LockSet | undefined
 
-  constructor(ledgerDir: string, options: { rotateBytes?: number; now?: () => Date } = {}) {
+  constructor(ledgerDir: string, options: { rotateBytes?: number; now?: () => Date; locks?: LockSet } = {}) {
     this.file = join(ledgerDir, "events.jsonl")
     this.rotated = join(ledgerDir, ROTATED_EVENTS)
     this.lockPath = join(ledgerDir, EVENTS_LOCK)
     this.rotateBytes = options.rotateBytes ?? EVENTS_ROTATE_BYTES
     this.now = options.now ?? (() => new Date())
+    this.locks = options.locks
   }
 
   /**
@@ -50,7 +52,8 @@ export class EventLog {
    * (L-f), so no guest string can reach a notice through the log.
    */
   async append(event: NewEvent, signal?: AbortSignal): Promise<EventLine> {
-    const lock = await acquireLock(this.lockPath, { purpose: "events", waitMs: 10_000, pollMs: 10, ...(signal ? { signal } : {}) })
+    const options = { purpose: "events", waitMs: 10_000, pollMs: 10, ...(signal ? { signal } : {}) }
+    const lock = this.locks ? await this.locks.acquire(this.lockPath, options) : await acquireLock(this.lockPath, options)
     if (!lock) throw boxdError("LEDGER_LOCKED", "Another OpenCode process held the event log's lock for 10 seconds.")
     try {
       const tail = await lastLine(this.file)

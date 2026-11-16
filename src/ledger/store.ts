@@ -15,7 +15,7 @@ import { join } from "node:path"
 import { boxdError, BoxdError } from "../errors.js"
 import { EventLog } from "./events.js"
 import { commitFile, type Digest, ensureDir, errnoOf, exists, fsyncDir, isTempName, randomPart, remove, tempBeside, writeJsonAtomic } from "./fsx.js"
-import { acquireLock } from "./lock.js"
+import { LockSet } from "./lock.js"
 import {
   LEDGER_FORMAT,
   LEDGER_PATHS,
@@ -71,6 +71,8 @@ export interface LedgerOptions {
   readonly lockWaitMs?: number
   /** Rotation size for the event log; tests make it small. */
   readonly eventsRotateBytes?: number
+  /** The locks' timing; tests make the heartbeat fast. */
+  readonly lock?: { readonly heartbeatMs?: number; readonly staleMs?: number }
 }
 
 /** The published ledger. `openLedger` checks the `complete` marker first: a partial ledger is never read. */
@@ -80,6 +82,9 @@ export class Ledger {
   /** `<root>/v1`. */
   readonly dir: string
   readonly events: EventLog
+  /** Every lock this ledger holds, for `dispose`. */
+  readonly locks = new LockSet()
+  private readonly lockTiming: { readonly heartbeatMs?: number; readonly staleMs?: number }
   private readonly cache = new Map<string, Cached>()
   private indexLoaded = false
   private readonly queues = new Map<string, Promise<unknown>>()
@@ -90,7 +95,12 @@ export class Ledger {
     this.root = root
     this.dir = join(root, LEDGER_PATHS.v1)
     this.lockWaitMs = options.lockWaitMs ?? WORK_LOCK_WAIT_MS
-    this.events = new EventLog(this.dir, { ...(options.now ? { now: options.now } : {}), ...(options.eventsRotateBytes ? { rotateBytes: options.eventsRotateBytes } : {}) })
+    this.lockTiming = options.lock ?? {}
+    this.events = new EventLog(this.dir, {
+      locks: this.locks,
+      ...(options.now ? { now: options.now } : {}),
+      ...(options.eventsRotateBytes ? { rotateBytes: options.eventsRotateBytes } : {}),
+    })
   }
 
   // ── Paths ────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -131,7 +141,7 @@ export class Ledger {
         if (!(await exists(join(dir, WORK_FILES.record)))) await rmdir(dir).catch(() => undefined)
       }
     }
-    const next = previous.then(run, run)
+    const next = this.locks.track(previous.then(run, run))
     this.queues.set(
       workId,
       next.then(
@@ -147,9 +157,10 @@ export class Ledger {
     for (let attempt = 0; ; attempt++) {
       await ensureDir(dir)
       try {
-        return await acquireLock(join(dir, WORK_FILES.lock), { purpose: `work ${workId}`, waitMs: this.lockWaitMs, ...(signal ? { signal } : {}) })
+        return await this.locks.acquire(join(dir, WORK_FILES.lock), { purpose: `work ${workId}`, waitMs: this.lockWaitMs, ...this.lockTiming, ...(signal ? { signal } : {}) })
       } catch (error) {
         if (errnoOf(error) !== "ENOENT" || attempt >= 3) throw ledgerError(`lock work "${workId}"`, error)
+        if (this.locks.disposed) throw ledgerError(`lock work "${workId}"`, error)
       }
     }
   }
@@ -357,6 +368,15 @@ export class Ledger {
         for (const name of names) if (isTempName(name) && !name.startsWith(`.${WORK_FILES.untracked}.`)) await remove(join(dir, name))
       }
     })
+  }
+
+  /**
+   * On plugin disposal or reload: no new lock is taken (`CANCELLED`), a write in flight gets a short grace to finish
+   * (copy-on-write, so a cut one leaves the old file), and then every heartbeat stops and every lock this ledger still
+   * holds is released, so another process never waits for a stale takeover.
+   */
+  async dispose(graceMs?: number): Promise<void> {
+    await this.locks.dispose(graceMs)
   }
 
   // ── Internals ────────────────────────────────────────────────────────────────────────────────────────────────────

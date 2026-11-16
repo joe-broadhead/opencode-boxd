@@ -10,10 +10,11 @@
  * step that must not run twice (`holds`), and its heartbeat notices a takeover (`lost`).
  */
 import { hostname } from "node:os"
-import { mkdir, readFile, rename, stat } from "node:fs/promises"
+import { mkdir, open, readFile, rename, stat, unlink } from "node:fs/promises"
 import { join } from "node:path"
+import { boxdError } from "../errors.js"
 import { LOCK_HEARTBEAT_MS, LOCK_STALE_MS } from "./types.js"
-import { errnoOf, randomPart, remove, writeJsonAtomic } from "./fsx.js"
+import { errnoOf, FILE_MODE, randomPart, remove } from "./fsx.js"
 
 export interface LockOwner {
   readonly token: string
@@ -34,6 +35,8 @@ export interface LockOptions {
   readonly heartbeatMs?: number
   readonly now?: () => number
   readonly signal?: AbortSignal
+  /** Called once the handle is released, by its holder or by `LockSet.dispose`. */
+  readonly onRelease?: () => void
 }
 
 export interface LockHandle {
@@ -51,6 +54,27 @@ export interface LockHandle {
 
 const OWNER = "owner.json"
 const host = hostname()
+
+/**
+ * Writes a file inside a lock folder through a temp file and a rename, never making the folder: a heartbeat that runs
+ * after its lock was released or taken over must not bring the folder back.
+ */
+async function writeInLock(path: string, name: string, value: unknown): Promise<void> {
+  const target = join(path, name)
+  const temp = join(path, `.${name}.${process.pid}.${randomPart()}.tmp`)
+  const handle = await open(temp, "wx", FILE_MODE)
+  try {
+    await handle.writeFile(JSON.stringify(value))
+  } finally {
+    await handle.close()
+  }
+  try {
+    await rename(temp, target)
+  } catch (error) {
+    await unlink(temp).catch(() => undefined)
+    throw error
+  }
+}
 
 export async function readOwner(path: string): Promise<LockOwner | null> {
   try {
@@ -153,8 +177,8 @@ export async function acquireLock(path: string, options: LockOptions): Promise<L
     try {
       await mkdir(path, { mode: 0o700 })
       const owner: LockOwner = { token, pid: process.pid, host, at: now(), purpose: options.purpose }
-      await writeJsonAtomic(join(path, OWNER), owner)
-      return handle(path, owner, heartbeatMs, now)
+      await writeInLock(path, OWNER, owner)
+      return handle(path, owner, heartbeatMs, now, options.onRelease)
     } catch (error) {
       if (errnoOf(error) !== "EEXIST") throw error
     }
@@ -170,9 +194,10 @@ export async function acquireLock(path: string, options: LockOptions): Promise<L
   }
 }
 
-function handle(path: string, owner: LockOwner, heartbeatMs: number, now: () => number): LockHandle {
+function handle(path: string, owner: LockOwner, heartbeatMs: number, now: () => number, onRelease?: () => void): LockHandle {
   let lost = false
   let released = false
+  let beating: Promise<void> = Promise.resolve()
   const holds = async () => !released && (await readOwner(path))?.token === owner.token
   const beat = async () => {
     if (released || lost) return
@@ -180,9 +205,12 @@ function handle(path: string, owner: LockOwner, heartbeatMs: number, now: () => 
       lost = true
       return
     }
-    await writeJsonAtomic(join(path, OWNER), { ...owner, at: now() }).catch(() => undefined)
+    if (released) return
+    await writeInLock(path, OWNER, { ...owner, at: now() }).catch(() => undefined)
   }
-  const timer = setInterval(() => void beat(), heartbeatMs)
+  const timer = setInterval(() => {
+    beating = beating.then(beat)
+  }, heartbeatMs)
   timer.unref?.()
   return {
     path,
@@ -192,13 +220,16 @@ function handle(path: string, owner: LockOwner, heartbeatMs: number, now: () => 
     },
     holds,
     async note(name, value) {
-      if (await holds()) await writeJsonAtomic(join(path, `${name}.json`), value).catch(() => undefined)
+      if (await holds()) await writeInLock(path, `${name}.json`, value).catch(() => undefined)
     },
     async release() {
       if (released) return
       clearInterval(timer)
+      // A heartbeat already under way finishes first, so it can never write into the folder after it is gone.
+      await beating
       const mine = await holds()
       released = true
+      onRelease?.()
       if (!mine) return
       // Renamed aside first, so another process's `mkdir` never meets a half-removed folder.
       const aside = `${path}.released-${randomPart()}`
@@ -212,3 +243,66 @@ function handle(path: string, owner: LockOwner, heartbeatMs: number, now: () => 
     },
   }
 }
+
+/**
+ * The locks one owner (a ledger, an import) holds, for its disposal: `dispose` refuses new locks with `CANCELLED`,
+ * aborts the ones still waiting, gives the holders `graceMs` to finish, then stops every heartbeat and releases every
+ * lock still held, so no other process has to wait for a stale takeover.
+ */
+export class LockSet {
+  private readonly held = new Set<LockHandle>()
+  private readonly controller = new AbortController()
+  private readonly busy = new Set<Promise<unknown>>()
+
+  get signal(): AbortSignal {
+    return this.controller.signal
+  }
+  get disposed(): boolean {
+    return this.controller.signal.aborted
+  }
+  /** How many locks are held now. */
+  get size(): number {
+    return this.held.size
+  }
+
+  async acquire(path: string, options: LockOptions): Promise<LockHandle | null> {
+    this.assertOpen()
+    const signal = options.signal ? AbortSignal.any([options.signal, this.signal]) : this.signal
+    let entry: LockHandle | undefined
+    const lock = await acquireLock(path, { ...options, signal, onRelease: () => entry && this.held.delete(entry) })
+    if (!lock) return null
+    entry = lock
+    this.held.add(lock)
+    if (this.disposed) {
+      await lock.release()
+      this.assertOpen()
+    }
+    return lock
+  }
+
+  /** Runs `fn` as work that `dispose` waits for, up to its grace. */
+  track<T>(work: Promise<T>): Promise<T> {
+    this.busy.add(work)
+    void work.then(
+      () => this.busy.delete(work),
+      () => this.busy.delete(work),
+    )
+    return work
+  }
+
+  async dispose(graceMs = 2_000): Promise<void> {
+    if (!this.disposed) this.controller.abort(stopping())
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const grace = new Promise<void>((resolve) => (timer = setTimeout(resolve, graceMs)))
+    await Promise.race([Promise.allSettled([...this.busy]), grace])
+    clearTimeout(timer)
+    await Promise.allSettled([...this.held].map((lock) => lock.release()))
+    this.held.clear()
+  }
+
+  private assertOpen(): void {
+    if (this.disposed) throw stopping()
+  }
+}
+
+const stopping = () => boxdError("CANCELLED", "The plugin is stopping, so the ledger takes no new lock.")
