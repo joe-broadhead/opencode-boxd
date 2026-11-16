@@ -234,6 +234,32 @@ describe("the work tree", () => {
     expect(answer.sessions).toEqual([{ id: "ses_g", parentId: null, lastMessageId: "msg_0", messages: 1, updated: 1 }])
   })
 
+  test("git never reads an enclosing repository: a work folder nested in another repo, with no repo of its own, is not known", async () => {
+    await setup()
+    const outer = onDisk("/home/boxd")
+    Bun.spawnSync(["git", "init", "--quiet", outer])
+    writeFileSync(join(outer, "outer.txt"), "outer")
+    Bun.spawnSync(["git", "-C", outer, "add", "outer.txt"])
+    Bun.spawnSync(["git", "-C", outer, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "--quiet", "-m", "outer"])
+    writeFileSync(join(outer, "outer.txt"), "changed")
+    writeFileSync(onDisk(`${DIRECTORY}/inner.txt`), "inner")
+    expect(await change((target) => runtime.guest.git(target, { directory: DIRECTORY }, context()))).toEqual({ known: false, remote: null, branch: null, sha: null, dirty: false, untracked: [], ignored: [] })
+    // Its own repository, inside the outer one, is read alone: the outer change is not its state.
+    git("init", "--quiet")
+    const own = await change((target) => runtime.guest.git(target, { directory: DIRECTORY }, context()))
+    expect(own).toMatchObject({ known: true, dirty: false, untracked: [{ path: "inner.txt", bytes: 5 }] })
+  })
+
+  test("git refuses a work folder whose repository's top is elsewhere", async () => {
+    await setup()
+    const outer = onDisk("/home/boxd")
+    Bun.spawnSync(["git", "init", "--quiet", outer])
+    Bun.spawnSync(["git", "-C", outer, "config", "core.worktree", outer])
+    writeFileSync(onDisk(`${DIRECTORY}/.git`), `gitdir: ${join(outer, ".git")}\n`)
+    const error = await fail(change((target) => runtime.guest.git(target, { directory: DIRECTORY }, context())))
+    expect([error?.code, error?.what]).toEqual(["GIT_UNKNOWN", "The guest helper's git failed (the work folder is not the top of its own git repository)."])
+  })
+
   test("git on a folder that is not a repository says so", async () => {
     await setup()
     expect(await change((target) => runtime.guest.git(target, { directory: DIRECTORY }, context()))).toMatchObject({ known: false, dirty: false, untracked: [], ignored: [] })
