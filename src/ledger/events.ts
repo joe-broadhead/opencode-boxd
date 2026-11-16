@@ -11,6 +11,7 @@ import { createReadStream } from "node:fs"
 import { open, rename, stat } from "node:fs/promises"
 import { join } from "node:path"
 import { boxdError, isCode } from "../errors.js"
+import type { EventPage } from "../ports.js"
 import { EVENTS_ROTATE_BYTES, type EventLine } from "./types.js"
 import { errnoOf, FILE_MODE } from "./fsx.js"
 import { acquireLock, type LockSet } from "./lock.js"
@@ -21,14 +22,8 @@ const EVENTS_LOCK = "events.lock"
 
 export type NewEvent = Omit<EventLine, "seq" | "at"> & { readonly at?: string }
 
-export interface EventsSince {
-  /** The newest sequence number: pass it as `since` next time. */
-  readonly cursor: number
-  /** Events after `since`, oldest first; empty when the cursor expired. */
-  readonly events: readonly EventLine[]
-  /** True when `since` is older than the oldest kept event, or newer than the log: answer with the full view. */
-  readonly cursorExpired: boolean
-}
+/** The port's `EventPage`. */
+export type EventsSince = EventPage
 
 export class EventLog {
   readonly file: string
@@ -58,15 +53,21 @@ export class EventLog {
     try {
       const tail = await lastLine(this.file)
       const previous = tail.seq ?? (await lastLine(this.rotated)).seq ?? 0
+      // The one event shape, field by field: nothing the caller adds beyond it reaches the log.
       const line: EventLine = {
         seq: previous + 1,
         at: event.at ?? this.now().toISOString(),
         workId: event.workId,
-        phase: event.phase,
+        from: event.from,
+        to: event.to,
         ...(event.outcome !== undefined ? { outcome: event.outcome } : {}),
         ...(event.code !== undefined ? { code: isCode(event.code) ? event.code : "RUN_FAILED" } : {}),
         ...(event.asleepBy !== undefined ? { asleepBy: event.asleepBy } : {}),
+        ...(event.needsInput !== undefined ? { needsInput: event.needsInput } : {}),
+        ...(event.reading !== undefined ? { reading: { residentGiB: event.reading.residentGiB, load1: event.reading.load1 } } : {}),
       }
+      // The fence: a sequence number is handed out only while this process still holds the log's lock.
+      if (!(await lock.holds())) throw boxdError(this.locks?.disposed ? "CANCELLED" : "LEDGER_LOCKED", "The event log's lock was lost before the append, so nothing was written.")
       const text = `${tail.cut ? "\n" : ""}${JSON.stringify(line)}\n`
       if (tail.size > 0 && tail.size + Buffer.byteLength(text) > this.rotateBytes) {
         await rename(this.file, this.rotated)
@@ -85,13 +86,19 @@ export class EventLog {
     return (await lastLine(this.file)).seq ?? (await lastLine(this.rotated)).seq ?? 0
   }
 
-  /** Every kept event after `since`, oldest first; `cursorExpired` when the log no longer reaches back that far. */
+  /**
+   * The kept events after `since`, oldest first, and `cursor`: the newest `seq` returned, or `since` when nothing is
+   * newer. When `since` is older than the oldest kept event, `cursorExpired` is true and the events start at the oldest
+   * kept one. A cursor newer than the log (another ledger's) is expired too: sequence numbers are never reused, so it can
+   * only come from somewhere else.
+   */
   async since(since: number): Promise<EventsSince> {
     const kept = [...(await readLines(this.rotated)), ...(await readLines(this.file))]
-    const cursor = kept.length ? kept[kept.length - 1]!.seq : 0
-    const oldest = kept.length ? kept[0]!.seq : cursor + 1
-    if (since > cursor || since < oldest - 1) return { cursor, events: [], cursorExpired: since !== cursor }
-    return { cursor, events: kept.filter((line) => line.seq > since), cursorExpired: false }
+    const newest = kept.length ? kept[kept.length - 1]!.seq : 0
+    const oldest = kept.length ? kept[0]!.seq : newest + 1
+    const expired = since > newest || since < oldest - 1
+    const events = expired ? kept : kept.filter((line) => line.seq > since)
+    return { cursor: events.length ? events[events.length - 1]!.seq : expired ? newest : since, events, cursorExpired: expired }
   }
 }
 
@@ -159,7 +166,7 @@ async function readLines(path: string): Promise<EventLine[]> {
       if (!part) continue
       try {
         const parsed = JSON.parse(part) as EventLine
-        if (typeof parsed.seq === "number" && typeof parsed.workId === "string") lines.push(parsed)
+        if (typeof parsed.seq === "number" && typeof parsed.workId === "string" && typeof parsed.to === "string") lines.push(parsed)
       } catch {
         // a line cut off by a crash, fenced by the next writer's newline
       }

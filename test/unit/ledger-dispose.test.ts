@@ -90,7 +90,7 @@ describe("the ledger's dispose", () => {
     await sleep(80)
     expect(lockFolders(root)).toEqual([])
     await expect(ledger.mutate("alpha", (current) => current)).rejects.toThrow(/^CANCELLED/)
-    await expect(ledger.events.append({ workId: "alpha", phase: "busy" })).rejects.toThrow(/^CANCELLED/)
+    await expect(ledger.events.append({ workId: "alpha", from: null, to: "busy" })).rejects.toThrow(/^CANCELLED/)
   })
 
   test("a holder that does not finish within the grace still loses its lock, and its heartbeat stops", async () => {
@@ -115,6 +115,31 @@ describe("the ledger's dispose", () => {
     // Another process takes the work at once, with no stale takeover to wait for.
     const other = new Ledger(root, { lockWaitMs: 0 })
     expect((await other.mutate("alpha", (current) => current && { ...current, title: "next" }))?.title).toBe("next")
+  })
+
+  test("a write whose recipe outlives the grace is dropped after the lock is released; the next instance's write stands (M-2)", async () => {
+    const root = await published()
+    const old = new Ledger(root, { lock: { heartbeatMs: 10 } })
+    await old.mutate("alpha", () => record("alpha"))
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    let entered!: () => void
+    const inside = new Promise<void>((resolve) => (entered = resolve))
+    const late = old.mutate("alpha", async (current) => {
+      entered()
+      await gate
+      return current && { ...current, model: "from-old-instance" }
+    })
+    await inside
+    await old.dispose(100)
+    // A reload: the new instance writes at once.
+    await new Ledger(root, { lockWaitMs: 0 }).mutate("alpha", (current) => current && { ...current, reboots: [{ at: "new", why: "repair" }] })
+    release()
+    const refused = (await late.catch((error: unknown) => error)) as BoxdError
+    expect(refused.code).toBe("CANCELLED")
+    const final = await new Ledger(root).get("alpha")
+    expect(final?.reboots).toEqual([{ at: "new", why: "repair" }])
+    expect(final?.model).toBeUndefined()
   })
 
   test("LockSet: dispose refuses new locks and releases held ones", async () => {

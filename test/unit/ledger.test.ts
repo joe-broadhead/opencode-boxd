@@ -175,67 +175,143 @@ describe("the index", () => {
 })
 
 describe("files: the last good export survives (M-a)", () => {
-  test("a commit with the wrong digest keeps the stored export byte for byte and leaves no temp file", async () => {
+  test("a staged export with the wrong size or digest keeps the stored one byte for byte and leaves no temp file", async () => {
     const ledger = await emptyLedger()
     await ledger.mutate("alpha", () => record("alpha"))
     const target = ledger.exportPath("alpha", "ses_root")
     const good = '{"info":{"id":"ses_root"},"messages":[]}\n'
-    const temp1 = ledger.tempFor(target)
-    mkdirSync(join(ledger.workDir("alpha"), "exports"), { recursive: true })
-    writeFileSync(temp1, good)
-    await ledger.commit("alpha", temp1, target, { bytes: good.length, sha256: sha(good) })
+    const first = await ledger.stageFile("alpha", "exports/ses_root.json")
+    expect(first.path).toMatch(/exports\/ses_root\.json\.[0-9a-f]{12}\.tmp$/)
+    writeFileSync(first.path, good)
+    await ledger.commitStaged(first, { bytes: good.length, sha256: sha(good) })
     const link = join(ledger.root, "export-link.json")
     linkSync(target, link)
 
     // Cut off half-way: fewer bytes than the guest reported.
     const newer = '{"info":{"id":"ses_root","title":"new"},"messages":[1]}\n'
-    const temp2 = ledger.tempFor(target)
-    writeFileSync(temp2, newer.slice(0, 10))
-    await expect(ledger.commit("alpha", temp2, target, { bytes: newer.length, sha256: sha(newer) })).rejects.toThrow(/EXPORT_INVALID/)
+    const cut = await ledger.stageFile("alpha", "exports/ses_root.json")
+    writeFileSync(cut.path, newer.slice(0, 10))
+    await expect(ledger.commitStaged(cut, { bytes: newer.length, sha256: sha(newer) })).rejects.toThrow(/EXPORT_INVALID/)
     // The right size, the wrong digest.
-    const temp3 = ledger.tempFor(target)
-    writeFileSync(temp3, newer.replace("new", "bad"))
-    await expect(ledger.commit("alpha", temp3, target, { bytes: newer.length, sha256: sha(newer) })).rejects.toThrow(/EXPORT_INVALID/)
+    const wrong = await ledger.stageFile("alpha", "exports/ses_root.json")
+    writeFileSync(wrong.path, newer.replace("new", "bad"))
+    await expect(ledger.commitStaged(wrong, { bytes: newer.length, sha256: sha(newer) })).rejects.toThrow(/EXPORT_INVALID/)
+    // A copy that failed is discarded by the caller.
+    const failed = await ledger.stageFile("alpha", "exports/ses_root.json")
+    await ledger.discard(failed)
     expect(readFileSync(target, "utf8")).toBe(good)
     expect(readdirSync(join(ledger.workDir("alpha"), "exports"))).toEqual(["ses_root.json"])
 
     // A verified one replaces it, and the hard link to the old file still holds the old bytes.
-    const temp4 = ledger.tempFor(target)
-    writeFileSync(temp4, newer)
-    expect(await ledger.commit("alpha", temp4, target, { bytes: newer.length, sha256: sha(newer) })).toEqual({ bytes: newer.length, sha256: sha(newer) })
+    const right = await ledger.stageFile("alpha", "exports/ses_root.json")
+    writeFileSync(right.path, newer)
+    expect(await ledger.commitStaged(right, { bytes: newer.length, sha256: sha(newer) })).toEqual({ bytes: newer.length, sha256: sha(newer) })
     expect(readFileSync(target, "utf8")).toBe(newer)
     expect(readFileSync(link, "utf8")).toBe(good)
     expect(statSync(target).mode & 0o777).toBe(0o600)
   })
 
-  test("a commit outside the work's folder is refused", async () => {
+  test("only the files a harvest writes, and only paths the ledger staged, are accepted", async () => {
     const ledger = await emptyLedger()
-    const temp = join(ledger.root, "x.tmp")
-    writeFileSync(temp, "x")
-    await expect(ledger.commit("alpha", temp, join(ledger.root, "elsewhere.json"))).rejects.toThrow(/LEDGER_FAILED/)
+    await expect(ledger.stageFile("alpha", "work.json" as never)).rejects.toThrow(/LEDGER_FAILED/)
+    await expect(ledger.stageFile("alpha", "exports/../../x.json" as never)).rejects.toThrow(/LEDGER_FAILED/)
+    const staged = await ledger.stageFile("alpha", "patch.diff")
+    const forged = { ...staged, path: join(ledger.workDir("alpha"), "exports", "..", "..", "beta", "patch.diff.0123456789ab.tmp") }
+    await expect(ledger.commitStaged(forged, { bytes: 0, sha256: sha("") })).rejects.toThrow(/LEDGER_FAILED/)
+    await expect(ledger.commitStaged({ ...staged, path: `${staged.path}x` }, { bytes: 0, sha256: sha("") })).rejects.toThrow(/LEDGER_FAILED/)
+    await ledger.commitStaged(staged, { bytes: 0, sha256: sha("") })
+    expect(readFileSync(ledger.patchPath("alpha"), "utf8")).toBe("")
   })
 
-  test("untracked/ is swapped whole; a crash between the two renames gets the old set back", async () => {
+  test("untracked/ is swapped whole after a verified staging; a crash between the two renames gets the old set back", async () => {
     const ledger = await emptyLedger()
     await ledger.mutate("alpha", () => record("alpha"))
-    const first = await ledger.stageUntracked("alpha")
-    writeFileSync(join(first, "a.txt"), "one")
-    await ledger.commitUntracked("alpha", first)
-    expect(readFileSync(join(ledger.untrackedDir("alpha"), "a.txt"), "utf8")).toBe("one")
+    const first = await ledger.stageFolder("alpha")
+    expect(first.path).toMatch(/untracked\.[0-9a-f]{12}\.tmp$/)
+    mkdirSync(join(first.path, "notes"))
+    writeFileSync(join(first.path, "notes", "a.txt"), "one")
+    await ledger.commitFolder(first, { "notes/a.txt": { bytes: 3, sha256: sha("one") } })
+    expect(readFileSync(join(ledger.untrackedDir("alpha"), "notes", "a.txt"), "utf8")).toBe("one")
+
+    // A staged set that is missing a file, or holds one more, or a different one: the stored set stays.
+    for (const [files, expected] of [
+      [{ "b.txt": "two" }, { "b.txt": { bytes: 3, sha256: sha("two") }, "c.txt": { bytes: 1, sha256: sha("c") } }],
+      [{ "b.txt": "two", "x.txt": "x" }, { "b.txt": { bytes: 3, sha256: sha("two") } }],
+      [{ "b.txt": "TWO" }, { "b.txt": { bytes: 3, sha256: sha("two") } }],
+    ] as const) {
+      const staged = await ledger.stageFolder("alpha")
+      for (const [name, body] of Object.entries(files)) writeFileSync(join(staged.path, name), body)
+      await expect(ledger.commitFolder(staged, expected)).rejects.toThrow(/EXPORT_INVALID/)
+      expect(existsSync(staged.path)).toBe(false)
+    }
+    expect(readdirSync(ledger.untrackedDir("alpha"))).toEqual(["notes"])
 
     // A crash after the old set was moved aside and before the new one was renamed in.
-    const second = await ledger.stageUntracked("alpha")
-    writeFileSync(join(second, "b.txt"), "two")
-    renameSync(ledger.untrackedDir("alpha"), join(ledger.workDir("alpha"), ".untracked.old-crash"))
+    const second = await ledger.stageFolder("alpha")
+    writeFileSync(join(second.path, "b.txt"), "two")
+    renameSync(ledger.untrackedDir("alpha"), join(ledger.workDir("alpha"), "untracked.old-crash"))
     await ledger.recoverUntracked("alpha")
-    expect(readdirSync(ledger.untrackedDir("alpha"))).toEqual(["a.txt"])
-    expect(existsSync(second)).toBe(false)
+    expect(readdirSync(ledger.untrackedDir("alpha"))).toEqual(["notes"])
+    expect(existsSync(second.path)).toBe(false)
 
-    const third = await ledger.stageUntracked("alpha")
-    writeFileSync(join(third, "c.txt"), "three")
-    await ledger.commitUntracked("alpha", third)
+    const third = await ledger.stageFolder("alpha")
+    writeFileSync(join(third.path, "c.txt"), "three")
+    await ledger.commitFolder(third, { "c.txt": { bytes: 5, sha256: sha("three") } })
     expect(readdirSync(ledger.untrackedDir("alpha"))).toEqual(["c.txt"])
     expect(readdirSync(ledger.workDir("alpha")).sort()).toEqual(["untracked", "work.json"])
+  })
+})
+
+describe("the fence: no write lands after its lock is lost (M-2)", () => {
+  test("a holder whose lock was taken over has its record write dropped; the new holder's change stands", async () => {
+    const ledger = await emptyLedger()
+    await ledger.mutate("alpha", () => record("alpha"))
+    // A holder whose heartbeat stalls (a laptop asleep mid-call): 300 ms makes it stale here.
+    const stalled = new Ledger(ledger.root, { lock: { heartbeatMs: 60_000, staleMs: 300 } })
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    let entered!: () => void
+    const inside = new Promise<void>((resolve) => (entered = resolve))
+    const late = stalled.mutate("alpha", async (current) => {
+      entered()
+      await gate
+      return current && { ...current, model: "from-A" }
+    })
+    await inside
+    await new Promise((resolve) => setTimeout(resolve, 350))
+    const other = new Ledger(ledger.root, { lock: { staleMs: 300 } })
+    await other.mutate("alpha", (current) => current && { ...current, reboots: [{ at: "B", why: "repair" }] })
+    release()
+    const refused = (await late.catch((error: unknown) => error)) as BoxdError
+    expect(refused).toBeInstanceOf(BoxdError)
+    expect(refused.code).toBe("LEDGER_LOCKED")
+    const final = await new Ledger(ledger.root).get("alpha")
+    expect(final?.reboots).toEqual([{ at: "B", why: "repair" }])
+    expect(final?.model).toBeUndefined()
+    expect(readdirSync(ledger.workDir("alpha"))).toEqual(["work.json"])
+  })
+
+  test("the same for a staged export and an untracked swap", async () => {
+    const ledger = await emptyLedger()
+    await ledger.mutate("alpha", () => record("alpha"))
+    const stalled = new Ledger(ledger.root, { lock: { heartbeatMs: 60_000, staleMs: 300 } })
+    const staged = await stalled.stageFile("alpha", "patch.diff")
+    writeFileSync(staged.path, "late")
+    const folder = await stalled.stageFolder("alpha")
+    writeFileSync(join(folder.path, "late.txt"), "late")
+    const outcome = await stalled.withWork("alpha", async () => {
+      await new Promise((resolve) => setTimeout(resolve, 350))
+      await new Ledger(ledger.root, { lock: { staleMs: 300 } }).mutate("alpha", (current) => current && { ...current, title: "B" })
+      const file = await stalled.commitStaged(staged, { bytes: 4, sha256: sha("late") }).catch((error: unknown) => (error as BoxdError).code)
+      const swap = await stalled.commitFolder(folder, { "late.txt": { bytes: 4, sha256: sha("late") } }).catch((error: unknown) => (error as BoxdError).code)
+      return [file, swap]
+    }).catch((error: unknown) => error)
+    expect(outcome).toEqual(["LEDGER_LOCKED", "LEDGER_LOCKED"])
+    expect(existsSync(ledger.patchPath("alpha"))).toBe(false)
+    expect(existsSync(ledger.untrackedDir("alpha"))).toBe(false)
+    expect(existsSync(staged.path)).toBe(false)
+    expect(existsSync(folder.path)).toBe(false)
+    expect((await ledger.get("alpha"))?.title).toBe("B")
   })
 })
 
@@ -306,6 +382,28 @@ describe("one writer per work, across processes", () => {
     // Releasing a lock that is no longer ours leaves the new owner's in place.
     await first!.release()
     expect((await readOwner(path))?.token).toBe(second!.token)
+    await second!.release()
+    expect(existsSync(path)).toBe(false)
+  })
+
+  test("a stale holder's late heartbeat and release never touch its successor's lock (LOW-1)", async () => {
+    const root = tempRoot("boxd-lock-")
+    roots.push(root)
+    const path = join(root, "x.lock")
+    // A's clock is far behind, so its lock is stale to everyone else from the start; its heartbeat keeps running.
+    const first = await acquireLock(path, { purpose: "a", now: () => 1_000, heartbeatMs: 5 })
+    const second = await acquireLock(path, { purpose: "b" })
+    expect(second).not.toBeNull()
+    const ownerFile = readFileSync(join(path, "owner.json"), "utf8")
+    // A late heartbeat from A lands as its own beat file only: B's owner and its freshness are unchanged.
+    writeFileSync(join(path, `beat-${first!.token}.json`), JSON.stringify({ at: Date.now() + 1_000_000 }))
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    expect(readFileSync(join(path, "owner.json"), "utf8")).toBe(ownerFile)
+    expect((await readOwner(path))?.token).toBe(second!.token)
+    expect(await second!.holds()).toBe(true)
+    expect(first!.lost).toBe(true)
+    await first!.release()
+    expect(await second!.holds()).toBe(true)
     await second!.release()
     expect(existsSync(path)).toBe(false)
   })

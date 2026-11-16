@@ -40,7 +40,7 @@ if (mode === "import") {
 } else if (mode === "events") {
   const [tag, count] = rest
   const ledger = new Ledger(root!)
-  for (let index = 0; index < Number(count); index++) await ledger.events.append({ workId: "events-work", phase: "busy", code: tag })
+  for (let index = 0; index < Number(count); index++) await ledger.events.append({ workId: "events-work", from: null, to: "busy", code: tag })
   console.log("ok")
 } else {
   console.error(`unknown mode ${mode}`)

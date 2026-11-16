@@ -23,9 +23,6 @@ export const randomPart = () => randomBytes(6).toString("hex")
 /** A unique temp path beside `path`: `.<name>.<pid>.<rand>.tmp` in the same folder, so the rename stays on one disk. */
 export const tempBeside = (path: string) => join(dirname(path), `.${basename(path)}.${process.pid}.${randomPart()}.tmp`)
 
-/** True for a name `tempBeside` made: readers skip them, and a crash may leave one behind. */
-export const isTempName = (name: string) => name.startsWith(".") && name.endsWith(".tmp")
-
 export const errnoOf = (error: unknown): string | undefined => (error as NodeJS.ErrnoException | undefined)?.code
 
 /** The file's size and streamed sha256. */
@@ -72,8 +69,14 @@ export async function digestFile(path: string): Promise<Digest> {
   return { bytes, sha256: hash.digest("hex") }
 }
 
+/**
+ * Called right before the rename that makes a write visible: the ledger's fence (its lock still held, the ledger not
+ * disposed). When it throws, the temp file is deleted and the old file stays as it was.
+ */
+export type BeforeRename = () => Promise<void>
+
 /** Writes `data` copy-on-write: a new temp file, fsynced, renamed over `path`, and the folder fsynced. */
-export async function writeFileAtomic(path: string, data: string | Uint8Array): Promise<void> {
+export async function writeFileAtomic(path: string, data: string | Uint8Array, beforeRename?: BeforeRename): Promise<void> {
   await ensureDir(dirname(path))
   const temp = tempBeside(path)
   try {
@@ -84,6 +87,7 @@ export async function writeFileAtomic(path: string, data: string | Uint8Array): 
     } finally {
       await handle.close()
     }
+    await beforeRename?.()
     await rename(temp, path)
   } catch (error) {
     await unlink(temp).catch(() => undefined)
@@ -92,13 +96,13 @@ export async function writeFileAtomic(path: string, data: string | Uint8Array): 
   await fsyncDir(dirname(path))
 }
 
-export const writeJsonAtomic = (path: string, value: unknown) => writeFileAtomic(path, `${JSON.stringify(value, null, 2)}\n`)
+export const writeJsonAtomic = (path: string, value: unknown, beforeRename?: BeforeRename) => writeFileAtomic(path, `${JSON.stringify(value, null, 2)}\n`, beforeRename)
 
 /**
  * Moves a finished temp file over `target`: checks its size and sha256 against `expect` when given, fsyncs it, sets 0600,
  * renames it, and fsyncs the folder. A mismatch deletes the temp file and leaves `target` exactly as it was.
  */
-export async function commitFile(temp: string, target: string, expect?: Digest, mismatch: Code = "EXPORT_INVALID"): Promise<Digest> {
+export async function commitFile(temp: string, target: string, expect?: Digest, mismatch: Code = "EXPORT_INVALID", beforeRename?: BeforeRename): Promise<Digest> {
   try {
     const actual = await digestFile(temp)
     if (expect && (actual.bytes !== expect.bytes || actual.sha256 !== expect.sha256)) {
@@ -110,6 +114,7 @@ export async function commitFile(temp: string, target: string, expect?: Digest, 
     await chmod(temp, FILE_MODE)
     await fsyncFile(temp)
     await ensureDir(dirname(target))
+    await beforeRename?.()
     await rename(temp, target)
     await fsyncDir(dirname(target))
     return actual
@@ -124,7 +129,7 @@ export async function commitFile(temp: string, target: string, expect?: Digest, 
  * committed against the source's own digest. Always a copy, never a hard link: no ledger file shares an inode with its
  * source (design §6.1, round 2 M-a).
  */
-export async function copyFileAtomic(source: string, target: string): Promise<Digest> {
+export async function copyFileAtomic(source: string, target: string, beforeRename?: BeforeRename): Promise<Digest> {
   await ensureDir(dirname(target))
   const temp = tempBeside(target)
   const hash = createHash("sha256")
@@ -142,7 +147,7 @@ export async function copyFileAtomic(source: string, target: string): Promise<Di
     await unlink(temp).catch(() => undefined)
     throw error
   }
-  return commitFile(temp, target, { bytes, sha256: hash.digest("hex") }, "LEDGER_FAILED")
+  return commitFile(temp, target, { bytes, sha256: hash.digest("hex") }, "LEDGER_FAILED", beforeRename)
 }
 
 /** Removes a file or folder; a missing one is fine. */

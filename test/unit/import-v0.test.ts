@@ -4,7 +4,7 @@
 // is published whole.
 import { afterEach, describe, expect, test } from "bun:test"
 import { spawn } from "node:child_process"
-import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { BoxdError } from "../../src/errors.js"
 import { ADOPT_COMMAND, adoptV0, LedgerGate, parseV0Phase, readReport, runImport, v0Phase, V0_HELPER_PATH, type ImportStep } from "../../src/import-v0.js"
@@ -320,6 +320,73 @@ describe("the gate", () => {
     expect(outcome).toEqual({ state: "busy" })
     expect(existsSync(join(root, "v1"))).toBe(false)
     expect(readdirSync(root).filter((name) => name.startsWith("v1.importing-"))).toEqual([])
+  })
+})
+
+describe("a record whose files cannot be copied (M-1)", () => {
+  /** v0.0.6's own saveUntracked can store paths that collide as files: "a" and "a/b". */
+  const collide = (root: string) =>
+    writeFileSync(join(root, "works", "never-prompted", "untracked.json"), JSON.stringify({ a: Buffer.from("x").toString("base64"), "a/b": Buffer.from("y").toString("base64") }))
+
+  test("blocks only its own id with the reason, and the rest is published", async () => {
+    const root = fixtureRoot()
+    collide(root)
+    const boxd = fakeImportBoxd()
+    const gate = new LedgerGate({ root, boxd })
+    expect(await gate.start()).toEqual({ state: "ready", works: 8, errors: 3, blocked: ["corrupt-work", "missing-export", "never-prompted"] })
+    const report = await readReport(root)
+    expect(report?.results.find((item) => item.workId === "never-prompted")?.reason).toMatch(/^its files could not be copied: /)
+    expect(existsSync(join(root, "v1", "works", "never-prompted"))).toBe(false)
+    expect((await (await gate.ledger()).get("proven-fresh"))?.workId).toBe("proven-fresh")
+    expect(() => gate.assertNotBlocked("never-prompted")).toThrow(/^IMPORT_V0_FAILED/)
+    expect(boxd.lists).toBe(1)
+  })
+
+  test("in the blocked-id rerun too: it stays blocked, and no partial folder is left", async () => {
+    const root = fixtureRoot()
+    await new LedgerGate({ root, boxd: fakeImportBoxd() }).start()
+    // The corrupt record is fixed, but its untracked files collide.
+    writeFileSync(join(root, "works", "corrupt-work", "work.json"), readFileSync(join(root, "works", "never-prompted", "work.json"), "utf8").replaceAll("never-prompted", "corrupt-work"))
+    writeFileSync(join(root, "works", "corrupt-work", "untracked.json"), JSON.stringify({ a: "eA==", "a/b": "eQ==" }))
+    const gate = new LedgerGate({ root, boxd: fakeImportBoxd() })
+    expect(await gate.start()).toMatchObject({ state: "ready", blocked: BLOCKED })
+    expect((await readReport(root))?.results.find((item) => item.workId === "corrupt-work")?.reason).toMatch(/^its files could not be copied: /)
+    expect(existsSync(join(root, "v1", "works", "corrupt-work"))).toBe(false)
+  })
+
+  test("a run that throws is a failure with its reason, retried only after its pause", async () => {
+    const root = fixtureRoot()
+    const boxd = fakeImportBoxd()
+    // A listing that answers with something the import cannot use throws inside the run.
+    boxd.list = async () => {
+      boxd.lists += 1
+      return { takenAt: Date.now(), fresh: true, machines: null as never }
+    }
+    let now = 1_000_000
+    const gate = new LedgerGate({ root, boxd, retryMs: 30_000, now: () => new Date(now) })
+    expect(await gate.start()).toMatchObject({ state: "failed" })
+    for (let index = 0; index < 3; index++) {
+      const error = (await gate.ledger().catch((caught: unknown) => caught)) as BoxdError
+      expect(error.code).toBe("IMPORT_V0_FAILED")
+      expect((await gate.start()).state).toBe("failed")
+    }
+    expect(boxd.lists).toBe(1)
+    now += 30_001
+    await gate.start()
+    expect(boxd.lists).toBe(2)
+  })
+
+  test("a v1/ without its marker in the way is a failure, never adopted", async () => {
+    const root = fixtureRoot()
+    const gate = new LedgerGate({
+      root,
+      boxd: fakeImportBoxd(),
+      onStep: async (step) => {
+        if (step === "publish") mkdirSync(join(root, "v1", "works", "x"), { recursive: true })
+      },
+    })
+    expect(await gate.start()).toMatchObject({ state: "failed", reason: expect.stringMatching(/without its complete marker/) })
+    await expect(gate.ledger()).rejects.toThrow(/^IMPORT_V0_FAILED/)
   })
 })
 

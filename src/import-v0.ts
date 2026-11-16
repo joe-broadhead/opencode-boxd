@@ -41,6 +41,8 @@ import {
   GUEST_HELPER_PATH,
   type BoxdPort,
   type ChangeTarget,
+  type Expected,
+  type LedgerFile,
   type ImportState,
   type ImportV0Port,
   type Listing,
@@ -134,6 +136,8 @@ export class LedgerGate {
   /** Starts the import when no complete `v1/` exists, or reruns blocked ids into one that does; joins a running one. */
   start(): Promise<GateState> {
     if (this.locks.disposed) return Promise.resolve(this.current)
+    // After a failure the next try waits its pause: no listing of every region on every call.
+    if (this.current.state === "failed" && this.now().getTime() < this.current.retryAt) return Promise.resolve(this.current)
     if (!this.running) {
       this.running = this.locks.track(
         this.attempt().finally(() => {
@@ -192,13 +196,20 @@ export class LedgerGate {
     // A ledger published by this attempt has just tried every record; blocked ids are tried again at a later start.
     const publishedBefore = await exists(join(root, LEDGER_PATHS.complete))
     if (!publishedBefore) {
-      const outcome = await runImport({
-        ...this.options,
-        locks: this.locks,
-        onProgress: (progress) => {
-          this.current = { state: "importing", progress }
-        },
-      })
+      let outcome: RunOutcome0
+      try {
+        outcome = await runImport({
+          ...this.options,
+          locks: this.locks,
+          onProgress: (progress) => {
+            this.current = { state: "importing", progress }
+          },
+        })
+      } catch (error) {
+        // A stop at disposal is not a failure; any other error is, with its reason and the same pause as a listing's.
+        if (this.locks.disposed) throw error
+        outcome = { state: "failed", reason: reasonText(error) }
+      }
       if (outcome.state === "failed") {
         this.current = { state: "failed", reason: outcome.reason, retryAt: this.now().getTime() + (this.options.retryMs ?? 30_000) }
         return this.current
@@ -212,7 +223,12 @@ export class LedgerGate {
     await this.adoptPublished()
     await writeNoteOnce(root)
     if (publishedBefore && this.blocked.size) {
-      await rerunBlocked({ ...this.options, locks: this.locks }, this.published!)
+      try {
+        await rerunBlocked({ ...this.options, locks: this.locks }, this.published!)
+      } catch (error) {
+        // The published ledger stays usable; the blocked ids stay blocked until a later start.
+        if (this.locks.disposed) throw error
+      }
       await this.adoptPublished()
     }
     return this.current
@@ -272,8 +288,16 @@ export async function runImport(options: ImportOptions & { readonly onProgress?:
     for (const folder of inputs.folders) {
       const mapped = await mapRecord(root, folder, listing, ids)
       if (mapped.ok) {
-        await writeWork(join(staging, "works", folder), mapped)
-        results.push({ workId: folder, result: "imported" })
+        // A record whose files cannot be copied blocks only its own id, like one that cannot be read (§6.1 step 6).
+        const target = join(staging, "works", folder)
+        try {
+          await writeWork(target, mapped)
+          results.push({ workId: folder, result: "imported" })
+        } catch (error) {
+          if (locks.disposed) throw error
+          await remove(target)
+          results.push({ workId: folder, result: "blocked", reason: `its files could not be copied: ${reasonText(error)}` })
+        }
       } else {
         results.push({ workId: folder, result: "blocked", reason: mapped.reason })
       }
@@ -297,7 +321,11 @@ export async function runImport(options: ImportOptions & { readonly onProgress?:
     try {
       await rename(staging, join(root, LEDGER_PATHS.v1))
     } catch (error) {
-      if (["EEXIST", "ENOTEMPTY"].includes(errnoOf(error) ?? "")) return { state: "present" }
+      // Another run published first. A v1/ without its marker is never adopted: that is a failure, not a ledger.
+      if (["EEXIST", "ENOTEMPTY"].includes(errnoOf(error) ?? "")) {
+        if (await exists(join(root, LEDGER_PATHS.complete))) return { state: "present" }
+        throw boxdError("LEDGER_FAILED", "A v1/ folder without its complete marker is in the way of the import; move it aside and restart OpenCode.")
+      }
       throw error
     }
     staging = undefined
@@ -349,9 +377,17 @@ async function rerunBlocked(options: ImportOptions, ledger: Ledger): Promise<voi
           result = { workId, result: "blocked", reason: mapped.reason }
         } else {
           if (!(await lock.holds())) return
-          await ledger.withWork(workId, () => writeWorkInto(ledger, workId, mapped))
-          result = { workId, result: "imported" }
-          unblock = true
+          try {
+            await writeWorkInto(ledger, workId, mapped)
+            result = { workId, result: "imported" }
+            unblock = true
+          } catch (error) {
+            if (locks.disposed) throw error
+            result = { workId, result: "blocked", reason: `its files could not be copied: ${reasonText(error)}` }
+            await ledger.withWork(workId, async () => {
+              if (!(await exists(ledger.recordPath(workId)))) await remove(ledger.workDir(workId))
+            })
+          }
         }
       }
       const previous = report.results.find((item) => item.workId === workId)
@@ -700,17 +736,31 @@ async function writeWork(dir: string, mapped: Mapped): Promise<void> {
   await writeJsonAtomic(join(dir, WORK_FILES.record), mapped.record)
 }
 
-/** The blocked-id rerun: into the published ledger, under the work's lock, copy-on-write, the record last. */
+/**
+ * The blocked-id rerun: into the published ledger, under the work's lock, every file copy-on-write and fenced on that
+ * lock, the untracked set verified and swapped in whole, and the record last.
+ */
 async function writeWorkInto(ledger: Ledger, workId: string, mapped: Mapped): Promise<void> {
-  const dir = ledger.workDir(workId)
-  await ledger.sweepTemps(workId)
-  for (const copy of mapped.copies) await copyFileAtomic(copy.from, join(dir, copy.to))
-  if (mapped.untracked.length) {
-    const staging = await ledger.stageUntracked(workId)
-    for (const file of mapped.untracked) await writeFileAtomic(join(staging, file.path), file.body)
-    await ledger.commitUntracked(workId, staging)
-  }
-  await ledger.mutate(workId, () => mapped.record)
+  await ledger.withWork(workId, async () => {
+    await ledger.sweepTemps(workId)
+    await ledger.recoverUntracked(workId)
+    for (const copy of mapped.copies) await ledger.copyIn(workId, copy.from, copy.to as LedgerFile)
+    if (mapped.untracked.length) {
+      const staged = await ledger.stageFolder(workId)
+      const expected: Record<string, Expected> = {}
+      try {
+        for (const file of mapped.untracked) {
+          await writeFileAtomic(join(staged.path, file.path), file.body)
+          expected[file.path] = { bytes: file.body.byteLength, sha256: createHash("sha256").update(file.body).digest("hex") }
+        }
+      } catch (error) {
+        await ledger.discard(staged)
+        throw error
+      }
+      await ledger.commitFolder(staged, expected)
+    }
+    await ledger.put(mapped.record)
+  })
 }
 
 // ── The report and the note ───────────────────────────────────────────────────────────────────────────────────────

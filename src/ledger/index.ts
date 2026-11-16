@@ -2,18 +2,16 @@
  * Package B's entry for the ledger, format 1 (design §2.2). Package B owns `src/ledger/*` (the types file included,
  * whose shapes every package reads). `src/plugin.ts` calls `createLedger` once, after the import.
  *
- * Every method that reads or writes records passes the import gate first: while the v0 import is unfinished, here or in
+ * Every method that reads or writes the ledger (records, events, staged files) passes the import gate first: while the v0 import is unfinished, here or in
  * another OpenCode process, it throws `LEDGER_IMPORTING` with `progress`; while the import's listing failed and its
  * 30 s have not passed, `IMPORT_V0_FAILED`; and for a work id whose v0 record could not be imported, `IMPORT_V0_FAILED`.
  * Nothing reads a partial ledger.
  */
-import { join } from "node:path"
 import { boxdError } from "../errors.js"
 import type { EventPage, ImportState, ImportV0Port, LedgerPort, OpContext } from "../ports.js"
 import type { HostServices, Runtime } from "../services.js"
-import { commitFile } from "./fsx.js"
 import { Ledger, savedState } from "./store.js"
-import { PHASES, type Phase, type WorkRecord } from "./types.js"
+import type { WorkRecord } from "./types.js"
 
 /** How long a call waits for an import to finish before it answers `LEDGER_IMPORTING`. */
 const GATE_WAIT_MS = 250
@@ -84,7 +82,7 @@ export function ledgerPort(store: Ledger, importV0: Pick<ImportV0Port, "state" |
     async appendEvent(event, context) {
       await gate(context)
       const line = await store.events.append(event, context.signal)
-      if ((PHASES as readonly string[]).includes(line.phase)) await store.setPhase(line.workId, line.phase as Phase)
+      await store.setPhase(line.workId, line.to)
       return line
     },
 
@@ -95,10 +93,27 @@ export function ledgerPort(store: Ledger, importV0: Pick<ImportV0Port, "state" |
 
     workFolder: (workId) => store.workDir(workId),
 
-    async commitFile(temp, final, expected) {
-      if (!final.startsWith(`${join(store.root, "v1", "works")}/`)) throw boxdError("LEDGER_FAILED", `${final} is not inside the ledger's works folder.`)
-      await commitFile(temp, final, expected)
+    async stageFile(workId, final, context) {
+      await gate(context, [workId])
+      return store.stageFile(workId, final)
     },
+
+    async commitFile(staged, expected, context) {
+      await gate(context, [staged.workId])
+      await store.commitStaged(staged, expected)
+    },
+
+    async stageFolder(workId, _final, context) {
+      await gate(context, [workId])
+      return store.stageFolder(workId)
+    },
+
+    async commitFolder(staged, expected, context) {
+      await gate(context, [staged.workId])
+      await store.commitFolder(staged, expected)
+    },
+
+    discard: (staged) => store.discard(staged),
 
     dispose: () => store.dispose(),
   }

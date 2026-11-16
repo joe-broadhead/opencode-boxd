@@ -76,14 +76,45 @@ async function writeInLock(path: string, name: string, value: unknown): Promise<
   }
 }
 
+/**
+ * The lock's owner, with `at` from its own heartbeat file (`beat-<token>`) when that is newer. A heartbeat writes only
+ * its own token's file, so a late heartbeat from a holder that lost the lock never touches its successor's state.
+ */
 export async function readOwner(path: string): Promise<LockOwner | null> {
   try {
     const parsed = JSON.parse(await readFile(join(path, OWNER), "utf8")) as Partial<LockOwner>
     if (typeof parsed.token !== "string" || typeof parsed.pid !== "number" || typeof parsed.at !== "number") return null
-    return { token: parsed.token, pid: parsed.pid, host: String(parsed.host ?? ""), at: parsed.at, purpose: String(parsed.purpose ?? "") }
+    let at = parsed.at
+    try {
+      const beat = JSON.parse(await readFile(join(path, beatName(parsed.token)), "utf8")) as { at?: unknown }
+      if (typeof beat.at === "number" && beat.at > at) at = beat.at
+    } catch {
+      // no heartbeat yet: the owner's own time stands
+    }
+    return { token: parsed.token, pid: parsed.pid, host: String(parsed.host ?? ""), at, purpose: String(parsed.purpose ?? "") }
   } catch {
     return null
   }
+}
+
+const beatName = (token: string) => `beat-${token}.json`
+
+/**
+ * After a lock folder was renamed aside, checks it was the one expected (by token) and puts it back when it was not:
+ * between a read and a rename another process may have made its own lock there. When a third process has already made
+ * a new folder at the path, the moved one is removed, and its owner's next check sees `lost`.
+ */
+async function removeAsideIfMine(path: string, aside: string, token: string | null): Promise<void> {
+  const moved = await readOwner(aside)
+  if ((moved?.token ?? null) !== token) {
+    try {
+      await rename(aside, path)
+      return
+    } catch {
+      // fall through: remove it
+    }
+  }
+  await remove(aside)
 }
 
 /** Reads a note a holder wrote with `LockHandle.note`; null when there is none or the lock is gone. */
@@ -147,18 +178,7 @@ async function takeOver(path: string, seen: LockOwner | null): Promise<void> {
     if (errnoOf(error) === "ENOENT") return
     throw error
   }
-  const moved = await readOwner(aside)
-  if ((moved?.token ?? null) !== (seen?.token ?? null)) {
-    // Between our read and our rename another process took it over and wrote its own token: give it back. When a third
-    // process has already made a new folder there, the one we hold is dropped, and its owner's heartbeat sees `lost`.
-    try {
-      await rename(aside, path)
-      return
-    } catch {
-      // fall through: remove it
-    }
-  }
-  await remove(aside)
+  await removeAsideIfMine(path, aside, seen?.token ?? null)
 }
 
 /**
@@ -206,7 +226,8 @@ function handle(path: string, owner: LockOwner, heartbeatMs: number, now: () => 
       return
     }
     if (released) return
-    await writeInLock(path, OWNER, { ...owner, at: now() }).catch(() => undefined)
+    // Only this token's own file: never the owner file, which a successor may have written meanwhile.
+    await writeInLock(path, beatName(owner.token), { at: now() }).catch(() => undefined)
   }
   const timer = setInterval(() => {
     beating = beating.then(beat)
@@ -239,7 +260,8 @@ function handle(path: string, owner: LockOwner, heartbeatMs: number, now: () => 
         if (errnoOf(error) === "ENOENT") return
         throw error
       }
-      await remove(aside)
+      // A takeover may have landed between the check and the rename: a successor's folder goes back untouched.
+      await removeAsideIfMine(path, aside, owner.token)
     },
   }
 }

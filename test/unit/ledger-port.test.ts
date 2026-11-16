@@ -30,6 +30,7 @@ function core(root: string, boxd: FakeImportBoxd) {
     projectDirectory: root,
     ledgerRoot: root,
     boxdBin: "boxd",
+    opencodeBin: "opencode",
     clock: { now: () => new Date() },
     sessions: notBuilt("sessions"),
     report: (area, problem) => void (problem ? problems.set(area, problem) : problems.delete(area)),
@@ -125,7 +126,7 @@ describe("the ports as the plugin builds them", () => {
     const error = await errorOf(ledger.get("proven-fresh", context))
     expect(error.code).toBe("LEDGER_IMPORTING")
     expect(error.details.progress).toEqual({ done: 4, total: 11 })
-    expect((await errorOf(ledger.appendEvent({ at: new Date().toISOString(), workId: "x", phase: "busy" }, context))).code).toBe("LEDGER_IMPORTING")
+    expect((await errorOf(ledger.appendEvent({ at: new Date().toISOString(), workId: "x", from: null, to: "busy" }, context))).code).toBe("LEDGER_IMPORTING")
     expect(existsSync(join(root, "v1"))).toBe(false)
     removeRoot(lock)
   })
@@ -168,27 +169,46 @@ describe("the ledger port over a published ledger", () => {
   test("events: the next seq, the index's phase, and the cursor", async () => {
     const { ledger, store } = await port()
     await ledger.update(["alpha"], async () => ({ write: [record("alpha")], value: undefined }), context)
-    const first = await ledger.appendEvent({ at: "2026-11-15T12:00:00.000Z", workId: "alpha", phase: "busy" }, context)
-    const second = await ledger.appendEvent({ at: "2026-11-15T12:01:00.000Z", workId: "alpha", phase: "failed", code: "made up words" }, context)
+    const first = await ledger.appendEvent({ at: "2026-11-15T12:00:00.000Z", workId: "alpha", from: null, to: "busy" }, context)
+    const second = await ledger.appendEvent({ at: "2026-11-15T12:01:00.000Z", workId: "alpha", from: null, to: "idle", code: "made up words" }, context)
     expect([first.seq, second.seq, second.code]).toEqual([1, 2, "RUN_FAILED"])
     expect(await ledger.eventsSince(1, context)).toEqual({ events: [second], cursor: 2, cursorExpired: false })
+    expect(await ledger.eventsSince(2, context)).toEqual({ events: [], cursor: 2, cursorExpired: false })
     expect((await ledger.eventsSince(9, context)).cursorExpired).toBe(true)
-    expect((await store.refresh()).works.alpha?.phase).toBe("busy")
+    expect((await store.refresh()).works.alpha?.phase).toBe("idle")
   })
 
-  test("commitFile verifies, and refuses a path outside the works folder", async () => {
+  test("staged writes pass the gate: a blocked id is refused, a verified file lands, a bad one is discarded", async () => {
     const { ledger } = await port()
-    const folder = ledger.workFolder("alpha")
-    mkdirSync(join(folder, "exports"), { recursive: true })
-    const final = join(folder, "exports", "ses_a.json")
-    const temp = join(folder, "exports", ".ses_a.json.1.x.tmp")
-    writeFileSync(temp, "body")
-    await expect(ledger.commitFile(temp, final, { bytes: 4, sha256: "0".repeat(64) })).rejects.toThrow(/^EXPORT_INVALID/)
-    expect(existsSync(temp)).toBe(false)
-    expect(existsSync(final)).toBe(false)
-    writeFileSync(temp, "body")
-    await ledger.commitFile(temp, final, { bytes: 4, sha256: "230d8358dc8e8890b4c58deeb62912ee2f20357ae92a5cc861b98e68fe31acb5" })
-    expect(readFileSync(final, "utf8")).toBe("body")
-    await expect(ledger.commitFile(temp, join(folder, "..", "..", "index.json"), { bytes: 4, sha256: "x" })).rejects.toThrow(/^LEDGER_FAILED/)
+    expect((await errorOf(ledger.stageFile("blocked-id", "patch.diff", context))).code).toBe("IMPORT_V0_FAILED")
+    expect((await errorOf(ledger.stageFolder("blocked-id", "untracked", context))).code).toBe("IMPORT_V0_FAILED")
+    await ledger.update(["alpha"], async () => ({ write: [record("alpha")], value: undefined }), context)
+    const staged = await ledger.stageFile("alpha", "exports/ses_a.json", context)
+    writeFileSync(staged.path, "body")
+    expect((await errorOf(ledger.commitFile(staged, { bytes: 4, sha256: "0".repeat(64) }, context))).code).toBe("EXPORT_INVALID")
+    expect(existsSync(staged.path)).toBe(false)
+    const again = await ledger.stageFile("alpha", "exports/ses_a.json", context)
+    writeFileSync(again.path, "body")
+    await ledger.commitFile(again, { bytes: 4, sha256: "230d8358dc8e8890b4c58deeb62912ee2f20357ae92a5cc861b98e68fe31acb5" }, context)
+    expect(readFileSync(join(ledger.workFolder("alpha"), "exports", "ses_a.json"), "utf8")).toBe("body")
+    const folder = await ledger.stageFolder("alpha", "untracked", context)
+    writeFileSync(join(folder.path, "x.txt"), "body")
+    await ledger.commitFolder(folder, { "x.txt": { bytes: 4, sha256: "230d8358dc8e8890b4c58deeb62912ee2f20357ae92a5cc861b98e68fe31acb5" } }, context)
+    expect(readFileSync(join(ledger.workFolder("alpha"), "untracked", "x.txt"), "utf8")).toBe("body")
+    const unused = await ledger.stageFolder("alpha", "untracked", context)
+    await ledger.discard(unused)
+    expect(existsSync(unused.path)).toBe(false)
+  })
+
+  test("while the import runs, staging a file is refused like every other call, so no v1/ is made under it (LOW-2)", async () => {
+    const root = v0Root("boxd-port-")
+    roots.push(root)
+    const importing: Pick<ImportV0Port, "state" | "run"> = {
+      state: () => ({ state: "importing", done: 1, total: 11 }),
+      run: async () => ({ state: "importing", done: 1, total: 11 }),
+    }
+    const ledger = ledgerPort(new Ledger(root), importing)
+    expect((await errorOf(ledger.stageFile("proven-fresh", "patch.diff", context))).code).toBe("LEDGER_IMPORTING")
+    expect(existsSync(join(root, "v1"))).toBe(false)
   })
 })
