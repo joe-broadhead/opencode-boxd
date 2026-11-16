@@ -111,8 +111,10 @@ describe("records", () => {
   test("a crash between the temp write and the rename leaves the old record; the temp file is swept", async () => {
     const ledger = await emptyLedger()
     await ledger.mutate("alpha", () => record("alpha", { title: "old" }))
-    // What a crash leaves: a finished temp file beside the record, never renamed.
-    const temp = join(ledger.workDir("alpha"), `.work.json.999.abc.tmp`)
+    // What a crash leaves: a finished temp file beside the record, never renamed, from a process that is gone.
+    const dead = spawn("true")
+    await new Promise((resolve) => dead.on("close", resolve))
+    const temp = join(ledger.workDir("alpha"), `.work.json.${dead.pid}.0123456789ab.tmp`)
     writeFileSync(temp, JSON.stringify(record("alpha", { title: "new" })))
     const fresh = new Ledger(ledger.root)
     expect((await fresh.get("alpha"))?.title).toBe("old")
@@ -181,7 +183,7 @@ describe("files: the last good export survives (M-a)", () => {
     const target = ledger.exportPath("alpha", "ses_root")
     const good = '{"info":{"id":"ses_root"},"messages":[]}\n'
     const first = await ledger.stageFile("alpha", "exports/ses_root.json")
-    expect(first.path).toMatch(/exports\/ses_root\.json\.[0-9a-f]{12}\.tmp$/)
+    expect(first.path).toMatch(/exports\/ses_root\.json\.[0-9]+-[0-9a-f]{12}\.tmp$/)
     writeFileSync(first.path, good)
     await ledger.commitStaged(first, { bytes: good.length, sha256: sha(good) })
     const link = join(ledger.root, "export-link.json")
@@ -227,7 +229,7 @@ describe("files: the last good export survives (M-a)", () => {
     const ledger = await emptyLedger()
     await ledger.mutate("alpha", () => record("alpha"))
     const first = await ledger.stageFolder("alpha")
-    expect(first.path).toMatch(/untracked\.[0-9a-f]{12}\.tmp$/)
+    expect(first.path).toMatch(/untracked\.[0-9]+-[0-9a-f]{12}\.tmp$/)
     mkdirSync(join(first.path, "notes"))
     writeFileSync(join(first.path, "notes", "a.txt"), "one")
     await ledger.commitFolder(first, { "notes/a.txt": { bytes: 3, sha256: sha("one") } })
@@ -252,13 +254,62 @@ describe("files: the last good export survives (M-a)", () => {
     renameSync(ledger.untrackedDir("alpha"), join(ledger.workDir("alpha"), "untracked.old-crash"))
     await ledger.recoverUntracked("alpha")
     expect(readdirSync(ledger.untrackedDir("alpha"))).toEqual(["notes"])
-    expect(existsSync(second.path)).toBe(false)
+    // A stage of a live process is never swept: it may still be filled and committed.
+    expect(existsSync(second.path)).toBe(true)
+    await ledger.discard(second)
 
     const third = await ledger.stageFolder("alpha")
     writeFileSync(join(third.path, "c.txt"), "three")
     await ledger.commitFolder(third, { "c.txt": { bytes: 5, sha256: sha("three") } })
     expect(readdirSync(ledger.untrackedDir("alpha"))).toEqual(["c.txt"])
     expect(readdirSync(ledger.workDir("alpha")).sort()).toEqual(["untracked", "work.json"])
+  })
+})
+
+describe("two harvests of one work at once", () => {
+  test("committing one staged untracked set never deletes the other one mid-fill; each commit swaps in its own", async () => {
+    const ledger = await emptyLedger()
+    await ledger.mutate("alpha", () => record("alpha"))
+    const a = await ledger.stageFolder("alpha")
+    const b = await ledger.stageFolder("alpha")
+    expect(a.path).not.toBe(b.path)
+    // A is half filled when B commits.
+    writeFileSync(join(a.path, "a1.txt"), "a1")
+    writeFileSync(join(b.path, "b.txt"), "b")
+    await ledger.commitFolder(b, { "b.txt": { bytes: 1, sha256: sha("b") } })
+    expect(readdirSync(ledger.untrackedDir("alpha"))).toEqual(["b.txt"])
+    expect(readdirSync(a.path)).toEqual(["a1.txt"])
+    writeFileSync(join(a.path, "a2.txt"), "a2")
+    await ledger.commitFolder(a, { "a1.txt": { bytes: 2, sha256: sha("a1") }, "a2.txt": { bytes: 2, sha256: sha("a2") } })
+    expect(readdirSync(ledger.untrackedDir("alpha")).sort()).toEqual(["a1.txt", "a2.txt"])
+    expect(readdirSync(ledger.workDir("alpha")).sort()).toEqual(["untracked", "work.json"])
+  })
+
+  test("the same for staged exports, and a crashed process's leftovers are swept", async () => {
+    const ledger = await emptyLedger()
+    await ledger.mutate("alpha", () => record("alpha"))
+    const a = await ledger.stageFile("alpha", "patch.diff")
+    const b = await ledger.stageFile("alpha", "patch.diff")
+    writeFileSync(b.path, "b")
+    await ledger.commitStaged(b, { bytes: 1, sha256: sha("b") })
+    expect(existsSync(a.path)).toBe(true)
+    writeFileSync(a.path, "a")
+    await ledger.commitStaged(a, { bytes: 1, sha256: sha("a") })
+    expect(readFileSync(ledger.patchPath("alpha"), "utf8")).toBe("a")
+
+    // Leftovers of a process that is gone: a staged set and a staged file.
+    const dead = spawn("true")
+    await new Promise((resolve) => dead.on("close", resolve))
+    const leftSet = join(ledger.workDir("alpha"), `untracked.${dead.pid}-0123456789ab.tmp`)
+    const leftFile = join(ledger.workDir("alpha"), `patch.diff.${dead.pid}-0123456789ab.tmp`)
+    mkdirSync(leftSet)
+    writeFileSync(leftFile, "x")
+    const live = await ledger.stageFolder("alpha")
+    await ledger.recoverUntracked("alpha")
+    expect(existsSync(leftSet)).toBe(false)
+    expect(existsSync(live.path)).toBe(true)
+    await ledger.sweepTemps("alpha")
+    expect(existsSync(leftFile)).toBe(false)
   })
 })
 

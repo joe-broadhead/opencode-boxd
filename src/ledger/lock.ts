@@ -126,7 +126,8 @@ export async function readNote<T>(path: string, name: string): Promise<T | null>
   }
 }
 
-const alive = (pid: number) => {
+/** Whether a process with this pid exists on this host. */
+export const alive = (pid: number) => {
   try {
     process.kill(pid, 0)
     return true

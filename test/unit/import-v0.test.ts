@@ -4,7 +4,7 @@
 // is published whole.
 import { afterEach, describe, expect, test } from "bun:test"
 import { spawn } from "node:child_process"
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { BoxdError } from "../../src/errors.js"
 import { ADOPT_COMMAND, adoptV0, LedgerGate, parseV0Phase, readReport, runImport, v0Phase, V0_HELPER_PATH, type ImportStep } from "../../src/import-v0.js"
@@ -340,6 +340,26 @@ describe("a record whose files cannot be copied (M-1)", () => {
     expect((await (await gate.ledger()).get("proven-fresh"))?.workId).toBe("proven-fresh")
     expect(() => gate.assertNotBlocked("never-prompted")).toThrow(/^IMPORT_V0_FAILED/)
     expect(boxd.lists).toBe(1)
+  })
+
+  test.skipIf(process.getuid?.() === 0)("an unreadable v0 work folder blocks only its own id, with the reason", async () => {
+    const root = fixtureRoot()
+    const folder = join(root, "works", "old-shape")
+    chmodSync(folder, 0o000)
+    try {
+      const gate = new LedgerGate({ root, boxd: fakeImportBoxd() })
+      expect(await gate.start()).toEqual({ state: "ready", works: 8, errors: 3, blocked: ["corrupt-work", "missing-export", "old-shape"] })
+      expect((await readReport(root))?.results.find((item) => item.workId === "old-shape")?.reason).toMatch(/^work\.json cannot be read: .*EACCES/)
+      expect((await (await gate.ledger()).get("proven-fresh"))?.workId).toBe("proven-fresh")
+      // At the next start the rerun reads it again: still unreadable, still blocked, the ledger still served.
+      const again = new LedgerGate({ root, boxd: fakeImportBoxd() })
+      expect(await again.start()).toMatchObject({ state: "ready", blocked: ["corrupt-work", "missing-export", "old-shape"] })
+      // Once it is readable again, it is imported.
+      chmodSync(folder, 0o700)
+      expect(await new LedgerGate({ root, boxd: fakeImportBoxd() }).start()).toMatchObject({ state: "ready", blocked: ["corrupt-work", "missing-export"] })
+    } finally {
+      chmodSync(folder, 0o700)
+    }
   })
 
   test("in the blocked-id rerun too: it stays blocked, and no partial folder is left", async () => {
