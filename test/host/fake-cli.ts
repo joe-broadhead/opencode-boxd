@@ -81,6 +81,8 @@ export interface FakeSpawn {
   readonly call: string | null
   readonly bin: "boxd" | "opencode"
   readonly argv: readonly string[]
+  /** For an exec of the guest helper: the action its request asked for (`prompt`, `phase`…). */
+  readonly action?: string
   readonly startedAt: number
   readonly endedAt: number
 }
@@ -220,12 +222,23 @@ export function startFakeCli(options: { readonly dir?: string; readonly version?
       const lines = readFileSync(`${statePath}.spawns.jsonl`, "utf8").split("\n").filter(Boolean)
       const starts = new Map<string, { id: string; pid: number; call: string | null; bin: "boxd" | "opencode"; argv: string[]; at: number }>()
       const ends = new Map<string, number>()
+      const actions = new Map<string, string>()
       for (const line of lines) {
-        const entry = JSON.parse(line) as { phase: "start" | "end"; id: string; pid: number; call: string | null; bin: "boxd" | "opencode"; argv: string[]; at: number }
+        const entry = JSON.parse(line) as { phase: "start" | "end" | "action"; id: string; pid: number; call: string | null; bin: "boxd" | "opencode"; argv: string[]; at: number; action?: string }
         if (entry.phase === "start") starts.set(entry.id, entry)
+        else if (entry.phase === "action") actions.set(entry.id, entry.action!)
         else ends.set(entry.id, entry.at)
       }
-      return [...starts.values()].map((start) => ({ id: start.id, pid: start.pid, call: start.call, bin: start.bin, argv: start.argv, startedAt: start.at, endedAt: ends.get(start.id) ?? Number.POSITIVE_INFINITY }))
+      return [...starts.values()].map((start) => ({
+        id: start.id,
+        pid: start.pid,
+        call: start.call,
+        bin: start.bin,
+        argv: start.argv,
+        ...(actions.has(start.id) ? { action: actions.get(start.id)! } : {}),
+        startedAt: start.at,
+        endedAt: ends.get(start.id) ?? Number.POSITIVE_INFINITY,
+      }))
     },
     dispose() {
       if (!options.dir) rmSync(dir, { recursive: true, force: true })

@@ -424,6 +424,8 @@ function exec() {
     let request = input
     try {
       const parsed = JSON.parse(input)
+      // The helper action this exec asked for, logged beside its spawn, so a test can tell a prompt from a read.
+      if (parsed && typeof parsed === "object" && typeof parsed.action === "string") logLine({ phase: "action", id: spawnId, action: parsed.action })
       if (parsed && typeof parsed === "object" && parsed.action && state.port) request = JSON.stringify({ ...parsed, base: `http://127.0.0.1:${state.port}` })
     } catch {
       // Not JSON: the helper answers that itself.
