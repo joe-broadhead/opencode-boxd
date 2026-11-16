@@ -31,9 +31,10 @@ describe("the Code Mode path", () => {
       expect(await host.probe().permission.list({ sessionID: read.sessionID })).toEqual([])
 
       // A change is allowed by default too, so the program reaches the tool with no prompt.
-      const wrote = await code(host, `const r = await tools.boxd.ensure({ workId: "review-api" }); return "ensure:" + r.error`, "ensure:NOT_IMPLEMENTED")
+      const wrote = await code(host, `const r = await tools.boxd.ensure({ workId: "review-api" }); return "ensure:" + r.state`, "ensure:ready")
       expect(wrote.text).toContain("after-tool:")
       expect(await host.probe().permission.list({ sessionID: wrote.sessionID })).toEqual([])
+      const before = host.boxd.calls().length
 
       // An agent that asks for the tool still asks, and a decline runs nothing.
       const asking = await host.client.session.create({ location: { directory: host.location.directory }, agent: "build", permissions: [{ action: "boxd_drop", resource: "*", effect: "ask" }] })
@@ -44,7 +45,7 @@ describe("the Code Mode path", () => {
       const question = await until("the drop asks", async () => (await host.probe().permission.list({ sessionID: asking.id })).find((entry) => entry.action === "boxd_drop"), 30_000)
       await host.probe().permission.reply({ sessionID: asking.id, requestID: question.id, decision: "reject", message: "not now" })
       await until("the turn ends", async () => (await host.client.session.get({ sessionID: asking.id })).outcome !== undefined, 30_000)
-      expect(host.boxd.calls()).toEqual([])
+      expect(host.boxd.calls().slice(before)).toEqual([])
     } finally {
       await host.close()
     }
