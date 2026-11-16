@@ -7,7 +7,8 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { arch, platform } from "node:os"
 import { join } from "node:path"
 import { TESTED_HOSTS } from "../../src/constants.js"
-import { laptopProver } from "../../src/prover.js"
+import { createLaptopPort } from "../../src/exec/laptop.js"
+import { replaceOnLaptop, type StoredTranscript } from "../../src/prover.js"
 import type { OpContext } from "../../src/ports.js"
 import { directSpawn, removeRoot, tempRoot } from "../support/ledger-fakes.js"
 import { stockGate } from "../support/stock-gate.js"
@@ -26,6 +27,12 @@ const binary = (version: string): string | undefined => {
 }
 
 const context: OpContext = { call: { callId: "prover-test", source: "boxd_harvest" } }
+
+/** The laptop port on `bin`, with the replace a harvest makes through it. */
+const laptopProver = (bin: string) => {
+  const laptop = createLaptopPort({ runner: { spawn: directSpawn }, bin })
+  return { ...laptop, replace: (transcripts: readonly StoredTranscript[], directory: string, op: OpContext) => replaceOnLaptop(laptop, transcripts, directory, op) }
+}
 
 /** A transcript in the shape `opencode session export` writes on 2.2 and 2.3: flat messages with `id` and `type`. */
 const transcript = (id: string, directory: string, title: string, messages: number, parentID?: string) => ({
@@ -69,7 +76,7 @@ for (const version of TESTED_HOSTS) {
     test("a second harvest replaces the laptop's copy (F1), parents first, and an absent id reads as absent", async () => {
       await isolated(async (root) => {
         const work = join(root, "work")
-        const prover = laptopProver(directSpawn, bin!)
+        const prover = laptopProver(bin!)
         const read = async (id: string) => {
           const result = await directSpawn({ ...context, bin: bin!, args: ["session", "export", id, "--standalone"], timeoutMs: 120_000 })
           expect(result.code).toBe(0)
@@ -94,7 +101,7 @@ for (const version of TESTED_HOSTS) {
         expect(await read(root1)).toEqual({ title: "first title", messages: 1 })
 
         // The stock behaviour the prover guards against: an import over an existing id changes nothing.
-        await expect(prover.importSession(store("root-plain.json", transcript(root1, work, "plain import", 3)), work, context)).rejects.toThrow(/IMPORT_FAILED: .*still held the session/)
+        await expect(prover.importSession(store("root-plain.json", transcript(root1, work, "plain import", 3)), work, context)).rejects.toThrow(/IMPORT_FAILED: .*already held the session/)
         expect(await read(root1)).toEqual({ title: "first title", messages: 1 })
 
         // The second harvest replaces both sessions.
@@ -116,7 +123,7 @@ for (const version of TESTED_HOSTS) {
 
     test("a failed import answers IMPORT_FAILED and leaves the stored export byte for byte", async () => {
       await isolated(async (root) => {
-        const prover = laptopProver(directSpawn, bin!)
+        const prover = laptopProver(bin!)
         const file = join(root, "broken.json")
         writeFileSync(file, '{"info": {"id": "ses_broken"}')
         const before = readFileSync(file)
@@ -139,10 +146,10 @@ describe("the prover's reading of the CLI's words", () => {
   test("delete: 0 is deleted, 1 with not-found words is absent, anything else is IMPORT_FAILED", async () => {
     const root = tempRoot("boxd-prover-fake-")
     try {
-      expect(await laptopProver(directSpawn, fake(root, 'echo "Session ses_a deleted"')).deleteSession("ses_a", context)).toBe("deleted")
-      expect(await laptopProver(directSpawn, fake(root, 'echo "\\033[31mSession not found: ses_a\\033[0m" >&2; exit 1')).deleteSession("ses_a", context)).toBe("absent")
-      await expect(laptopProver(directSpawn, fake(root, 'echo "database is locked" >&2; exit 1')).deleteSession("ses_a", context)).rejects.toThrow(/^IMPORT_FAILED: .*database is locked/)
-      await expect(laptopProver(directSpawn, fake(root, "exit 0")).deleteSession("not-a-session", context)).rejects.toThrow(/^NAME_INVALID/)
+      expect(await laptopProver(fake(root, 'echo "Session ses_a deleted"')).deleteSession("ses_a", context)).toBe("deleted")
+      expect(await laptopProver(fake(root, 'echo "\\033[31mSession not found: ses_a\\033[0m" >&2; exit 1')).deleteSession("ses_a", context)).toBe("absent")
+      await expect(laptopProver(fake(root, 'echo "database is locked" >&2; exit 1')).deleteSession("ses_a", context)).rejects.toThrow(/^IMPORT_FAILED: .*database is locked/)
+      await expect(laptopProver(fake(root, "exit 0")).deleteSession("not-a-session", context)).rejects.toThrow(/^NAME_INVALID/)
     } finally {
       removeRoot(root)
     }
@@ -151,12 +158,12 @@ describe("the prover's reading of the CLI's words", () => {
   test("import: the printed id is checked against the transcript's own", async () => {
     const root = tempRoot("boxd-prover-fake-")
     try {
-      const prover = laptopProver(directSpawn, fake(root, 'case "$2" in delete) exit 0;; import) echo "Imported session: ses_other";; esac'))
+      const prover = laptopProver(fake(root, 'case "$2" in delete) exit 0;; import) echo "Imported session: ses_other";; esac'))
       await expect(prover.replace([{ id: "ses_mine", file: "x.json" }], root, context)).rejects.toThrow(/IMPORT_FAILED: .*filed ses_mine as ses_other/)
-      const silent = laptopProver(directSpawn, fake(root, 'case "$2" in delete) exit 0;; import) echo "done";; esac'))
+      const silent = laptopProver(fake(root, 'case "$2" in delete) exit 0;; import) echo "done";; esac'))
       await expect(silent.replace([{ id: "ses_mine", file: "x.json" }], root, context)).rejects.toThrow(/IMPORT_FAILED: .*printed no session id/)
       const calls = join(root, "calls")
-      const logged = laptopProver(directSpawn, fake(root, `echo "$*" >> ${calls}; case "$2" in delete) echo "Session not found: $3" >&2; exit 1;; import) echo "Imported session: ses_mine";; esac`))
+      const logged = laptopProver(fake(root, `echo "$*" >> ${calls}; case "$2" in delete) echo "Session not found: $3" >&2; exit 1;; import) echo "Imported session: ses_mine";; esac`))
       expect(await logged.replace([{ id: "ses_mine", file: "x.json" }], "/work/projects/api", context)).toEqual(["ses_mine"])
       expect(readFileSync(calls, "utf8")).toBe("session delete ses_mine --standalone\nsession import x.json --directory /work/projects/api --standalone\n")
     } finally {

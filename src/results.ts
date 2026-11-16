@@ -40,17 +40,6 @@ export interface Refusal extends ErrorFacts {
   readonly next: string
 }
 
-/**
- * The scaffold's answer while a tool's package has not filled its run. Not a §5 code: it exists only on the
- * integration branch, and goes with the last stub.
- */
-export interface NotImplemented {
-  readonly state: "failed"
-  readonly error: "NOT_IMPLEMENTED"
-  readonly message: string
-  readonly next: string
-}
-
 /** What each answer about one work has, success or not. */
 interface WorkFields {
   readonly workId: string
@@ -338,9 +327,6 @@ export interface ListResult<T extends { readonly state: string }> {
   readonly select?: CleanupAction["select"]
   readonly dryRun?: boolean
 }
-
-/** One tool's answer, single or list form, refusal included. */
-export type Answer<T extends { readonly state: string }> = T | Refusal | ListResult<T> | NotImplemented
 
 /** Each tool's success result, by tool id: the registry's output contract. */
 export interface ToolResults {

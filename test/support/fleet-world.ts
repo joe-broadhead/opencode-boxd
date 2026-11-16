@@ -9,7 +9,8 @@ import type { WorkRecord } from "../../src/ledger/types.js"
 import { parseOptions } from "../../src/options.js"
 import { createRuntime, type PluginRuntime } from "../../src/exec/runtime.js"
 import type { ChangeTarget, CallTag, LedgerPort, MachineId, MachineName, OpContext } from "../../src/ports.js"
-import { notBuilt, type CoreServices, type CostPort, type FleetServices, type SessionAccess } from "../../src/services.js"
+import { notBuilt } from "./not-built.js"
+import type { CoreServices, CostPort, FleetServices, SessionAccess } from "../../src/services.js"
 import { createWatch, type Watcher } from "../../src/watch.js"
 import { startFakeGuest, type FakeGuest } from "../host/fake-guest.js"
 import { startSpawnCounter, type CountingFake } from "../host/spawn-counter.js"
@@ -82,7 +83,7 @@ export async function startWorld(
   const root = tempRoot("boxd-fleet-")
   const guest = startFakeGuest({ version: "2.2.6" })
   const counter = await startSpawnCounter({ guestPort: guest.port, ...(options.latencyMs ? { latencyMs: options.latencyMs } : {}) })
-  const runtime = createRuntime({ boxdBin: counter.boxdBin }, { opencodeBin: counter.opencodeBin })
+  const runtime = createRuntime({ boxdBin: counter.boxdBin, opencodeBin: counter.opencodeBin })
   const sessions = new FakeSessions()
   const clock = { now: new Date("2026-11-16T10:00:00.000Z") }
   const host = {

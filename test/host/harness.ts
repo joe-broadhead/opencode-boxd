@@ -69,6 +69,8 @@ export interface HostInput {
   readonly guestVersion?: string
   /** A loopback model, so a Code Mode program can be driven by a turn. */
   readonly model?: boolean
+  /** Wraps the context the boxd plugin gets, so a test can watch what it registers. */
+  readonly wrap?: (ctx: Plugin.Context) => Plugin.Context
 }
 
 /** A git repository inside the temp root: the guest's work directory and the path a harvest imports into. */
@@ -95,7 +97,7 @@ export async function startHost(input: HostInput = {}) {
   const boxd = startFakeBoxd(guest, input.guestVersion ?? HOST_VERSION)
   const model = input.model ? startMockModel() : undefined
   const plugin = createBoxdPlugin({ boxdBin: boxd.bin, ledger: join(base, "ledger") })
-  const withOptions = Plugin.define({ id: plugin.id, setup: (ctx) => plugin.setup({ ...ctx, options: input.options ?? {} }) })
+  const withOptions = Plugin.define({ id: plugin.id, setup: (ctx) => plugin.setup({ ...(input.wrap ? input.wrap(ctx) : ctx), options: input.options ?? {} }) })
   const probes = new Map<string, Plugin.Context>()
   const probe = Plugin.define({
     id: "boxd.host-test.probe",

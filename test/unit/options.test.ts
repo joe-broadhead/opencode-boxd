@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { DEFAULT_OPTIONS, parseOptions, type Options } from "../../src/options.js"
-import { isSupportedHost, isTestedHost, checkHost, checkGuest, parseVersion } from "../../src/host-version.js"
+import { isSupportedHost, isTestedHost, checkHost, parseVersion } from "../../src/host-version.js"
 import { SUPPORTED_HOST, TESTED_HOSTS } from "../../src/constants.js"
 
 const DEFAULTS: Options = {
@@ -123,15 +123,7 @@ describe("the host", () => {
   })
 })
 
-describe("the guest", () => {
-  test("must run the same OpenCode as this laptop, not a hard-coded release", () => {
-    expect(() => checkGuest("opencode v2.2.6", "2.2.6")).not.toThrow()
-    expect(() => checkGuest("opencode v2.2.3", "2.2.3")).not.toThrow()
-    expect(() => checkGuest("2.2.5", "2.2.6")).toThrow(/^GUEST_VERSION: /)
-    expect(() => checkGuest("unknown", "2.2.6")).toThrow(/^GUEST_VERSION: /)
-    expect(() => checkGuest("2.2.6", null)).toThrow(/^GUEST_VERSION: /)
-  })
-
+describe("versions", () => {
   test("parses the CLI's own version line", () => {
     expect(parseVersion("opencode v2.2.6")).toEqual([2, 2, 6])
     expect(parseVersion("2.2.6-dev.1")).toBeUndefined()

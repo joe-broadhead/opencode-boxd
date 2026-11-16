@@ -13,7 +13,8 @@ import { createLedger } from "../../src/ledger/index.js"
 import type { WorkRecord } from "../../src/ledger/types.js"
 import { parseOptions } from "../../src/options.js"
 import type { CostPort } from "../../src/services.js"
-import { notBuilt, type FleetServices, type HostServices, type SessionAccess } from "../../src/services.js"
+import type { FleetServices, HostServices, SessionAccess } from "../../src/services.js"
+import { notBuilt } from "./not-built.js"
 import type { ChangeTarget, MachineId, MachineName, OpContext, Region } from "../../src/ports.js"
 import type { CallContext } from "../../src/tools.js"
 import { startFakeGuest, type FakeGuest } from "../host/fake-guest.js"
@@ -71,7 +72,7 @@ export interface KitInput {
 export async function startKit(input: KitInput = {}): Promise<Kit> {
   const guest = startFakeGuest({ version: VERSION })
   const counter = await startSpawnCounter({ guestPort: guest.port, version: VERSION })
-  const runtime = createRuntime({ boxdBin: counter.boxdBin }, { opencodeBin: counter.opencodeBin })
+  const runtime = createRuntime({ boxdBin: counter.boxdBin, opencodeBin: counter.opencodeBin })
   const root = realpathSync(mkdtempSync(join(realpathSync(tmpdir()), "boxd-c1-")))
   const project = join(root, "project")
   mkdirSync(project, { recursive: true })

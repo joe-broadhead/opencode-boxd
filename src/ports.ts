@@ -181,7 +181,8 @@ export const LIST_WAIT_CREATED_ABOVE = 50
 export const POLL_INTERVAL_MS = 3_000
 /**
  * `B`: the longest any tool call waits before it answers its real state (`creating`, `starting`) or `cancelled`
- * with `started: false`. Set from the host's measured limit less 30 s (§7.2); 4 minutes until then.
+ * with `started: false`. Calls of 2, 5 and 10 minutes finished on every tested host, through Code Mode and the tools
+ * RPC (§7.2); a longer call was not measured, so `B` stays well inside that.
  */
 export const CALL_BOUND_MS = 4 * 60_000
 
@@ -414,16 +415,6 @@ export interface BoxdPort {
 /** The v1 helper's stable home on the guest, and the protocol version it answers. */
 export const GUEST_HELPER_PATH = "/home/boxd/.opencode-boxd/guest.py"
 export const GUEST_PROTOCOL = 1
-/** Where a work's guest folder always is. */
-export const GUEST_WORK_ROOT = "/home/boxd/work"
-
-/** The read actions: no machine lock, the read rule, never an upload. Their input and output hold within v0.1.x. */
-export const GUEST_READ_ACTIONS = ["phase", "read", "health", "serve"] as const
-/** The mutating actions: under the machine lock, after the by-id check; a change may upload the helper first. */
-export const GUEST_CHANGE_ACTIONS = ["setup", "prompt", "interrupt", "upgrade", "export", "import", "git", "scrub"] as const
-export type GuestReadAction = (typeof GUEST_READ_ACTIONS)[number]
-export type GuestChangeAction = (typeof GUEST_CHANGE_ACTIONS)[number]
-export type GuestAction = GuestReadAction | GuestChangeAction
 
 export type Delivery = "steer" | "queue" | "interrupt"
 export type RunOutcome = "completed" | "failed" | "aborted"

@@ -2,16 +2,26 @@
 // stands in for the machine's disk and the loopback fake of the guest's OpenCode server. A change uploads the helper
 // once, to the stable path, and replaces an older copy; a read never uploads, never wakes, and works with the helper
 // already there; every answer is checked and the model's words are redacted.
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
+//
+// The port and the runner run on the test's own clock, which never moves: the read rule's 2 s listing age never depends
+// on how fast the fake CLI's children start on a loaded machine. Every child is still a real process, bounded by the
+// runner's own timeouts, so a test's limit is generous rather than tight, and a wait waits for its event, not a count.
+import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { BoxdError } from "../../src/errors.js"
-import { createRuntime, type PluginRuntime as Runtime } from "../../src/exec/runtime.js"
+import { createBoxdCli } from "../../src/boxd/cli.js"
+import { createLaptopPort } from "../../src/exec/laptop.js"
+import { createRunner } from "../../src/exec/runner.js"
+import type { PluginRuntime as Runtime } from "../../src/exec/runtime.js"
 import { helperFile } from "../../src/guest/helper.js"
+import { createGuestPort } from "../../src/guest/port.js"
 import { GUEST_HELPER_PATH, type ChangeTarget, type MachineId, type OpContext, type ReadTarget } from "../../src/ports.js"
 import { startFakeCli, type FakeCli, type FakeMachine } from "../host/fake-cli.js"
 import { startFakeGuest, type FakeGuest } from "../host/fake-guest.js"
+
+setDefaultTimeout(120_000)
 
 let guestServer: FakeGuest
 let fake: FakeCli
@@ -33,9 +43,26 @@ beforeEach(async () => {
   guestServer.sessions.clear()
   guestServer.pending.clear()
   fake = startFakeCli({ guestPort: guestServer.port })
-  runtime = createRuntime({ boxdBin: fake.bin }, { opencodeBin: fake.opencodeBin })
+  runtime = clocked(fake)
   machine = fake.machine({ name: "oc-review-api", region: "fra", labels: { owner: "opencode-boxd" } })
 })
+
+/** The plugin's runtime as createRuntime builds it, on a clock that never moves. */
+function clocked(cli: FakeCli): Runtime {
+  const now = () => Date.parse("2026-11-16T09:00:00Z")
+  const runner = createRunner({ now })
+  const boxd = createBoxdCli({ bin: cli.bin, runner, now })
+  return { runner, boxd, guest: createGuestPort({ boxd, runner }), laptop: createLaptopPort({ runner, bin: cli.opencodeBin }), dispose: () => runner.dispose() }
+}
+
+/** Reads serve until the folder's detached clone is no longer running. */
+async function cloneEnds(directory: string): Promise<string | undefined> {
+  for (;;) {
+    const clone = (await serveOf(directory)).clone
+    if (clone !== "running") return clone
+    await Bun.sleep(50)
+  }
+}
 
 const onDisk = (path: string) => join(fake.disk(machine), path)
 const verbs = () => fake.calls().map((call) => call.split(" ").slice(0, 2).join(" "))
@@ -353,12 +380,7 @@ describe("the work tree", () => {
     Bun.spawnSync(["git", "-C", origin, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "--quiet", "-m", "c"])
     const first = await setup({ repo: { url: `file://${origin}` }, git: { name: "Work", email: "work@example.invalid" } })
     expect(first.workspace).toBe("cloning")
-    let clone: string | undefined = "running"
-    for (let tries = 0; tries < 100 && clone === "running"; tries++) {
-      await Bun.sleep(50)
-      clone = (await serveOf(DIRECTORY)).clone
-    }
-    expect(clone).toBe("done")
+    expect(await cloneEnds(DIRECTORY)).toBe("done")
     expect(existsSync(onDisk(`${DIRECTORY}/.git`))).toBe(true)
     expect(readFileSync(onDisk(`${DIRECTORY}/f`), "utf8")).toBe("x")
     expect((await setup({ repo: { url: `file://${origin}` } })).workspace).toBe("ready")
@@ -367,12 +389,7 @@ describe("the work tree", () => {
   test("a failed clone answers GUEST_WORKSPACE once, and the next setup tries again", async () => {
     const repo = { url: `file://${join(fake.dir, "no-such-repo")}` }
     expect((await setup({ repo })).workspace).toBe("cloning")
-    let clone: string | undefined = "running"
-    for (let tries = 0; tries < 100 && clone === "running"; tries++) {
-      await Bun.sleep(50)
-      clone = (await serveOf(DIRECTORY)).clone
-    }
-    expect(clone).toBe("failed")
+    expect(await cloneEnds(DIRECTORY)).toBe("failed")
     expect((await fail(setup({ repo })))?.code).toBe("GUEST_WORKSPACE")
     expect((await setup({ repo })).workspace).toBe("cloning")
   })

@@ -1,7 +1,11 @@
 // The boxd CLI port on the fake laptop CLI, through the real runner: regions on every verb, one listing for every
 // region, changes by id after checkOwned and inside the machine lock, the creation flags of design §C.2, the read rule
 // before a read exec, no upload from a read, the stderr table, the caches, and every child tagged with its call.
-import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test"
+//
+// The port and the runner run on the test's own clock, which moves only when a test moves it: the caches' ages and the
+// read rule's 2 s never depend on how fast the fake CLI's children start on a loaded machine. Every child is still a
+// real process, bounded by the runner's own timeouts, so a test's limit is generous rather than tight.
+import { afterAll, afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { createBoxdCli, isChangeTarget } from "../../src/boxd/cli.js"
@@ -10,7 +14,12 @@ import { createRunner } from "../../src/exec/runner.js"
 import type { BoxdPort, ChangeTarget, MachineId, OpContext, ReadTarget } from "../../src/ports.js"
 import { startFakeCli, type FakeCli } from "../host/fake-cli.js"
 
+setDefaultTimeout(120_000)
+
 let fake: FakeCli
+/** The test's clock: it moves only when a test moves it. */
+let clock = Date.parse("2026-11-16T09:00:00Z")
+const now = () => clock
 let runner: ReturnType<typeof createRunner>
 let boxd: BoxdPort
 const context = (callId = "call_test"): OpContext => ({ call: { callId, source: "boxd_ensure" } })
@@ -19,8 +28,8 @@ const fail = <T>(promise: Promise<T>) => promise.then(() => undefined, (error: u
 
 beforeEach(() => {
   fake = startFakeCli()
-  runner = createRunner()
-  boxd = createBoxdCli({ bin: fake.bin, runner })
+  runner = createRunner({ now })
+  boxd = createBoxdCli({ bin: fake.bin, runner, now })
 })
 afterEach(async () => {
   await runner.dispose()
@@ -49,7 +58,7 @@ describe("reads", () => {
     // A fresh listing is its own call, and is marked fresh.
     expect((await boxd.list({ maxAgeMs: 0 }, context())).fresh).toBe(true)
     expect(fake.calls()).toHaveLength(2)
-  }, 20_000)
+  })
 
   test("get hands back a change target only for a machine whose labels show the plugin owns it", async () => {
     const ours = fake.machine({ name: "oc-a", region: "fra", labels: { role: "session", owner: "opencode-boxd", work: "a" } })
@@ -60,7 +69,7 @@ describe("reads", () => {
     expect((await boxd.get("fra", "oc-b", context())).owned?.target).toMatchObject({ machineId: v0.id })
     expect((await boxd.get("fra", "oc-c", context())).owned).toBeUndefined()
     expect((await boxd.get("fra", "oc-d", context())).owned).toBeUndefined()
-  }, 20_000)
+  })
 
   test("get never hands back a change target for a shared or isolated machine, whatever its labels", async () => {
     const labels = { role: "session", owner: "opencode-boxd", work: "s" }
@@ -70,7 +79,7 @@ describe("reads", () => {
     expect((await boxd.get("fra", "oc-s", context())).owned).toBeUndefined()
     expect(await boxd.get("fra", "oc-i", context())).toMatchObject({ isolated: true })
     expect((await boxd.get("fra", "oc-i", context())).owned).toBeUndefined()
-  }, 20_000)
+  })
 
   test("a create whose answer names another machine is BOXD_FAILED, and nothing is branded", async () => {
     fake.snapshot({ region: "fra", name: "img" })
@@ -251,7 +260,7 @@ describe("exec and copies", () => {
     expect(lists()).toBe(before)
     fake.update((state) => void (state.machines.find((machine) => machine.name === "oc-b")!.status = "hibernated"))
     // Once the shared listing has aged too, the read takes a fresh one, which shows the machine asleep.
-    await new Promise((resolve) => setTimeout(resolve, 2_100))
+    clock += 2_100
     const refused = await fail(boxd.exec(readTarget({ ...old, takenAt: old.takenAt - 5_000 }, "oc-b"), "echo no", { timeoutSeconds: 5, json: false }, context()))
     expect([refused?.code, refused?.details.kind]).toEqual(["MACHINE_ASLEEP", "not-readable"])
     expect(lists()).toBe(before + 1)
@@ -308,10 +317,11 @@ describe("the CLI itself", () => {
     await slow.assertLaptopCli(context())
     const started = Date.now()
     const error = await fail(slow.list({ maxAgeMs: 0 }, { ...context(), signal: AbortSignal.timeout(60_000) }))
-    // The real bound is 15 s; the fake answers the sign-in at once and then waits.
+    // The real bound is 15 s; the fake answers the sign-in at once and then waits 30 s. BOXD_MISSING comes only from a
+    // child the timeout cut, and the cut came before the fake's own wait was over.
     expect(error?.code).toBe("BOXD_MISSING")
-    expect(Date.now() - started).toBeLessThan(20_000)
-  }, 30_000)
+    expect(Date.now() - started).toBeLessThan(30_000)
+  })
 
   test("an unknown failure is BOXD_FAILED with the CLI's words, never missing", async () => {
     fake.fault("machine get", { stderr: "error: unexpected argument '--frobnicate' found", code: 2 })

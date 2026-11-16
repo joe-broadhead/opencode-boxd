@@ -19,6 +19,7 @@ import { CAPS, type ChangeTarget, type ImportV0Port, type LedgerPort, type Machi
 import type { CostPort, FleetActions, FleetServices, Selectors } from "../../src/services.js"
 import type { CallContext } from "../../src/tools.js"
 import { startFakeGuest, type FakeGuest } from "../host/fake-guest.js"
+import { plant } from "../host/fake-lock.mjs"
 import type { FakeMachine } from "../host/fake-cli.js"
 import { startSpawnCounter, type CountingFake } from "../host/spawn-counter.js"
 import { budgetProblems, SPAWN_BUDGETS, type BudgetRow } from "../support/spawn-count.js"
@@ -59,7 +60,7 @@ beforeEach(async () => {
   guest.prompts.length = 0
   guest.switches.length = 0
   counter = await startSpawnCounter({ guestPort: guest.port, version: VERSION })
-  runtime = createRuntime({ boxdBin: counter.boxdBin }, { opencodeBin: counter.opencodeBin })
+  runtime = createRuntime({ boxdBin: counter.boxdBin, opencodeBin: counter.opencodeBin })
   root = tempRoot("boxd-c2-")
   project = join(root, "project")
   mkdirSync(project)
@@ -1050,8 +1051,7 @@ describe("the fake CLI's own lock", () => {
   test("a lock holder stalled for 12 s, as by a disk stall, delays a harvest and fails nothing", async () => {
     await ranWork("stall")
     const lock = `${counter.fake.statePath}.lock`
-    mkdirSync(lock)
-    writeFileSync(join(lock, "owner"), String(process.pid))
+    expect(plant(lock, String(process.pid))).toBe(true)
     const released = Bun.sleep(12_000).then(() => rmSync(lock, { recursive: true, force: true }))
     const answer = await runs.boxd_harvest({ workId: "stall" }, call())
     await released
@@ -1063,8 +1063,7 @@ describe("the fake CLI's own lock", () => {
     await ranWork("orphaned-lock")
     const dead = Bun.spawnSync(["sh", "-c", "echo $$"]).stdout.toString().trim()
     const lock = `${counter.fake.statePath}.lock`
-    mkdirSync(lock)
-    writeFileSync(join(lock, "owner"), dead)
+    expect(plant(lock, dead)).toBe(true)
     const started = Date.now()
     expect(await runs.boxd_harvest({ workId: "orphaned-lock" }, call())).toMatchObject({ state: "saved" })
     expect(Date.now() - started).toBeLessThan(10_000)

@@ -4,8 +4,8 @@
 import { describe, expect, test } from "bun:test"
 import type { Plugin } from "@opencode/plugin"
 import { BoxdError, boxdError, CODES } from "../../src/errors.js"
-import { notBuiltRun, type Run, type Selectors, type ToolRuns } from "../../src/services.js"
-import { CHANGING_TOOLS, READ_TOOLS, TOOLS, ownedMethods, refusal, resourcesOf, runTool, selectionOf, toolSpec, toolTransform, type CallContext, type RegistryDeps, type ToolName, type ToolSpec } from "../../src/tools.js"
+import type { Run, Selectors, ToolRuns } from "../../src/services.js"
+import { CHANGING_TOOLS, READ_TOOLS, TOOLS, ownedMethods, refusal, resourcesOf, runTool, selectionOf, toolTransform, type CallContext, type RegistryDeps, type ToolName, type ToolSpec } from "../../src/tools.js"
 import { defaultRules } from "../../src/permissions.js"
 
 /** Design §3.14, row for row: the tool, its readOnly, its class, and whether it asserts. */
@@ -27,9 +27,14 @@ const TABLE: ReadonlyArray<readonly [ToolName, boolean, ToolSpec["class"]]> = [
 /** Design §4.2: the tools that take `works: [...]`. */
 const LIST_FORMS: readonly ToolName[] = ["ensure", "submit", "job", "harvest", "sleep", "resume", "drop"]
 
-/** Every run is the scaffold's, and every selector matches `a` and `b`, unless a test swaps one in. */
+const toolSpec = (name: ToolName): ToolSpec => TOOLS.find((tool) => tool.name === name)!
+
+/** A stand-in run: it answers which tool ran, so a test sees the registry hand the call through. */
+const standIn = (id: string): Run<{ readonly state: string }> => async () => ({ state: "ok", tool: id })
+
+/** Every run is a stand-in, and every selector matches `a` and `b`, unless a test swaps one in. */
 function registry(runs: Partial<Record<keyof ToolRuns, Run<{ readonly state: string }>>> = {}): RegistryDeps {
-  const all = Object.fromEntries(TOOLS.map((tool) => [tool.id, runs[tool.id] ?? notBuiltRun(tool.owner)])) as unknown as ToolRuns
+  const all = Object.fromEntries(TOOLS.map((tool) => [tool.id, runs[tool.id] ?? standIn(tool.id)])) as unknown as ToolRuns
   const both = async () => ["a", "b"] as const
   return { runs: all, selectors: { boxd_sleep: both, boxd_harvest: both, boxd_drop: both } as Selectors }
 }
@@ -132,10 +137,10 @@ describe("the tool table", () => {
 })
 
 describe("the registry runs a tool", () => {
-  test("every tool answers the scaffold's typed NOT_IMPLEMENTED until its package fills it", async () => {
+  test("every tool hands its run's answer back, as the output and as its text", async () => {
     for (const tool of TOOLS) {
       const answer = await runTool(tool, deps, recorder().assert, inputFor(tool.name), context())
-      expect(answer.output).toEqual({ state: "failed", error: "NOT_IMPLEMENTED", message: `This tool is not built yet on this branch (package ${tool.owner}).`, next: "Use a released version of the plugin." })
+      expect(answer.output).toEqual({ state: "ok", tool: tool.id })
       expect(JSON.parse(answer.text)).toEqual(answer.output)
     }
   })

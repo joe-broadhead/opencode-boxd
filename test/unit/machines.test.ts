@@ -640,6 +640,53 @@ describe("one machine per work, whatever the listing shows (review HIGH-1)", () 
   })
 })
 
+describe("integration lows (C1)", () => {
+  const getLags = (k: Kit, name: string, times: number) => {
+    for (let index = 0; index < times; index++) k.counter.fake.fault("machine get", { stderr: `error: no machine "${name}" in fra\n`, code: 1 })
+  }
+
+  test("adopt: true never takes a machine whose id another open work records", async () => {
+    const k = await kit()
+    const machine = k.counter.fake.machine({ name: "oc-thief", region: "fra", labels: { team: "data" } })
+    await k.write(workRecord("holder", { region: "fra", machineId: machine.id as never, laptopDirectory: k.project }))
+    k.reset()
+    const error = await errorOf(k.runs.boxd_ensure({ workId: "thief", adopt: true }, k.call()))
+    expect(error.code).toBe("NOT_OURS")
+    expect(error.what).toContain("holder")
+    expect(k.calls().filter((entry) => /^machine (exec|wake|resize|reboot|rename|label|remove|new)/.test(entry))).toEqual([])
+    expect(await k.record("thief")).toBeUndefined()
+    expect((await k.record("holder"))?.machineId as string | null | undefined).toBe(machine.id)
+  })
+
+  test("a resume whose create is refused as taken while the get still lags answers starting, and the next resume adopts it", async () => {
+    const k = await kit()
+    await k.golden("fra")
+    const landed = await owned(k, "slow")
+    await k.write(workRecord("slow", { region: "fra", laptopDirectory: k.project, pendingCreate: { at: new Date().toISOString(), image: IMAGE } }))
+    lagListing(k, 2)
+    getLags(k, "oc-slow", 2)
+    const first = (await k.runs.boxd_resume({ workId: "slow" }, k.call())) as ResumeResult
+    expect(first).toMatchObject({ state: "starting", rebuilt: false })
+    expect(first.next).toContain('boxd_resume({ workId: "slow" })')
+    expect(named(k, "oc-slow")).toHaveLength(1)
+    const second = (await k.runs.boxd_resume({ workId: "slow" }, k.call())) as ResumeResult
+    expect(second).toMatchObject({ state: "ready", rebuilt: false, region: "fra" })
+    expect((await k.record("slow"))?.machineId as string | null | undefined).toBe(landed.id)
+    expect(named(k, "oc-slow")).toHaveLength(1)
+  })
+
+  test("a get that lags its create's refusal once is read again in the same call, and the machine adopted", async () => {
+    const k = await kit()
+    await k.golden("fra")
+    const landed = await owned(k, "once")
+    lagListing(k)
+    getLags(k, "oc-once", 1)
+    const result = (await k.runs.boxd_ensure({ workId: "once", region: "fra" }, k.call())) as EnsureResult
+    expect(result).toMatchObject({ state: "ready", machineId: landed.id, created: false, adopted: true })
+    expect(named(k, "oc-once")).toHaveLength(1)
+  })
+})
+
 describe("boxd_resume takes an imported v0 guest over before setup (review HIGH-2)", () => {
   test("a hibernated v0 work: woken, its v0 password taken over before any v1 setup, recorded v1, and reachable", async () => {
     const k = await kit()

@@ -1,5 +1,3 @@
-// Owner: package C2 (files in and out); package C1 imports it for `directory`. Tested through C2's runs
-// (`test/unit/sessions.test.ts`).
 // Laptop paths for the files a work moves in and out. A path must be inside the project or a root the user names, it
 // must not be a symlink, and it must stay inside the root once resolved: a plugin that writes a user's files is exactly
 // where a `..` or a symlinked folder would escape.

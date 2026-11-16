@@ -76,7 +76,7 @@ export interface LedgerOptions {
   readonly lock?: { readonly heartbeatMs?: number; readonly staleMs?: number }
 }
 
-/** The published ledger. `openLedger` checks the `complete` marker first: a partial ledger is never read. */
+/** The published ledger. The import gate opens it only once its `complete` marker exists: a partial ledger is never read. */
 export class Ledger {
   /** `~/.local/share/opencode-boxd`. */
   readonly root: string
@@ -513,12 +513,6 @@ export class Ledger {
     // A cache: a failed write costs a rebuild later, never a wrong answer.
     await writeJsonAtomic(join(this.root, LEDGER_PATHS.index), index).catch(() => undefined)
   }
-}
-
-/** Opens the published ledger; `LEDGER_FAILED` when `v1/` has no `complete` marker (it is published only whole). */
-export async function openLedger(root: string, options: LedgerOptions = {}): Promise<Ledger> {
-  if (!(await exists(join(root, LEDGER_PATHS.complete)))) throw boxdError("LEDGER_FAILED", "The v1 ledger has no complete marker, so it is not read.")
-  return new Ledger(root, options)
 }
 
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")

@@ -26,7 +26,7 @@ beforeEach(async () => {
   await runtime?.dispose()
   await counter?.dispose()
   counter = await startSpawnCounter({ guestPort: guestServer.port })
-  runtime = createRuntime({ boxdBin: counter.boxdBin }, { opencodeBin: counter.opencodeBin })
+  runtime = createRuntime({ boxdBin: counter.boxdBin, opencodeBin: counter.opencodeBin })
 })
 
 const context = (callId: string, source: `boxd_${string}` = "boxd_submit"): OpContext => ({ call: { callId, source } })
