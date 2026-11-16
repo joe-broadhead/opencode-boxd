@@ -1,0 +1,25 @@
+{
+  "workId": "empty-proof",
+  "machine": "oc-empty-proof",
+  "snapshot": "opencode-golden",
+  "laptopDirectory": "/work/projects/api",
+  "guestDirectory": "/home/boxd/work/empty-proof",
+  "proof": {
+    "harvestedAt": "2025-11-14T15:00:00.000Z",
+    "guestVersion": "2.2.6",
+    "sessions": [],
+    "sha256": {}
+  },
+  "git": {
+    "known": true,
+    "remote": "https://github.com/acme/api.git",
+    "branch": "main",
+    "sha": "0123456789abcdef0123456789abcdef01234567",
+    "dirty": false,
+    "patchStored": false,
+    "untracked": [],
+    "ignored": [],
+    "untrackedStored": false
+  },
+  "warnings": []
+}

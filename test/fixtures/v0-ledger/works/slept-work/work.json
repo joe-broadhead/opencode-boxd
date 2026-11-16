@@ -1,0 +1,22 @@
+{
+  "workId": "slept-work",
+  "machine": "oc-slept-work",
+  "snapshot": "opencode-golden",
+  "laptopDirectory": "/work/projects/api",
+  "guestDirectory": "/home/boxd/work/slept-work",
+  "vcpu": 8,
+  "rootSessionId": "ses_sleptroot",
+  "lastSubmitAt": "2025-11-14T14:00:00.000Z",
+  "lastOutcome": {
+    "state": "failed",
+    "error": "APIError: 401 Unauthorized",
+    "at": "2025-11-14T14:05:00.000Z"
+  },
+  "sleptAt": "2025-11-14T14:10:00.000Z",
+  "warnings": [
+    {
+      "code": "UNHARVESTED_SLEEP",
+      "at": "2025-11-14T14:10:00.000Z"
+    }
+  ]
+}

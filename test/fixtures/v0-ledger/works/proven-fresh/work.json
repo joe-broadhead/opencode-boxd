@@ -1,0 +1,67 @@
+{
+  "workId": "proven-fresh",
+  "machine": "oc-proven-fresh",
+  "snapshot": "opencode-golden",
+  "laptopDirectory": "/work/projects/api",
+  "guestDirectory": "/home/boxd/work/proven-fresh",
+  "repo": "https://github.com/acme/api",
+  "model": "anthropic/claude-sonnet-4-5",
+  "vcpu": 4,
+  "rootSessionId": "ses_freshroot",
+  "lastSubmitAt": "2025-11-14T10:00:00.000Z",
+  "proof": {
+    "harvestedAt": "2025-11-14T11:00:00.000Z",
+    "guestVersion": "2.2.6",
+    "sessions": [
+      {
+        "remoteId": "ses_freshroot",
+        "importedId": "ses_freshroot"
+      },
+      {
+        "remoteId": "ses_freshchild",
+        "importedId": "ses_freshchild",
+        "parentRemoteId": "ses_freshroot"
+      }
+    ],
+    "sha256": {
+      "ses_freshroot": "da058d0f5e4d2eae92b6b7bbb5683143f258f7b9cd31260830a551b6e7e94d8d",
+      "ses_freshchild": "ac486a8911a5cbf84328538b804dc3da9643d9952a4036f028364a7959104e4d"
+    }
+  },
+  "lastOutcome": {
+    "state": "completed",
+    "at": "2025-11-14T11:00:00.000Z"
+  },
+  "git": {
+    "known": true,
+    "remote": "https://x-access-token:ghs_secretsecretsecret@github.com/acme/api.git",
+    "branch": "main",
+    "sha": "0123456789abcdef0123456789abcdef01234567",
+    "dirty": true,
+    "patchStored": true,
+    "untracked": [
+      "notes/todo.md",
+      "data.bin"
+    ],
+    "ignored": [],
+    "untrackedStored": true
+  },
+  "uploads": [
+    {
+      "path": "spec.md",
+      "bytes": 12,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "at": "2025-11-14T09:59:00.000Z"
+    }
+  ],
+  "downloads": [
+    {
+      "path": "out/report.md",
+      "bytes": 34,
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "at": "2025-11-14T11:01:00.000Z",
+      "laptopPath": "/work/projects/api/out/report.md"
+    }
+  ],
+  "warnings": []
+}
