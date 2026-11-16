@@ -16,7 +16,7 @@ import { boxdError } from "../errors.js"
 import type { MachineId, MachineName, OpContext } from "../ports.js"
 import { redactBlock } from "../redact.js"
 import type { ExecResult } from "../results.js"
-import { asleep, assertWorkIdInput, loadOpen, machineOf, untilRunning, nowIso, optionalBoolean, optionalInteger, withTarget, type ItemContext, type Services } from "./sessions-common.js"
+import { asleep, assertWorkIdInput, loadOpen, machineOf, untilRunning, nowIso, optionalBoolean, optionalInteger, withTarget, type WorkContext, type Services } from "./sessions-common.js"
 
 /** The tail of each stream an answer keeps. */
 const STDOUT_TAIL = 32 * 1024
@@ -44,7 +44,7 @@ export function checkExec(input: Record<string, unknown>): ExecItem {
 /** One argument for the remote shell: single-quoted, with `'` written as `'\''`. */
 export const quote = (arg: string) => `'${arg.replaceAll("'", `'\\''`)}'`
 
-export async function execWork(services: Services, item: ExecItem, context: ItemContext): Promise<ExecResult> {
+export async function execWork(services: Services, item: ExecItem, context: WorkContext): Promise<ExecResult> {
   const op: OpContext = context.op
   const record = await loadOpen(services, item.workId, op)
   const machine = await machineOf(services, record, op)

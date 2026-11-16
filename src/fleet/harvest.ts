@@ -38,7 +38,7 @@ import {
   untilRunning,
   withoutWarning,
   withTarget,
-  type ItemContext,
+  type WorkContext,
   type Services,
 } from "./sessions-common.js"
 
@@ -88,7 +88,7 @@ interface Fetched {
   readonly adopted: boolean
 }
 
-export async function harvestWork(services: Services, item: HarvestItem, context: ItemContext): Promise<HarvestResult> {
+export async function harvestWork(services: Services, item: HarvestItem, context: WorkContext): Promise<HarvestResult> {
   const { op } = context
   const prover = laptopProver((request) => services.runner.spawn(request), services.opencodeBin)
   let fileError: BoxdError | undefined

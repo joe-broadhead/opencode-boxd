@@ -30,7 +30,7 @@ import {
   pause,
   untilRunning,
   withTarget,
-  type ItemContext,
+  type WorkContext,
   type Services,
 } from "./sessions-common.js"
 
@@ -86,7 +86,7 @@ function assertModelField(value: unknown): string {
   }
 }
 
-export async function submitWork(services: Services, item: SubmitItem, context: ItemContext): Promise<SubmitResult> {
+export async function submitWork(services: Services, item: SubmitItem, context: WorkContext): Promise<SubmitResult> {
   const { op } = context
   const first = openRecord(await services.ledger.get(item.workId, op), item.workId)
   // Laptop files are read and checked before the guest is touched: a refused path changes nothing.

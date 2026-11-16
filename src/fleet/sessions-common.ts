@@ -1,6 +1,7 @@
 /**
  * What package C2's runs share (design §3.5–§3.9, §3.12, §4.2): opening a work's record, resolving its machine to the
- * recorded id, the list form for submit, harvest, sleep and drop, and how a stopped call answers. Package C2 owns this
+ * recorded id, checking a `works` input before anything runs (package C1's `src/fleet/list.ts` runs it), and how a
+ * stopped call answers. Package C2 owns this
  * file, with `src/fleet/sessions.ts` and `src/fleet/{submit,harvest,sleep,drop,exec,read}.ts`.
  *
  * Lock order, for every change here: the work's ledger lock first (`ledger.update`, which re-enters for the staged
@@ -10,8 +11,6 @@
 import { BoxdError, boxdError } from "../errors.js"
 import type { WorkRecord, WorkWarning } from "../ledger/types.js"
 import {
-  CALL_BOUND_MS,
-  LIST_ITEM_CONCURRENCY,
   LIST_MAX_ITEMS,
   TIMEOUTS,
   type CallTag,
@@ -25,10 +24,8 @@ import {
   type Owned,
   type Region,
 } from "../ports.js"
-import type { ListResult, Refusal } from "../results.js"
 import type { FleetServices } from "../services.js"
 import type { CallContext } from "../tools.js"
-import { refusal } from "../tools.js"
 import type { WarningCode } from "../errors.js"
 
 export type Services = FleetServices
@@ -38,8 +35,8 @@ const WORK_ID = /^[a-z][a-z0-9-]{0,24}$/
 /** Who acts: a tool call, or package E in-process (the automation loop, or `/boxd-cleanup` after the person's yes). */
 export type Actor = "tool" | "automation" | "cleanup-command"
 
-/** One item's context: the port context, who acts, and the tool call when there is one. */
-export interface ItemContext {
+/** One work's context in a C2 run: the port context, who acts, and the tool call when there is one. */
+export interface WorkContext {
   readonly op: OpContext
   readonly by: Actor
   readonly call?: CallContext
@@ -192,9 +189,6 @@ export function pause(ms: number, signal: AbortSignal | undefined): Promise<void
 
 // ── The list form (design §4.2) ───────────────────────────────────────────────────────────────────────────────────
 
-/** An item's answer: its result, or its refusal in the same shape as any answer. */
-export type ItemAnswer<T> = T | Refusal
-
 /**
  * The items of a `works` input: each is checked first, so one bad item refuses the whole call before anything runs.
  * A bare string is a work id where the tool's schema allows it.
@@ -221,53 +215,6 @@ export function listItems<I>(works: unknown, shorthand: boolean, check: (item: R
       throw error
     }
   })
-}
-
-/**
- * Runs the items with at most `LIST_ITEM_CONCURRENCY` at once and returns them in input order. An item that fails
- * answers its refusal; once the call is stopped or `CALL_BOUND_MS` has passed, no further item starts, and each one
- * that never started answers `CANCELLED` with `started: false`. An item in flight when the call is stopped answers
- * `CANCELLED` with `uncertain: true` (`stopped`).
- */
-export async function runList<I extends { readonly workId: string }, T extends { readonly state: string }>(
-  items: readonly I[],
-  signal: AbortSignal | undefined,
-  act: (item: I) => Promise<T>,
-  boundMs: number = CALL_BOUND_MS,
-): Promise<ListResult<T>> {
-  const started = Date.now()
-  const results: Array<ItemAnswer<T> | undefined> = new Array(items.length)
-  let next = 0
-  const worker = async () => {
-    for (;;) {
-      const index = next++
-      if (index >= items.length) return
-      const item = items[index]!
-      if (signal?.aborted || Date.now() - started > boundMs) {
-        const why = signal?.aborted ? "The call was stopped before this work started." : "The call reached its time bound before this work started."
-        results[index] = refusal(boxdError("CANCELLED", why, { started: false, uncertain: false }), item as unknown as Record<string, unknown>)
-        continue
-      }
-      try {
-        results[index] = await act(item)
-      } catch (error) {
-        const settled = stopped(error, signal, true)
-        if (settled instanceof BoxdError) results[index] = refusal(settled, item as unknown as Record<string, unknown>)
-        else throw settled
-      }
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(LIST_ITEM_CONCURRENCY, items.length) }, worker))
-  return envelope(results as ItemAnswer<T>[], signal, (item) => !("error" in item))
-}
-
-/** The list envelope: `counts` by each item's state; `done`, `partial`, `failed` or `cancelled`. */
-export function envelope<T extends { readonly state: string }>(results: ReadonlyArray<ItemAnswer<T>>, signal: AbortSignal | undefined, succeeded: (item: ItemAnswer<T>) => boolean): ListResult<T> {
-  const counts: Record<string, number> = {}
-  for (const item of results) counts[item.state] = (counts[item.state] ?? 0) + 1
-  const ok = results.filter(succeeded).length
-  const state = signal?.aborted ? "cancelled" : ok === results.length ? "done" : ok === 0 ? "failed" : "partial"
-  return { state, counts, results }
 }
 
 /** Exactly one of `path` and `log`, and the like: a field that must be one of a fixed set. */

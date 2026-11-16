@@ -15,7 +15,8 @@ import { checkDrop, dropWork } from "./drop.js"
 import { checkExec, execWork } from "./exec.js"
 import { checkHarvest, harvestWork } from "./harvest.js"
 import { checkRead, readWork } from "./read.js"
-import { assertWorkIdInput, listItems, opOf, runList, stopped, type ItemContext, type Services } from "./sessions-common.js"
+import { listCall, runList } from "./list.js"
+import { assertWorkIdInput, listItems, opOf, stopped, type WorkContext, type Services } from "./sessions-common.js"
 import { sleepWork, type SleepItem } from "./sleep.js"
 import { checkSubmit, submitWork } from "./submit.js"
 
@@ -31,7 +32,36 @@ export function sessionRuns(services: FleetServices): { readonly runs: SessionRu
       throw stopped(error, call.signal, changing)
     }
   }
-  const toolContext = (tool: `boxd_${string}`, call: CallContext): ItemContext => ({ op: opOf(tool, call), by: "tool", call })
+  const toolContext = (tool: `boxd_${string}`, call: CallContext): WorkContext => ({ op: opOf(tool, call), by: "tool", call })
+
+  /**
+   * The list form, through package C1's shared runner (design §4.2): at most 8 items active, input order, the bound `B`,
+   * and Stop. An error a stop caused answers `CANCELLED` (`uncertain` when the port says a write was in flight).
+   */
+  const listOf = <I extends { readonly workId: string }, T extends { readonly state: string }>(
+    tool: `boxd_${string}`,
+    items: readonly I[],
+    signal: AbortSignal | undefined,
+    act: (item: I) => Promise<T>,
+  ): Promise<ListResult<T>> => {
+    const stop = signal ?? new AbortController().signal
+    return runList(
+      items,
+      {
+        signal: stop,
+        workId: (item) => item.workId,
+        // A submit item needs its prompt again; the other tools take bare ids.
+        again: (ids) => (tool === "boxd_submit" ? `boxd_submit({ works: [${ids.map((id) => `{ workId: "${id}", text: "<the same prompt>" }`).join(", ")}] })` : listCall(tool, ids, "ids")),
+      },
+      async (item) => {
+        try {
+          return await act(item)
+        } catch (error) {
+          throw stopped(error, stop, true)
+        }
+      },
+    )
+  }
 
   /**
    * The list tools: `works`, a single `workId`, or a `select` the registry resolved (and asserted) into `call.matched`;
@@ -41,7 +71,7 @@ export function sessionRuns(services: FleetServices): { readonly runs: SessionRu
     tool: SelectTool | "boxd_submit",
     shorthand: boolean,
     check: (input: Record<string, unknown>) => I,
-    act: (item: I, context: ItemContext) => Promise<T>,
+    act: (item: I, context: WorkContext) => Promise<T>,
   ): Run<T> {
     return async (input, call) => {
       const context = toolContext(tool, call)
@@ -51,11 +81,11 @@ export function sessionRuns(services: FleetServices): { readonly runs: SessionRu
         if (!ids) throw new Error(`${tool} ran a select without the ids the registry matched and asserted.`)
         if (input.dryRun === true) return matches(ids, input.select as ListResult<T>["select"], seen.take(call.id) ?? (await factsOf(services, context.op)))
         const items = ids.map((workId) => check({ workId }))
-        return { ...(await runList(items, call.signal, (item) => act(item, context))), select: input.select as ListResult<T>["select"] }
+        return { ...(await listOf(tool, items, call.signal, (item) => act(item, context))), select: input.select as ListResult<T>["select"] }
       }
       if (input.works !== undefined) {
         const items = listItems(input.works, shorthand, check)
-        return runList(items, call.signal, (item) => act(item, context))
+        return listOf(tool, items, call.signal, (item) => act(item, context))
       }
       const item = check(input)
       return single(call, true, () => act(item, context))
@@ -91,15 +121,15 @@ export function sessionRuns(services: FleetServices): { readonly runs: SessionRu
   const selectors: Selectors = { boxd_sleep: selectTool("boxd_sleep"), boxd_harvest: selectTool("boxd_harvest"), boxd_drop: selectTool("boxd_drop") }
 
   /** Package E's in-process actions: pre-authorised by its caller, through the same code as the tools. */
-  const actionContext = (context: ActionContext): ItemContext => ({ op: { call: context.call, ...(context.signal ? { signal: context.signal } : {}) }, by: context.by })
+  const actionContext = (context: ActionContext): WorkContext => ({ op: { call: context.call, ...(context.signal ? { signal: context.signal } : {}) }, by: context.by })
   const actions: FleetActions = {
     match: async (tool, select, context) => match(tool, select, await factsOf(services, actionContext(context).op)),
     harvest: (workIds, context): Promise<ListResult<HarvestResult>> =>
-      runList(workIds.map((workId) => checkHarvest({ workId })), context.signal, (item) => harvestWork(services, item, actionContext(context))),
+      listOf("boxd_harvest", workIds.map((workId) => checkHarvest({ workId })), context.signal, (item) => harvestWork(services, item, actionContext(context))),
     sleep: (workIds, context): Promise<ListResult<SleepResult>> =>
-      runList(workIds.map((workId) => sleepCheck({ workId })), context.signal, (item) => sleepWork(services, item, actionContext(context))),
+      listOf("boxd_sleep", workIds.map((workId) => sleepCheck({ workId })), context.signal, (item) => sleepWork(services, item, actionContext(context))),
     drop: (workIds, context): Promise<ListResult<DropResult>> =>
-      runList(workIds.map((workId) => checkDrop({ workId })), context.signal, (item) => dropWork(services, item, actionContext(context))),
+      listOf("boxd_drop", workIds.map((workId) => checkDrop({ workId })), context.signal, (item) => dropWork(services, item, actionContext(context))),
   }
 
   return { runs, selectors, actions }

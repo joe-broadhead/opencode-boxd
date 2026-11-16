@@ -8,13 +8,13 @@ import { BoxdError } from "../errors.js"
 import type { SleptBy, WorkRecord } from "../ledger/types.js"
 import type { ChangeTarget, OpContext } from "../ports.js"
 import type { SleepResult } from "../results.js"
-import { machineOf, nowIso, openRecord, withTarget, withWarning, type ItemContext, type Services } from "./sessions-common.js"
+import { machineOf, nowIso, openRecord, withTarget, withWarning, type WorkContext, type Services } from "./sessions-common.js"
 
 export interface SleepItem {
   readonly workId: string
 }
 
-export async function sleepWork(services: Services, item: SleepItem, context: ItemContext): Promise<SleepResult> {
+export async function sleepWork(services: Services, item: SleepItem, context: WorkContext): Promise<SleepResult> {
   const { op } = context
   const by: SleptBy = context.by === "automation" ? "automation" : "boxd_sleep"
   return services.ledger.update(

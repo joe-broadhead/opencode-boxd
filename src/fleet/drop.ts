@@ -18,7 +18,7 @@ import type { WorkRecord } from "../ledger/types.js"
 import { digestFile } from "../paths.js"
 import { REGIONS, type ChangeTarget, type GitAnswer, type MachineId, type MachineName, type OpContext } from "../ports.js"
 import type { DropResult } from "../results.js"
-import { adoptIfV0, assertWorkIdInput, nowIso, openRecord, optionalBoolean, type ItemContext, type Services } from "./sessions-common.js"
+import { adoptIfV0, assertWorkIdInput, nowIso, openRecord, optionalBoolean, type WorkContext, type Services } from "./sessions-common.js"
 
 /** The most paths a refusal names for a program (`paths`); `count` has them all. */
 const LISTED_PATHS = 20
@@ -35,7 +35,7 @@ export function checkDrop(input: Record<string, unknown>): DropItem {
 /** Not-found, and only that: the gone rule's one fact per region. */
 const notFound = (error: unknown) => error instanceof BoxdError && error.code === "BOXD_FAILED" && error.details.kind === "missing"
 
-export async function dropWork(services: Services, item: DropItem, context: ItemContext): Promise<DropResult> {
+export async function dropWork(services: Services, item: DropItem, context: WorkContext): Promise<DropResult> {
   // Nothing automatic ever drops (design §C.3): a defence beside package E's own rule, not a refusal a person sees.
   if (context.by === "automation") throw new Error("boxd_drop is never run by automation.")
   const { op } = context
