@@ -30,8 +30,9 @@ run("git", ["init", "--quiet", work], root)
 afterAll(() => rmSync(work, { recursive: true, force: true }), { timeout: 120_000 })
 
 const MAX_FILES = 30
-// The v0.1.0 redesign's runner, ledger, import and guest v1; still catches an accidentally bundled dependency. Re-checked at integration.
-const MAX_PACKED_BYTES = 160 * 1024
+// The v0.1.0 redesign's runner, ledger, import and guest v1, with the machine runs, the fleet view, the watcher and cost
+// (about 169 KB packed with C1, D and E); still catches an accidentally bundled dependency. Re-checked at integration.
+const MAX_PACKED_BYTES = 192 * 1024
 const DIST = ["dist/index.js", "dist/tui.js"]
 const SERVER_HOST_MODULES = [/^node:/, /^@opencode\/plugin(?:\/|$)/]
 const TUI_HOST_MODULES = [/^node:/, /^@opencode\/plugin(?:\/|$)/, /^@opentui\//, /^solid-js(?:\/|$)/]
