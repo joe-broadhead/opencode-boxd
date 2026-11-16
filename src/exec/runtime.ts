@@ -1,17 +1,34 @@
 /**
- * Package A's entry (design §9.1): the runner, the boxd CLI port, the guest port and the laptop port. Package A owns
- * this file, `src/exec/*`, `src/boxd/*`, `src/guest/*` and `guest/guest.py`. `src/plugin.ts` calls `createRuntime` once.
+ * Package A's entry (design §4.1, §9.1): the one runner, the boxd CLI port on it, the guest port on that, and the
+ * laptop port. Package A owns this file, `src/exec/*`, `src/boxd/*`, `src/guest/*` and `guest/guest.py`;
+ * `src/plugin.ts` calls `createRuntime` once. Every child process the plugin starts goes through this runner, so its
+ * caps hold across every tool call, the watcher and the automation at once. `dispose()`, which the plugin calls last
+ * on disposal or reload, drops every queued child and kills every running one, a long `boxd_exec` included; the ports
+ * hold no timer of their own.
  */
-import type { BoxdPort, GuestPort, LaptopPort, Runner } from "../ports.js"
-import { notBuilt, type HostServices, type Runtime } from "../services.js"
+import type { HostServices, Runtime } from "../services.js"
+import { createBoxdCli } from "../boxd/cli.js"
+import { createGuestPort } from "../guest/port.js"
+import { createLaptopPort } from "./laptop.js"
+import { createRunner, type Launch, type PluginRunner } from "./runner.js"
 
-export function createRuntime(_host: HostServices): Runtime {
-  return {
-    runner: notBuilt<Runner>("runner"),
-    boxd: notBuilt<BoxdPort>("boxd"),
-    guest: notBuilt<GuestPort>("guest"),
-    laptop: notBuilt<LaptopPort>("laptop"),
-    // Package A: await runner.dispose(), then stop the ports' timers and caches.
-    dispose: async () => {},
-  }
+/** What a test may swap: the process launcher, the helper to upload, and the laptop's own `opencode`. */
+export interface RuntimeSeam {
+  readonly launch?: Launch
+  readonly helperPath?: string
+  /** The laptop's `opencode`, over the one the plugin resolved from the server's PATH. */
+  readonly opencodeBin?: string
+}
+
+export interface PluginRuntime extends Runtime {
+  readonly runner: PluginRunner
+}
+
+export function createRuntime(host: Pick<HostServices, "boxdBin"> & Partial<Pick<HostServices, "opencodeBin">>, seam: RuntimeSeam = {}): PluginRuntime {
+  const runner = createRunner(seam.launch ? { launch: seam.launch } : {})
+  const boxd = createBoxdCli({ runner, bin: host.boxdBin })
+  const guest = createGuestPort({ boxd, runner, ...(seam.helperPath ? { helperPath: seam.helperPath } : {}) })
+  const opencodeBin = seam.opencodeBin ?? host.opencodeBin
+  const laptop = createLaptopPort({ runner, ...(opencodeBin ? { bin: opencodeBin } : {}) })
+  return { runner, boxd, guest, laptop, dispose: () => runner.dispose() }
 }

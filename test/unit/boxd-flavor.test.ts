@@ -1,12 +1,17 @@
-// The boxd CLI that runs inside a boxd machine takes `--vm <name>` where the laptop CLI takes the machine as an
-// argument. The plugin refuses it up front, from `--help`, instead of failing command by command and ending as
-// a refusal it cannot explain. The fakes below log every call, so a test sees that nothing but `--help` ran.
+// The boxd CLI that runs inside a boxd machine acts in its own region only and takes other arguments. The plugin
+// refuses it up front, from `--help`, through the runner and once per binary (F9), instead of failing command by
+// command. The fakes below log every call, so a test sees that nothing but `--help` ran.
 import { afterAll, describe, expect, test } from "bun:test"
 import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { assertLaptopCli } from "../../src/cli-flavor.js"
+import { assertLaptopCli as check } from "../../src/boxd/flavor.js"
+import { createRunner } from "../../src/exec/runner.js"
 import { BoxdError } from "../../src/errors.js"
+
+const runner = createRunner()
+afterAll(() => runner.dispose())
+const assertLaptopCli = (bin: string) => check(bin, runner, { call: { callId: "call_flavor", source: "boxd_status" } })
 
 const dir = mkdtempSync(join(realpathSync(tmpdir()), "boxd-flavor-"))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
@@ -87,15 +92,15 @@ describe("the boxd CLI the plugin finds on the PATH", () => {
       expect(error).toBeInstanceOf(BoxdError)
       expect((error as BoxdError).code).toBe("BOXD_MISSING")
       expect((error as BoxdError).what).toBe(
-        "The boxd CLI on the PATH is the one that runs inside a boxd machine. This plugin drives remote machines from the laptop's boxd CLI, and the in-VM CLI is not supported.",
+        "The boxd CLI on the PATH is the one that runs inside a boxd machine. This plugin drives machines in every region from the laptop's boxd CLI, and the in-VM CLI is not supported.",
       )
     }
     expect(new Set(calls())).toEqual(new Set(["--help"]))
   })
 
-  test("the laptop CLI passes, and its flavour is read once", async () => {
+  test("the laptop CLI passes, and its flavour is read once, by one flight for concurrent callers", async () => {
     const { bin, calls } = fakeCli("laptop", "laptop")
-    await assertLaptopCli(bin)
+    await Promise.all([assertLaptopCli(bin), assertLaptopCli(bin), assertLaptopCli(bin)])
     await assertLaptopCli(bin)
     expect(calls().filter((line) => line === "--help")).toHaveLength(1)
   })
