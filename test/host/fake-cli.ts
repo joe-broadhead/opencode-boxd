@@ -1,10 +1,11 @@
 // The test side of `fake-boxd.mjs`: one folder with the fake laptop `boxd` and `opencode`, the fake guest's own
 // `opencode`, the state file, and the machine disks. A test seeds machines, snapshots, limits and faults, and reads
 // back the calls, the spawns and what changed. Unit tests, the host harness and the spawn-count harness share it.
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { acquire as acquireLock, release as releaseLock } from "./fake-lock.mjs"
 
 export type FakeRegion = "fra" | "nyc"
 
@@ -147,22 +148,14 @@ export function startFakeCli(options: { readonly dir?: string; readonly version?
   /** The same lock the fake binaries take, so a test's change never races a running call. */
   const update = (change: (state: FakeState) => void) => {
     const lock = `${statePath}.lock`
-    for (let tries = 0; ; tries++) {
-      try {
-        mkdirSync(lock)
-        break
-      } catch {
-        if (tries > 4000) throw new Error("the fake boxd state lock was not released")
-        Bun.sleepSync(2)
-      }
-    }
+    acquireLock(lock)
     try {
       const state = read()
       change(state)
       writeFileSync(`${statePath}.test.tmp`, JSON.stringify(state))
       renameSync(`${statePath}.test.tmp`, statePath)
     } finally {
-      rmdirSync(lock)
+      releaseLock(lock)
     }
   }
   const disk = (machine: FakeMachine | string) => join(root, typeof machine === "string" ? machine : machine.id)

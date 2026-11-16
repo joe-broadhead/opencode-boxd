@@ -3,7 +3,7 @@
 // harvest (F1, the last good export, partial, git), drop's guard against the guest and the gone rule, acting by id,
 // sleep, exec's own pool and quoting, read's read rule, the list forms, the selectors, package E's actions, Stop, and
 // the spawn budget rows of §4.4.
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test"
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { BoxdError, boxdError } from "../../src/errors.js"
@@ -23,6 +23,10 @@ import type { FakeMachine } from "../host/fake-cli.js"
 import { startSpawnCounter, type CountingFake } from "../host/spawn-counter.js"
 import { budgetProblems, SPAWN_BUDGETS, type BudgetRow } from "../support/spawn-count.js"
 import { removeRoot, tempRoot } from "../support/ledger-fakes.js"
+
+// bun's default of 5 s per test is shorter than some of these take on a loaded machine; a test cut short leaves its
+// calls running into the next test's fakes.
+setDefaultTimeout(60_000)
 
 const VERSION = "2.2.6"
 let guest: FakeGuest
@@ -988,7 +992,7 @@ describe("the read rule under load", () => {
     expect(await errorOf(flaky.boxd_read({ workId: "stale-read", path: "notes.md" }, call()))).toMatchObject({ code: "TIMEOUT", state: "unreachable", details: { kind: "listing-stale" } })
   })
 
-  test("saturation: three harvest lists of 16 and 48 reads at about 1 s per CLI call; no read or harvest fails on the read rule", async () => {
+  test("saturation: three harvest lists of 16 and 48 reads at about 1 s per CLI call; every harvest saves, and no read fails on the read rule", async () => {
     const ids = Array.from({ length: 48 }, (_, index) => `sat${index}`)
     for (const id of ids) writeFileSync(join(treeOf(await ranWork(id), id), "notes.md"), "hello\n")
     counter.fake.update((state) => void (state.latencyMs = [800, 1100]))
@@ -996,12 +1000,9 @@ describe("the read rule under load", () => {
     const reads = ids.map((id) => runs.boxd_read({ workId: id, path: "notes.md" }, call()).catch((error: unknown) => error))
     const harvested = (await Promise.all(lists)).flatMap((answer) => (answer as unknown as { results: Array<{ state: string; error?: string; message?: string }> }).results)
     const answers = await Promise.all(reads)
-    // A harvest makes no read exec: its export checks idleness itself, so the read rule cannot refuse it. At this load
-    // a fake CLI call can still fail for its own reasons; a harvest that did not save then left saved as it was.
-    const readRule = /listing at most|read never wakes/
-    expect(harvested.filter((item) => item.state !== "saved" && readRule.test(item.message ?? ""))).toEqual([])
-    for (const [index, item] of harvested.entries()) if (item.state !== "saved") expect(ledger.saved((await record(ids[index]!))!)).not.toBe("fresh")
-    expect(harvested.filter((item) => item.state === "saved").length).toBeGreaterThan(harvested.length * 0.9)
+    // Every harvest saves: its export checks idleness itself (no read exec), and the fake CLI's lock waits by time, so
+    // a slow machine delays a call and never fails it. A failure shows its code and message here.
+    expect(harvested.map((item) => (item.state === "saved" ? "saved" : `${item.error}: ${item.message}`))).toEqual(ids.map(() => "saved"))
     // A read the read rule refused is retried on a fresh listing; one that still cannot be made is a TIMEOUT to retry,
     // never BOXD_FAILED. (How many succeed at this load is the runner's: its refresh at dequeue is package D's.)
     for (const answer of answers) {
@@ -1009,4 +1010,32 @@ describe("the read rule under load", () => {
       else expect(answer).toMatchObject({ state: "read", text: "hello\n" })
     }
   }, 600_000)
+})
+
+describe("the fake CLI's own lock", () => {
+  // Before the fake waited by time, a waiter gave up after about 8 s of spinning. A holder slowed that long by a disk
+  // stall (other checks on the same machine) failed the next calls: a harvest answered BOXD_FAILED, "the fake boxd state
+  // lock was not released", with the state unreachable, while the plugin itself was right.
+  test("a lock holder stalled for 12 s, as by a disk stall, delays a harvest and fails nothing", async () => {
+    await ranWork("stall")
+    const lock = `${counter.fake.statePath}.lock`
+    mkdirSync(lock)
+    writeFileSync(join(lock, "owner"), String(process.pid))
+    const released = Bun.sleep(12_000).then(() => rmSync(lock, { recursive: true, force: true }))
+    const answer = await runs.boxd_harvest({ workId: "stall" }, call())
+    await released
+    expect(answer).toMatchObject({ state: "saved" })
+    expect(ledger.saved((await record("stall"))!)).toBe("fresh")
+  }, 120_000)
+
+  test("a lock left by a holder that died mid-write is taken over at once", async () => {
+    await ranWork("orphaned-lock")
+    const dead = Bun.spawnSync(["sh", "-c", "echo $$"]).stdout.toString().trim()
+    const lock = `${counter.fake.statePath}.lock`
+    mkdirSync(lock)
+    writeFileSync(join(lock, "owner"), dead)
+    const started = Date.now()
+    expect(await runs.boxd_harvest({ workId: "orphaned-lock" }, call())).toMatchObject({ state: "saved" })
+    expect(Date.now() - started).toBeLessThan(10_000)
+  })
 })
