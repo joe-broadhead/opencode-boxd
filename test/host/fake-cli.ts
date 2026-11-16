@@ -60,6 +60,8 @@ export interface FakeState {
   latencyMs?: [number, number]
   /** The listing carries machine ids (upstream ask U14). */
   listIds?: boolean
+  /** `machine new --json` answers with this name instead of the one asked for: a create the plugin must not brand. */
+  createAnswersName?: string
   /** `--help` answers as the in-VM CLI. */
   inVm?: boolean
   /** A resize leaves the VM agent silent until a reboot (#14 §6). */

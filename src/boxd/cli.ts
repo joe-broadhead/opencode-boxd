@@ -120,7 +120,8 @@ export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
   async function get(region: Region, nameOrId: string, context: OpContext): Promise<FetchedMachine> {
     const result = await cli(getArgs(region, nameOrId), context, TIMEOUTS.cliRead, { machine: nameOrId, region })
     const info = parseMachine(parseJson(result.stdout, "boxd machine get"), region, "boxd machine get")
-    return ownsLabels(info) ? { ...info, owned: owned(info) } : info
+    // A claim by labels, for adopting a work with no recorded id only; never for a shared or isolated machine.
+    return ownsLabels(info) && info.sharing === "private" && !info.isolated ? { ...info, owned: owned(info) } : info
   }
 
   /**
@@ -215,6 +216,10 @@ export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
         throw error
       }
       const created = parseCreated(parseJson(result.stdout, "boxd machine new"), "boxd machine new")
+      if (created.name !== input.name) {
+        // Never brand a machine boxd named differently: nothing is recorded, and the next ensure finds what landed.
+        throw boxdError("BOXD_FAILED", `boxd machine new ${input.name} in ${input.region} answered for machine ${created.name}. Nothing was recorded.`, { machine: input.name, region: input.region })
+      }
       listing = undefined
       // `machine new --json` names the machine and its id only. A create never asks for --shared or --isolated, so the
       // machine is private and not isolated; its labels are the ones set here, merged over the image's.

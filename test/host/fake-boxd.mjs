@@ -286,7 +286,8 @@ switch (verb) {
       if (!existsSync(join(root, ".opencode-version"))) writeFileSync(join(root, ".opencode-version"), `${state.version}\n`)
       return machine
     })
-    out({ boot: "11ms", id: created.id, name: created.name, paused_automations: 0, source: created.source, url: `${created.name}.boxd.sh` })
+    const answered = read().createAnswersName ?? created.name
+    out({ boot: "11ms", id: created.id, name: answered, paused_automations: 0, source: created.source, url: `${answered}.boxd.sh` })
     break
   }
   case "machine wake":

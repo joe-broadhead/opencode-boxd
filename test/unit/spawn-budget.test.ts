@@ -134,8 +134,8 @@ describe("the steady-state sequences fit their rows", () => {
     const info = await runtime.runner.withMachineLock({ create: { region: "fra", name: "oc-fresh" } }, context(call), () =>
       runtime.boxd.create({ kind: "work", region: "fra", name: "oc-fresh", workId: "fresh", image: "oc-golden-2.2.6-2x8", autoSuspendSeconds: 0, autoHibernateSeconds: 7200 }, context(call, "boxd_ensure")),
     )
-    // Right after a create the plugin holds the id boxd gave; the by-id check is not repeated in the same call.
-    const target = { region: "fra", name: "oc-fresh", machineId: info.id, checkedAt: Date.now() } as unknown as ChangeTarget
+    // The create hands back its own target for the id boxd gave; the by-id check is not repeated in the same call.
+    const target = info.owned.target
     const setup = await runtime.runner.withMachineLock({ id: info.id }, context(call), () => runtime.guest.setup(target, { directory: "/home/boxd/work/fresh", opencode: "2.2.6" }, context(call, "boxd_ensure")))
     expect(setup).toMatchObject({ server: "up", workspace: "ready", helperUploaded: false })
     // The wait's serve poll is a read: it needs a listing at most 2 s old that holds the new machine.

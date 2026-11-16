@@ -80,10 +80,14 @@ export interface Owned {
 }
 
 /**
- * A machine this process just read, with `owned` when it is provably ours: its labels carry the plugin's ownership
- * (`owner=opencode-boxd`, or v0's `role=session` with `work=<id>` matching `oc-<id>`). Saves the second `get` a
- * `checkOwned` would spend. Without those labels there is no `owned`: adopting it (`adopt: true`) goes through
- * `checkOwned` with the id this `get` read.
+ * A machine this process just read, with `owned` when its labels carry the plugin's ownership (`owner=opencode-boxd`,
+ * or v0's `role=session` with `work=<id>` matching `oc-<id>`) and it is private and not isolated. Labels are a claim,
+ * not a proof: anyone in the organisation can set them, and another laptop's plugin sets the same ones. So `owned` is
+ * **only for adopting a work that has no recorded `machineId`** (design §3.4 step 2), where there is no record to
+ * compare with. A work with a recorded `machineId` must use `checkOwned`, or compare `owned.target.machineId` with the
+ * record and refuse `NOT_OURS` on a difference. A shared or isolated machine never carries `owned`, so
+ * `MACHINE_SHARED` and `MACHINE_ISOLATED` cannot be skipped through it; one without the labels is adopted only with
+ * `adopt: true`, through `checkOwned` with the id this `get` read.
  */
 export type FetchedMachine = MachineInfo & { readonly owned?: Owned }
 /** A machine this process just made: `owned` targets the id `machine new --json` answered. */
@@ -307,9 +311,14 @@ export interface ReadTarget {
 
 declare const changeTargetBrand: unique symbol
 /**
- * A change's target: the name resolved to the recorded id by a `machine get` in this call, under the machine lock.
- * Branded: only `BoxdPort.checkOwned` makes one (package A casts there and nowhere else), so a change can never act on
- * a target built by hand, or on whatever now holds the name.
+ * A change's target. Branded, and made in one place in package A's CLI port, by three calls only, each with its own
+ * proof:
+ * - `checkOwned`: the name resolved to the **recorded** id by a `machine get` in this call (design §4.1, H2). The only
+ *   maker for a work that has a recorded `machineId`.
+ * - `create`: the id `machine new --json` answered for the machine this process just made, under that name.
+ * - `get` (`FetchedMachine.owned`): a private, non-isolated machine whose labels show the plugin's ownership. A claim,
+ *   so only for adopting a work with no recorded `machineId` (see `FetchedMachine`).
+ * Nothing else can build one, so a change never acts on a target built by hand, or on whatever now holds the name.
  */
 export type ChangeTarget = {
   readonly region: Region
@@ -512,6 +521,10 @@ export interface PromptAnswer {
  * `export`, with its own busy check in the same exec (no phase read first): a running tree answers `busy` with the
  * reason and writes nothing, unless the call is `partial`. Otherwise each session of the tree is written to
  * `~/.opencode-boxd/exports/<id>.json` on the guest, with its marks, and the root's last run (`run`) comes back too.
+ */
+/*
+ * A harvest records `saved.complete = !input.partial && !answer.busy` (design §3.6): a partial harvest, or an export
+ * of a tree that was or became running, is a copy, never "saved", so drop still refuses.
  */
 export type ExportAnswer =
   | {
