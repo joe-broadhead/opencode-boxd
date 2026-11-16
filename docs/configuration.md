@@ -37,8 +37,8 @@ All options go in the plugin entry in `opencode.json`, and every one is optional
 | `idleCheck` | `true` | The end-of-turn check that speaks only when money burns and automation will not act; `false` turns it off. |
 
 An unknown option, a value out of its range, or a removed option stops the plugin with `OPTIONS_INVALID`; OpenCode's
-plugin list shows why. The option `snapshot` is gone: a golden image is built by the plugin, from stock or from
-`goldenBase`.
+plugin list shows why. The option `snapshot` is gone: a golden image is built by the plugin from stock. Remove
+`snapshot`; set `goldenBase` only to build on a hand-made base without model credentials.
 
 The plugin is tested on 2.2.3, 2.2.4, 2.2.5, 2.2.6, 2.2.7 and 2.3.0. Inside `>=2.2.3 <2.4.0` a release that was not tested, such as 2.2.99, still starts: status marks the version `untested`
 and the next step is the same as on a tested release. Outside the range the plugin does not start unless

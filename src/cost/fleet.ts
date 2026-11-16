@@ -9,8 +9,8 @@
  * |---|---|---|
  * | `boxd_sleep` | `idle` | running works whose phase is `idle` or `ready`, not waiting on a person |
  * | `boxd_sleep` | `finished` | `idle` works whose last run has an outcome, not waiting on a person |
- * | `boxd_harvest` | `unsaved-finished` | finished works (running or asleep) whose `saved` is not `fresh` |
- * | `boxd_drop` | `saved-finished` | works with `saved: fresh` and outcome `completed`, running or asleep, not busy |
+ * | `boxd_harvest` | `unsaved-finished` | finished works (running or asleep) whose `saved` is not `fresh`, or whose laptop copy is unverified |
+ * | `boxd_drop` | `saved-finished` | works with `saved: fresh` and outcome `completed`, running or asleep, not busy, laptop copy not unverified |
  */
 import type { Rates, WorkSnapshot } from "../ports.js"
 import type { CleanupAction } from "../results.js"
@@ -28,9 +28,10 @@ export function matches(select: SelectName, work: WorkSnapshot): boolean {
     case "finished":
       return work.phase === "idle" && work.outcome !== null && notWaiting(work)
     case "unsaved-finished":
-      return (work.phase === "idle" || work.phase === "asleep") && work.outcome !== null && work.saved !== "fresh"
+      return (work.phase === "idle" || work.phase === "asleep") && work.outcome !== null && (work.saved !== "fresh" || work.laptopCopy === "unverified")
     case "saved-finished":
-      return work.saved === "fresh" && work.outcome === "completed" && work.phase !== "busy" && (isRunning(work.phase) || work.phase === "asleep")
+      // A v0-imported work whose laptop copy is unverified (F1) is never dropped until a harvest verifies it.
+      return work.saved === "fresh" && work.outcome === "completed" && work.phase !== "busy" && (isRunning(work.phase) || work.phase === "asleep") && work.laptopCopy !== "unverified"
   }
 }
 
@@ -78,8 +79,13 @@ export function suggestions(works: readonly WorkSnapshot[], rates: Rates): Clean
   const out = [...sleeps]
   const unsaved = of("unsaved-finished")
   if (unsaved.length) {
-    const noun = unsaved.length === 1 ? "work is" : "works are"
-    out.push({ action: "harvest", select: "unsaved-finished", works: unsaved.length, why: `${unsaved.length} finished ${noun} not saved; drop needs a harvest`, call: call("boxd_harvest", "unsaved-finished") })
+    const imported = unsaved.filter((work) => work.saved === "fresh").length
+    const rest = unsaved.length - imported
+    const parts = [
+      ...(rest ? [`${rest} finished ${rest === 1 ? "work is" : "works are"} not saved`] : []),
+      ...(imported ? [`${imported} imported ${imported === 1 ? "work's laptop copy is" : "works' laptop copies are"} unverified`] : []),
+    ]
+    out.push({ action: "harvest", select: "unsaved-finished", works: unsaved.length, why: `${parts.join(", and ")}; drop needs a harvest`, call: call("boxd_harvest", "unsaved-finished") })
   }
   const saved = of("saved-finished")
   if (saved.length) out.push({ action: "drop", select: "saved-finished", works: saved.length, savesPerDay: money(saved.reduce((sum, work) => sum + workPerHour(work, rates), 0) * 24), call: call("boxd_drop", "saved-finished") })

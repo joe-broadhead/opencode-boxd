@@ -434,6 +434,7 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
           phase,
           outcome: outcomeOf(record, obs),
           saved: core.ledger.saved(record),
+          ...(record.laptopCopy ? { laptopCopy: record.laptopCopy } : {}),
           ...(obs?.needsInput ? { needsInput: obs.needsInput } : {}),
           ...(obs?.reading ? { reading: obs.reading } : {}),
           ...((phase === "idle" || phase === "ready") && obs?.since ? { idleSince: obs.since } : {}),

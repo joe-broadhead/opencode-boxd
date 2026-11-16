@@ -13,9 +13,10 @@ options and the guest helper all change. Works that ran on v0.0.x are imported, 
 
 **Upgrading from v0.0.6.** Remove the old entry and add the new tag:
 `opencode plugin remove github:joe-broadhead/opencode-boxd#v0.0.6`, then
-`opencode plugin add github:joe-broadhead/opencode-boxd#v0.1.0`. If you set the option `snapshot`, rename it to
-`goldenBase` first: a left-over `snapshot` stops the plugin with `OPTIONS_INVALID`, which names the replacement. Keep
-the boxd CLI signed in: the import below needs it.
+`opencode plugin add github:joe-broadhead/opencode-boxd#v0.1.0`. If you set the option `snapshot`, remove it first:
+remove `snapshot` (images are now built from stock); set `goldenBase` only to build on a hand-made base without model
+credentials. A left-over `snapshot` stops the plugin with `OPTIONS_INVALID`. Keep the boxd CLI signed in: the import
+below needs it.
 
 **What the first start does.** It imports the v0 ledger, `~/.local/share/opencode-boxd/works/`, once into a new
 `~/.local/share/opencode-boxd/v1/`:
@@ -40,7 +41,10 @@ the boxd CLI signed in: the import below needs it.
   `README.md` that says the works moved and when going back is safe. It is a folder, not a file, so v0.0.6 skips it.
 - **After the import.** A laptop copy of a transcript harvested twice under v0 may be the older one (F1): every imported
   work with a harvest is marked as an unverified laptop copy, `boxd_status` lists them under `laptop-copy`, and
-  `boxd_harvest({ works })` replaces them in one call. A running v0 machine keeps running, busy or not: reads use its
+  `boxd_harvest({ works })` replaces them in one call. **Harvest imported works before dropping them:** until a
+  harvest has verified its laptop copy, `boxd_drop` refuses such a work (`NOT_SAVED`, next `boxd_harvest`),
+  `select: "saved-finished"` skips it, `select: "unsaved-finished"` takes it, and `/boxd-cleanup` offers it under
+  "Harvest imported works first", never under the drop. A running v0 machine keeps running, busy or not: reads use its
   own v0 helper, read-only, and the first change tool for it copies its server password to `~/.opencode-boxd/`. A v0
   machine whose `/tmp` a reboot cleared answers `GUEST_FAILED` until `boxd_ensure({ workId })` sets it up again.
 
@@ -55,8 +59,9 @@ its idle timeout (2 h by default), and `boxd machine remove oc-<work id> -y` des
 upgrading again uses it as it is and imports nothing new, so a work v0.0.6 created after the rollback is not in it.
 
 **Renamed and removed, at a glance.** The tool `boxd_image` is gone; `boxd_golden` builds images instead, and never
-saves a work's machine. The option `snapshot` is now `goldenBase`. Inputs and fields: `vcpu` is `size`, `queued` is
-`delivery`, `pending` is `waiting`, `proof` is `saved`; the phases `empty` and `missing` are gone. The codes
+saves a work's machine. The option `snapshot` is removed: images are now built from stock, and `goldenBase` is only
+the hand-made base a build may start from. Inputs and fields: `vcpu` is `size`, `queued` is `delivery`, `pending` is
+`waiting`, `proof` is `saved`; the phases `empty` and `missing` are gone. The codes
 `NOT_PROVEN`, `SNAPSHOT_MISSING`, `GUEST_RUN_FAILED`, `PARENT_MISSING` and `SNAPSHOT_EXISTS` are renamed or gone, as
 below. The details:
 
@@ -90,7 +95,7 @@ below. The details:
 - **By id.** Every change acts on the machine id the ledger recorded; a name that now points at another machine is
   refused with `NOT_OURS`, and no adoption takes a machine another open work records, even with `adopt: true`. A
   machine counts as gone only when a fresh all-region listing and a `get` of the recorded id find it nowhere.
-- **Golden images.** The option `snapshot` is gone (now `goldenBase`); images are built by the plugin from a recipe,
+- **Golden images.** The option `snapshot` is gone (`goldenBase` is only a build's base); images are built by the plugin from a recipe,
   per region and size, and named `<goldenPrefix>-<opencode version>-<size>`. `boxd_golden` never saves a work's machine,
   so `boxd_image`'s path is gone.
 - **Model credentials are never baked into an image.** A base that holds `auth.json` is refused

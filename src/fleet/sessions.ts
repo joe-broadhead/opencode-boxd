@@ -191,8 +191,9 @@ function ledgerPhase(record: WorkRecord): Phase {
 const MATCHERS: { readonly [K in SelectTool]: (select: SelectorValues[K], facts: Facts) => boolean } = {
   boxd_sleep: (select, facts) =>
     select === "idle" ? facts.row?.status === "running" && (facts.phase === "idle" || facts.phase === "ready") && !facts.needsInput : facts.row?.status === "running" && facts.phase === "idle" && facts.outcome !== null,
-  boxd_harvest: (_select, facts) => (facts.phase === "idle" || facts.phase === "asleep") && facts.outcome !== null && facts.saved !== "fresh",
-  boxd_drop: (_select, facts) => (facts.phase === "idle" || facts.phase === "asleep") && facts.saved === "fresh" && facts.outcome === "completed",
+  // A v0-imported work whose laptop copy no v1 harvest has verified (F1) is harvested, and never dropped, until one has.
+  boxd_harvest: (_select, facts) => (facts.phase === "idle" || facts.phase === "asleep") && facts.outcome !== null && (facts.saved !== "fresh" || facts.record.laptopCopy === "unverified"),
+  boxd_drop: (_select, facts) => (facts.phase === "idle" || facts.phase === "asleep") && facts.saved === "fresh" && facts.outcome === "completed" && facts.record.laptopCopy !== "unverified",
 }
 
 /** The ids a selector matches in these facts, in work-id order. */

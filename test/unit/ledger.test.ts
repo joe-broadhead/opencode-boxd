@@ -26,6 +26,12 @@ async function emptyLedger(options: ConstructorParameters<typeof Ledger>[1] = {}
   return new Ledger(root, options)
 }
 
+/**
+ * Every test that calls `emptyLedger` runs a full `runImport`, with its fsyncs: bun's 5 s default is too short on a
+ * loaded machine, and a test cut short leaves its import running into the root `afterEach` deletes.
+ */
+const LEDGER_TEST_TIMEOUT_MS = 30_000
+
 const record = (workId: string, over: Partial<WorkRecord> = {}): WorkRecord => ({
   format: 1,
   workId,
@@ -78,7 +84,7 @@ describe("records", () => {
     await runImport({ root, boxd: fakeImportBoxd() })
     expect(existsSync(join(root, "v1", "complete"))).toBe(true)
     expect(new Ledger(root).dir).toBe(join(root, "v1"))
-  })
+  }, LEDGER_TEST_TIMEOUT_MS)
 
   test("mutate writes a new file each time, 0600 in 0700 folders, and leaves no temp file", async () => {
     const ledger = await emptyLedger()
@@ -93,7 +99,7 @@ describe("records", () => {
     expect(statSync(path).ino).not.toBe(before.ino)
     expect(readdirSync(ledger.workDir("alpha"))).toEqual(["work.json"])
     expect((await ledger.get("alpha"))?.model).toBe("anthropic/claude-sonnet-4-5")
-  })
+  }, LEDGER_TEST_TIMEOUT_MS)
 
   test("copy-on-write: a hard link to the record keeps the old bytes", async () => {
     const ledger = await emptyLedger()
@@ -104,7 +110,7 @@ describe("records", () => {
     await ledger.mutate("alpha", (current) => current && { ...current, title: "changed" })
     expect(readFileSync(link)).toEqual(old)
     expect(JSON.parse(readFileSync(ledger.recordPath("alpha"), "utf8")).title).toBe("changed")
-  })
+  }, LEDGER_TEST_TIMEOUT_MS)
 
   test("a crash between the temp write and the rename leaves the old record; the temp file is swept", async () => {
     const ledger = await emptyLedger()
@@ -119,7 +125,7 @@ describe("records", () => {
     expect((await fresh.list()).map((item) => item.title)).toEqual(["old"])
     await fresh.sweepTemps("alpha")
     expect(existsSync(temp)).toBe(false)
-  })
+  }, LEDGER_TEST_TIMEOUT_MS)
 
   test("a recipe that throws or returns undefined writes nothing, and a lock for a work never written leaves no folder", async () => {
     const ledger = await emptyLedger()
@@ -127,13 +133,13 @@ describe("records", () => {
     expect(await ledger.mutate("beta", () => undefined)).toBeUndefined()
     expect(existsSync(ledger.workDir("alpha"))).toBe(false)
     expect(existsSync(ledger.workDir("beta"))).toBe(false)
-  })
+  }, LEDGER_TEST_TIMEOUT_MS)
 
   test("a record for another id or format is refused", async () => {
     const ledger = await emptyLedger()
     await expect(ledger.mutate("alpha", () => record("beta"))).rejects.toThrow(/LEDGER_FAILED/)
     await expect(ledger.mutate("Bad_Id", () => record("Bad_Id"))).rejects.toThrow(/NAME_INVALID/)
-  })
+  }, LEDGER_TEST_TIMEOUT_MS)
 })
 
 describe("the index", () => {
@@ -161,7 +167,7 @@ describe("the index", () => {
     const other = new Ledger(ledger.root)
     await other.mutate("open-one", (current) => current && { ...current, region: "nyc" })
     expect((await fresh.refresh()).works["open-one"]?.region).toBe("nyc")
-  })
+  }, LEDGER_TEST_TIMEOUT_MS)
 
   test("the watcher's phase is kept in the index; a removed work leaves it", async () => {
     const ledger = await emptyLedger()
@@ -171,7 +177,7 @@ describe("the index", () => {
     expect((await ledger.refresh()).works.alpha?.phase).toBe("busy")
     removeRoot(ledger.workDir("alpha"))
     expect((await ledger.refresh()).works.alpha).toBeUndefined()
-  })
+  }, LEDGER_TEST_TIMEOUT_MS)
 })
 
 describe("files: the last good export survives (M-a)", () => {
@@ -209,7 +215,7 @@ describe("files: the last good export survives (M-a)", () => {
     expect(readFileSync(target, "utf8")).toBe(newer)
     expect(readFileSync(link, "utf8")).toBe(good)
     expect(statSync(target).mode & 0o777).toBe(0o600)
-  })
+  }, LEDGER_TEST_TIMEOUT_MS)
 
   test("only the files a harvest writes, and only paths the ledger staged, are accepted", async () => {
     const ledger = await emptyLedger()
@@ -221,7 +227,7 @@ describe("files: the last good export survives (M-a)", () => {
     await expect(ledger.commitStaged({ ...staged, path: `${staged.path}x` }, { bytes: 0, sha256: sha("") })).rejects.toThrow(/LEDGER_FAILED/)
     await ledger.commitStaged(staged, { bytes: 0, sha256: sha("") })
     expect(readFileSync(ledger.patchPath("alpha"), "utf8")).toBe("")
-  })
+  }, LEDGER_TEST_TIMEOUT_MS)
 
   test("untracked/ is swapped whole after a verified staging; a crash between the two renames gets the old set back", async () => {
     const ledger = await emptyLedger()
@@ -261,7 +267,7 @@ describe("files: the last good export survives (M-a)", () => {
     await ledger.commitFolder(third, { "c.txt": { bytes: 5, sha256: sha("three") } })
     expect(readdirSync(ledger.untrackedDir("alpha"))).toEqual(["c.txt"])
     expect(readdirSync(ledger.workDir("alpha")).sort()).toEqual(["untracked", "work.json"])
-  })
+  }, LEDGER_TEST_TIMEOUT_MS)
 })
 
 describe("two harvests of one work at once", () => {
@@ -281,7 +287,7 @@ describe("two harvests of one work at once", () => {
     await ledger.commitFolder(a, { "a1.txt": { bytes: 2, sha256: sha("a1") }, "a2.txt": { bytes: 2, sha256: sha("a2") } })
     expect(readdirSync(ledger.untrackedDir("alpha")).sort()).toEqual(["a1.txt", "a2.txt"])
     expect(readdirSync(ledger.workDir("alpha")).sort()).toEqual(["untracked", "work.json"])
-  })
+  }, LEDGER_TEST_TIMEOUT_MS)
 
   test("the same for staged exports, and a crashed process's leftovers are swept", async () => {
     const ledger = await emptyLedger()
@@ -308,7 +314,7 @@ describe("two harvests of one work at once", () => {
     expect(existsSync(live.path)).toBe(true)
     await ledger.sweepTemps("alpha")
     expect(existsSync(leftFile)).toBe(false)
-  })
+  }, LEDGER_TEST_TIMEOUT_MS)
 })
 
 describe("the fence: no write lands after its lock is lost (M-2)", () => {
@@ -338,7 +344,7 @@ describe("the fence: no write lands after its lock is lost (M-2)", () => {
     expect(final?.reboots).toEqual([{ at: "B", why: "repair" }])
     expect(final?.model).toBeUndefined()
     expect(readdirSync(ledger.workDir("alpha"))).toEqual(["work.json"])
-  })
+  }, LEDGER_TEST_TIMEOUT_MS)
 
   test("the same for a staged export and an untracked swap", async () => {
     const ledger = await emptyLedger()
@@ -361,7 +367,7 @@ describe("the fence: no write lands after its lock is lost (M-2)", () => {
     expect(existsSync(staged.path)).toBe(false)
     expect(existsSync(folder.path)).toBe(false)
     expect((await ledger.get("alpha"))?.title).toBe("B")
-  })
+  }, LEDGER_TEST_TIMEOUT_MS)
 })
 
 describe("one writer per work, across processes", () => {
@@ -414,7 +420,7 @@ describe("one writer per work, across processes", () => {
     await other.mutate("alpha", (c) => c && { ...c, title: "after-dead" })
     expect((await other.get("alpha"))?.title).toBe("after-dead")
     expect(existsSync(lockPath)).toBe(false)
-  })
+  }, LEDGER_TEST_TIMEOUT_MS)
 
   test("a holder whose lock was taken over knows it", async () => {
     const root = tempRoot("boxd-lock-")
@@ -433,7 +439,7 @@ describe("one writer per work, across processes", () => {
     expect((await readOwner(path))?.token).toBe(second!.token)
     await second!.release()
     expect(existsSync(path)).toBe(false)
-  })
+  }, LEDGER_TEST_TIMEOUT_MS)
 
   test("a stale holder's late heartbeat and release never touch its successor's lock (LOW-1)", async () => {
     const root = tempRoot("boxd-lock-")
@@ -455,7 +461,7 @@ describe("one writer per work, across processes", () => {
     expect(await second!.holds()).toBe(true)
     await second!.release()
     expect(existsSync(path)).toBe(false)
-  })
+  }, LEDGER_TEST_TIMEOUT_MS)
 
   test("within one process the queue serialises writers, and the lock is re-entrant", async () => {
     const ledger = await emptyLedger()
@@ -464,5 +470,5 @@ describe("one writer per work, across processes", () => {
     expect((await ledger.get("alpha"))?.reboots).toHaveLength(20)
     const nested = await ledger.withWork("alpha", () => ledger.mutate("alpha", (c) => c && { ...c, title: "nested" }))
     expect(nested?.title).toBe("nested")
-  })
+  }, LEDGER_TEST_TIMEOUT_MS)
 })

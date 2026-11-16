@@ -147,6 +147,19 @@ describe("the selectors and the cleanup suggestions (§C.4)", () => {
     expect(actions.find((action) => action.action === "harvest")?.why).toContain("drop needs a harvest")
   })
 
+  test("a v0-imported work whose laptop copy is unverified is harvested, never dropped, until a harvest verifies it (F1)", () => {
+    const imported = Array.from({ length: 120 }, (_, index) => work(`imp-${index}`, { phase: "asleep", outcome: "completed", saved: "fresh", laptopCopy: "unverified" }))
+    expect(imported.filter((item) => matches("saved-finished", item))).toEqual([])
+    expect(imported.filter((item) => matches("unsaved-finished", item))).toHaveLength(120)
+    const actions = suggestions([...imported, work("own", { phase: "asleep", outcome: "completed", saved: "fresh" })], EUR)
+    expect(actions.map((action) => [action.action, action.works])).toEqual([
+      ["harvest", 120],
+      ["drop", 1],
+    ])
+    expect(actions[0]!.why).toBe("120 imported works' laptop copies are unverified; drop needs a harvest")
+    expect(matches("saved-finished", work("verified", { phase: "asleep", outcome: "completed", saved: "fresh" }))).toBe(true)
+  })
+
   test("no suggestion when nothing matches", () => {
     expect(suggestions([work("b", { phase: "busy", outcome: null })], EUR)).toEqual([])
   })

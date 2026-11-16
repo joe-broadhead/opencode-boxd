@@ -3,8 +3,9 @@
  *
  * - It posts a report with `ctx.session.synthetic` (`resume: false`): counts, costs, ids and phases only, nothing the
  *   model could use to approve anything.
- * - Then, for each cleanup action (sleep `finished`, harvest `unsaved-finished`, drop `saved-finished`), it confirms with
- *   `ctx.permission.assert` **without a `source`**, so the host's own permission prompt asks the person, and the prompt
+ * - Then, for each cleanup action (sleep `finished`; harvest `unsaved-finished`, the v0-imported works whose laptop copy
+ *   is unverified first and on their own; drop `saved-finished`), it confirms with `ctx.permission.assert` **without a
+ *   `source`**, so the host's own permission prompt asks the person, and the prompt
  *   is never a session message. At `access: "ask-changes"` it asserts the tool's own action, whose default rule asks; at
  *   `"all"` it asserts `CLEANUP_ACTION` (`boxd_cleanup`), which the default rules set to ask; at `"read-only"` it only
  *   reports and asserts nothing. The resources are exactly the work ids the action will touch.
@@ -35,13 +36,25 @@ type CleanupContext = {
 }
 
 type Step = {
-  readonly [K in keyof SelectorValues]: { readonly tool: K; readonly select: SelectorValues[K]; readonly verb: string; readonly run: "sleep" | "harvest" | "drop" }
+  readonly [K in keyof SelectorValues]: {
+    readonly tool: K
+    readonly select: SelectorValues[K]
+    readonly verb: string
+    readonly run: "sleep" | "harvest" | "drop"
+    /** Only the v0-imported works whose laptop copy is unverified (`imported`), or only the others (`native`). */
+    readonly only?: "imported" | "native"
+  }
 }[keyof SelectorValues]
 
-/** The actions the command offers, in order: sleep what is finished, save what is unsaved, drop what is saved. */
+/**
+ * The actions the command offers, in order: sleep what is finished, save what is unsaved, drop what is saved. The
+ * v0-imported works whose laptop copy is unverified (F1) get their own harvest, asked separately: drop skips them
+ * until a harvest has verified the copy.
+ */
 export const CLEANUP_STEPS: readonly Step[] = [
   { tool: "boxd_sleep", select: "finished", verb: "Sleep finished works", run: "sleep" },
-  { tool: "boxd_harvest", select: "unsaved-finished", verb: "Harvest unsaved finished works", run: "harvest" },
+  { tool: "boxd_harvest", select: "unsaved-finished", verb: "Harvest imported works first", run: "harvest", only: "imported" },
+  { tool: "boxd_harvest", select: "unsaved-finished", verb: "Harvest unsaved finished works", run: "harvest", only: "native" },
   { tool: "boxd_drop", select: "saved-finished", verb: "Drop saved finished works", run: "drop" },
 ]
 
@@ -163,12 +176,17 @@ export async function runCleanup(ctx: Omit<CleanupContext, "command">, services:
     let ids: readonly string[]
     try {
       ids = await (services.actions.match as (tool: string, select: string, context: ActionContext) => Promise<readonly string[]>)(step.tool, step.select, context)
+      if (step.only) {
+        const imported = new Set(services.watch.snapshot().works.filter((work) => work.laptopCopy === "unverified").map((work) => work.workId))
+        ids = ids.filter((id) => imported.has(id) === (step.only === "imported"))
+      }
     } catch (error) {
       outcomes.push(`${step.verb}: could not match (${error instanceof Error ? error.message.split("\n")[0]!.slice(0, 160) : String(error)}).`)
       continue
     }
     if (!ids.length) {
-      outcomes.push(`${step.verb}: nothing to do.`)
+      // Only an upgrade from v0 has imported works: with none, that step says nothing.
+      if (step.only !== "imported") outcomes.push(`${step.verb}: nothing to do.`)
       continue
     }
     const rates = internalsOf(services.cost).rates()

@@ -116,6 +116,26 @@ describe("/boxd-cleanup", () => {
     expect(outcomes).toEqual(["Sleep finished works: nothing to do.", "Harvest unsaved finished works: nothing to do.", "Drop saved finished works: nothing to do."])
   })
 
+  test("v0-imported works whose laptop copy is unverified: their own harvest, asked first, and never under the drop (F1)", async () => {
+    const f = fakes({
+      options: { access: "ask-changes" },
+      works: [work("fin"), work("imp-1", { phase: "asleep", saved: "fresh", laptopCopy: "unverified" }), work("imp-2", { phase: "asleep", saved: "fresh", laptopCopy: "unverified" }), work("saved", { saved: "fresh" })],
+    })
+    open.push(f)
+    // C2's matchers: harvest takes the imported works; drop skips them.
+    f.actions.matches = { boxd_sleep: [], boxd_harvest: ["fin", "imp-1", "imp-2"], boxd_drop: ["saved"] }
+    const asked: Assert[] = []
+    const ctx = { session: { synthetic: f.services.sessions.synthetic }, permission: { assert: async (input: Assert) => void asked.push(input) } }
+    const { outcomes } = await runCleanup(ctx as never, f.services, "ses_person", "cleanup-imported")
+    expect(asked.map((item) => [item.action, [...item.resources]])).toEqual([
+      ["boxd_harvest", ["imp-1", "imp-2"]],
+      ["boxd_harvest", ["fin"]],
+      ["boxd_drop", ["saved"]],
+    ])
+    expect(acted(f)).toEqual(["harvest imp-1,imp-2", "harvest fin", "drop saved"])
+    expect(outcomes).toEqual(["Sleep finished works: nothing to do.", "Harvest imported works first: 2 saved.", "Harvest unsaved finished works: 1 saved.", "Drop saved finished works: 1 dropped."])
+  })
+
   test("the session messages are reports only: resume false, and nothing that answers a prompt", async () => {
     const { f, run } = setup({ access: "all" })
     await run()

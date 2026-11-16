@@ -336,7 +336,8 @@ function written(
   }
   const warnings = complete ? withoutWarning(record.warnings, "UNHARVESTED_SLEEP") : record.warnings
   const out = [...(record.files?.out ?? []).filter((file) => !moved.some((item) => item.path === file.path)), ...moved]
-  const base = omit(record, "laptopCopy", "warnings")
+  // The laptop's copy is replaced and verified only when a transcript was exported; until then a v0 import stays unverified.
+  const base = fetched.exported ? omit(record, "laptopCopy", "warnings") : omit(record, "warnings")
   const next: WorkRecord = {
     ...base,
     machineId,
@@ -356,7 +357,7 @@ function written(
     sessions: sessions.map((session) => ({ id: session.id, bytes: session.bytes })),
     git: { known: gitState.known, dirty: gitState.dirty, patchStored: gitState.patchStored, untracked: gitState.untracked.length, ignored: gitState.ignored.length },
     ...(moved.length ? { files: moved.map((file) => ({ path: file.path, bytes: file.bytes, sha256: file.sha256, laptopPath: file.laptopPath! })) } : {}),
-    next: dropAdvice(record.workId, complete, fetched.git, fetched.untracked?.expected ?? {}, storedFiles, Boolean(fetched.patch)),
+    next: dropAdvice(record.workId, complete, base.laptopCopy === "unverified", fetched.git, fetched.untracked?.expected ?? {}, storedFiles, Boolean(fetched.patch)),
   }
   return { write: [next], value }
 }
@@ -365,6 +366,7 @@ function written(
 function dropAdvice(
   workId: string,
   complete: boolean,
+  unverified: boolean,
   git: GitAnswer,
   stored: Readonly<Record<string, { readonly sha256: string }>>,
   files: ReadonlyMap<string, string>,
@@ -372,6 +374,7 @@ function dropAdvice(
 ): string {
   const call = `{ workId: "${workId}" }`
   if (!complete) return `This is a partial copy, so boxd_drop refuses. Once the session is idle: boxd_harvest(${call}).`
+  if (unverified) return `This laptop's copy of the transcript, imported from an earlier release, is not verified yet, so boxd_drop refuses: boxd_harvest(${call}) again.`
   if (!git.known) return `The guest folder is not a git repository, so boxd_drop refuses. boxd_sleep(${call}) keeps it at the cost of its disk.`
   const harvested = (file: { path: string; sha256: string }) => file.sha256 !== "" && (stored[file.path]?.sha256 === file.sha256 || files.get(file.path) === file.sha256)
   const lost = [...git.untracked, ...git.ignored].filter((file) => !harvested(file)).map((file) => file.path)

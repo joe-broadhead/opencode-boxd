@@ -2,7 +2,7 @@
  * `boxd_drop` (design §3.9): destroy a work's machine, by its recorded id, and close the work. Destructive, so its
  * guard runs per work whatever asked (a tool call, a `select`, or `/boxd-cleanup`), and nothing automatic calls it.
  *
- * The guard: `saved: fresh` on this laptop; then, in one `git` exec on the guest, a known git tree, every untracked or
+ * The guard: `saved: fresh` on this laptop, and for a v0-imported work a laptop copy a v1 harvest verified; then, in one `git` exec on the guest, a known git tree, every untracked or
  * ignored path harvested at the digest the guest still has, tracked changes stored as the same patch, and the guest's
  * own session marks (last message id and message count per session, and no new session under the root) equal to what
  * the harvest stored (M3, L-d). Then `machine remove <id>`, after `oc-<id>` was resolved to the recorded id (H2).
@@ -98,6 +98,10 @@ async function guard(services: Services, record: WorkRecord, target: ChangeTarge
   const saved = services.ledger.saved(record)
   if (saved !== "fresh") {
     throw boxdError("NOT_SAVED", saved === "none" ? "This laptop has no harvest of the work." : "The last harvest is older than the last prompt, or was partial.")
+  }
+  if (record.laptopCopy === "unverified") {
+    // F1: v0 may have left an older transcript in this laptop's OpenCode; only a v1 harvest replaces and verifies it.
+    throw boxdError("NOT_SAVED", "The work was imported from an earlier release, and no harvest since has verified this laptop's copy of its transcript.")
   }
   await adoptIfV0(services, record, target, op)
   const rootId = record.session?.rootId

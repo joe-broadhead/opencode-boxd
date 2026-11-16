@@ -615,6 +615,11 @@ export interface WorkSnapshot {
   readonly phase: Phase
   readonly outcome: RunOutcome | null
   readonly saved: SavedState
+  /**
+   * `"unverified"` for a work imported from v0 whose laptop copy of the transcript no v1 harvest has replaced yet (F1):
+   * the drop selector skips it, and the harvest selector takes it, until a harvest verifies the copy.
+   */
+  readonly laptopCopy?: "unverified"
   readonly needsInput?: "form" | "permission"
   /** The last guest reading; idle works keep theirs. */
   readonly reading?: Reading & { readonly at: string }

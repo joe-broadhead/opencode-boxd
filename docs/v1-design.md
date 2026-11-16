@@ -1380,6 +1380,9 @@ from the stored export file. `saved` stays `fresh` or `stale` exactly as `proof`
 Because of F1, the laptop's OpenCode may hold an older transcript than the stored export for any work harvested more
 than once. Each imported work is marked `laptopCopy: "unverified"`, and its next harvest replaces the copy. An
 `attention` reason, `laptop-copy`, lists the works that need it, and `boxd_harvest({ works })` fixes them in one call.
+(Final review, L-1) Until a harvest has verified the copy, `boxd_drop` refuses the work with `NOT_SAVED`, the
+`saved-finished` selector skips it, `unsaved-finished` takes it, and `/boxd-cleanup` asks for it under "Harvest imported
+works first", never under the drop.
 
 ### 6.3 Running guests
 

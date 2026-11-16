@@ -38,9 +38,9 @@ The install takes the GitHub release tag. Its commit carries the built `dist/`, 
 
 **Upgrading from an earlier release.** This release breaks compatibility: tools, results, options and the ledger
 change. The tool `boxd_image` is gone (`boxd_golden` builds images, and never saves a work's machine); `boxd_read`,
-`boxd_exec` and `boxd_reassign` are new. The option `snapshot` is now `goldenBase`: rename it before you upgrade,
-because a left-over `snapshot` stops the plugin with `OPTIONS_INVALID`. Keep the boxd CLI signed in for the first
-start.
+`boxd_exec` and `boxd_reassign` are new. Remove `snapshot` (images are now built from stock); set `goldenBase` only to
+build on a hand-made base without model credentials. Do it before you upgrade: a left-over `snapshot` stops the plugin
+with `OPTIONS_INVALID`. Keep the boxd CLI signed in for the first start.
 
 The first start imports the earlier ledger, `~/.local/share/opencode-boxd/works/`, once into
 `~/.local/share/opencode-boxd/v1/`:
@@ -55,6 +55,9 @@ The first start imports the earlier ledger, `~/.local/share/opencode-boxd/works/
 - The earlier records are left as they are; the one addition is a note folder, `works/README-MOVED-TO-v1/`. A work
   harvested before may hold an older laptop copy of its transcript: `boxd_status` lists it under `laptop-copy`, and
   `boxd_harvest({ works })` replaces it.
+- **Harvest imported works before dropping them.** Until a harvest has verified its laptop copy, `boxd_drop` refuses
+  an imported work (`NOT_SAVED`), `select: "saved-finished"` skips it, and `/boxd-cleanup` offers it under "Harvest
+  imported works first" instead of the drop.
 
 Going back is safe only before this release's first change (a submit, harvest, drop or reassign): after that, the old
 drop could accept a stale record and destroy unharvested work. To go back, run
@@ -226,7 +229,7 @@ A tool that fails returns `state`, `error` (the code), `message` (what happened)
 | Code | What to do |
 |---|---|
 | `HOST_UNTESTED` | Use OpenCode `>=2.2.3 <2.4.0`, or set `"allowUntestedHost": true` to run anyway. |
-| `OPTIONS_INVALID` | Fix the plugin options in `opencode.json`, then restart OpenCode. A removed option, such as `snapshot`, names its replacement. |
+| `OPTIONS_INVALID` | Fix the plugin options in `opencode.json`, then restart OpenCode. A removed option, such as `snapshot`, says what to do instead. |
 | `STATUS_UNAVAILABLE` | Restart OpenCode, then run `/boxd-status` again. |
 | `SKILLS_INVALID` | Reinstall the plugin so its skill file is present, then restart OpenCode. |
 | `NAME_INVALID` | An input failed its rule; `field` names it. Fix that input, then call again. |

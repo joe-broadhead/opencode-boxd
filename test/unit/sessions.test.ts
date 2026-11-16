@@ -472,6 +472,24 @@ describe("boxd_drop", () => {
     expect(machineState(machine).status).toBe("running")
   })
 
+  test("refuses a v0-imported work whose laptop copy is unverified, with next boxd_harvest; a harvest verifies it, and drop then removes it (F1)", async () => {
+    const machine = await savedWork("imported")
+    await ledger.update(["imported"], async (current) => ({ write: [{ ...current.get("imported")!, importedFrom: "v0" as const, laptopCopy: "unverified" as const }], value: undefined }), op())
+    expect(ledger.saved((await record("imported"))!)).toBe("fresh")
+
+    const refused = await errorOf(runs.boxd_drop({ workId: "imported" }, call()))
+    expect([refused.code, refused.what]).toEqual(["NOT_SAVED", "The work was imported from an earlier release, and no harvest since has verified this laptop's copy of its transcript."])
+    expect(refused.next).toStartWith("boxd_harvest(")
+    expect(machineState(machine).status).toBe("running")
+    expect(counter.fake.calls().some((line: string) => line.startsWith("machine remove "))).toBe(false)
+
+    const harvested = await runs.boxd_harvest({ workId: "imported" }, call())
+    expect(harvested).toMatchObject({ state: "saved", next: expect.stringMatching(/^Saved\. /) })
+    expect((await record("imported"))!.laptopCopy).toBeUndefined()
+    expect(await runs.boxd_drop({ workId: "imported" }, call())).toEqual({ state: "dropped", workId: "imported", machine: "oc-imported" })
+    expect(machineState(machine).status).toBe("destroyed")
+  })
+
   test("refuses when the guest's session moved on since the harvest, or has a new session; a new title alone does not refuse (M3, L-d)", async () => {
     const machine = await savedWork("moved")
     const session = guest.sessions.get("ses_moved")!
@@ -742,6 +760,48 @@ describe("selectors and dryRun (§C.4)", () => {
     const slept = await runs.boxd_sleep({ select: "finished" }, call({ matched: ["done-unsaved"] }))
     expect(slept).toMatchObject({ state: "done", select: "finished", results: [{ state: "asleep", workId: "done-unsaved" }] })
     expect((await record("done-saved"))!.slept).toBeUndefined()
+  })
+
+  test("the review's probe: 120 imported, hibernated, saved works whose laptop copy is unverified; drop's dry run matches none, and harvest's select takes them all (F1)", async () => {
+    const at = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString()
+    const ids = Array.from({ length: 120 }, (_, index) => `imp-${String(index).padStart(3, "0")}`)
+    const records = ids.map((workId, index): WorkRecord => {
+      const machine = counter.fake.machine({ name: `oc-${workId}`, region: index % 2 ? "nyc" : "fra", status: "hibernated", labels: { role: "session", work: workId } })
+      return {
+        format: 1,
+        workId,
+        state: "open",
+        region: machine.region,
+        machine: `oc-${workId}`,
+        machineId: machine.id as MachineId,
+        size: "2x8",
+        image: { name: "opencode-golden", opencode: null },
+        laptopDirectory: project,
+        guestDirectory: guestDir(workId),
+        createdAt: at(600),
+        session: { rootId: sid(workId) },
+        lastSubmit: { at: at(300), delivery: "steer" },
+        saved: { at: at(200), complete: true, guestVersion: VERSION, sessions: [{ id: sid(workId), parentId: null, sha256: "0".repeat(64), bytes: 10, lastMessageId: "msg_1", messages: 2, updated: Date.parse(at(250)) }] },
+        run: { outcome: "completed", at: at(250) },
+        slept: { at: at(100), by: "boxd_sleep" },
+        guestHelper: "v0",
+        importedFrom: "v0",
+        laptopCopy: "unverified",
+      }
+    })
+    await ledger.update(ids, async () => ({ write: records, value: undefined }), op())
+    // A v1 work saved and asleep beside them still matches drop's select.
+    const own = await savedWork("own-saved")
+    await setMachine(own, (item) => void (item.status = "hibernated"))
+    counter.reset()
+
+    const context = call()
+    const matched = await selectors.boxd_drop("saved-finished", context)
+    expect(matched).toEqual(["own-saved"])
+    const dry = await runs.boxd_drop({ select: "saved-finished", dryRun: true }, { ...context, matched })
+    expect(dry).toMatchObject({ state: "done", dryRun: true, counts: { matched: 1 }, results: [{ workId: "own-saved" }] })
+    expect(await selectors.boxd_harvest("unsaved-finished", call())).toEqual(ids)
+    expect(counter.fake.calls().filter((line: string) => /^machine (remove|wake|resume|start)/.test(line))).toEqual([])
   })
 
   test("automation never drops: FleetActions.drop by automation is refused before anything runs", async () => {

@@ -112,7 +112,7 @@ const ACCEPTED = {
 
 /** Options that a release removed, with what replaced them. */
 const REMOVED: Readonly<Record<string, string>> = {
-  snapshot: 'The option "snapshot" is now "goldenBase": a golden image is built by the plugin from stock or from that base',
+  snapshot: 'The option "snapshot" is removed: golden images are now built from stock. Remove it; set "goldenBase" only to build on a hand-made base without model credentials',
 }
 
 const EXAMPLE = `"plugins": [{ "package": "github:joe-broadhead/opencode-boxd#<tag>", "options": { "region": "auto", "size": "2x8" } }]`
