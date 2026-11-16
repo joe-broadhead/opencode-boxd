@@ -3,7 +3,7 @@
 // --shared or --isolated.
 import { describe, expect, test } from "bun:test"
 import * as argv from "../../src/boxd/argv.js"
-import { parseCreated, parseListing, parseMachine, parseMachineLimit, parseSecrets, parseSnapshots, parseUsage } from "../../src/boxd/parse.js"
+import { parseCreated, parseListing, parseMachine, parseMachineLimit, parseSecrets, parseSnapshots, parseUsage, regionLimits } from "../../src/boxd/parse.js"
 import type { ChangeTarget, MachineId } from "../../src/ports.js"
 
 // A test builds a target by hand; in the plugin only checkOwned makes one.
@@ -99,14 +99,22 @@ describe("the JSON readers", () => {
     expect(() => parseCreated({ boot: "11ms", name: "oc-a" }, "new")).toThrow(/no machine id/)
   })
 
-  test("the machine limit per region, or the org's one limit shared by every region", () => {
-    expect(parseMachineLimit({ regions: [{ region: "fra", limit: 300, in_use: 294 }, { region: "nyc", limit: 300, in_use: 12 }] })).toEqual([
-      { region: "fra", limit: 300, inUse: 294, free: 6 },
-      { region: "nyc", limit: 300, inUse: 12, free: 288 },
+  test("the machine limit per region; the org-wide answer is one limit each region applies to its own machines", () => {
+    expect(parseMachineLimit({ regions: [{ region: "fra", limit: 300, in_use: 294 }, { region: "nyc", limit: 300, in_use: 12 }] })).toEqual({
+      perRegion: [
+        { region: "fra", limit: 300, inUse: 294, free: 6 },
+        { region: "nyc", limit: 300, inUse: 12, free: 288 },
+      ],
+    })
+    expect(parseMachineLimit({ max_vms: 10, machines: 12 })).toEqual({ limit: 10 })
+    const rows = parseListing([
+      { name: "oc-a", region: "fra", status: "running" },
+      { name: "oc-b", region: "fra", status: "hibernated" },
+      { name: "oc-c", region: "nyc", status: "running" },
     ])
-    expect(parseMachineLimit({ max_vms: 10, machines: 12 })).toEqual([
-      { region: "fra", limit: 10, inUse: 12, free: 0 },
-      { region: "nyc", limit: 10, inUse: 12, free: 0 },
+    expect(regionLimits(10, rows)).toEqual([
+      { region: "fra", limit: 10, inUse: 2, free: 8 },
+      { region: "nyc", limit: 10, inUse: 1, free: 9 },
     ])
     expect(() => parseMachineLimit({})).toThrow(/no limit/)
   })

@@ -21,11 +21,11 @@ import {
   type GuestPort,
   type OpContext,
   type ReadTarget,
-  type Runner,
   type SpawnResult,
 } from "../ports.js"
 import { shortReason } from "../redact.js"
 import { isChangeTarget } from "../boxd/cli.js"
+import type { PluginRunner } from "../exec/runner.js"
 import {
   checkProtocol,
   helperError,
@@ -46,7 +46,7 @@ import { HELPER_UPLOAD_PATH, helperFile, packagedHelperPath } from "./helper.js"
 
 export interface GuestPortOptions {
   readonly boxd: BoxdPort
-  readonly runner: Runner
+  readonly runner: PluginRunner
   /** The helper to upload; the package's `guest/guest.py` by default. */
   readonly helperPath?: string
 }
@@ -102,8 +102,8 @@ export function createGuestPort(options: GuestPortOptions): GuestPort {
     if (isChangeTarget(target as ReadTarget | ChangeTarget)) throw new Error(`The guest read ${action} takes a read target with its listing.`)
     const machine = `${target.region}/${target.name}`
     const request = { action, ...input }
-    return runner.singleFlight(`guest:${machine}:${JSON.stringify(request)}`, () =>
-      serialised(machine, async () => parse(answerOf(await exec(target, GUEST_HELPER_PATH, request, TIMEOUTS.helperRead, action, context), action))),
+    return runner.join(`guest:${machine}:${JSON.stringify(request)}`, context, (flight) =>
+      serialised(machine, async () => parse(answerOf(await exec(target, GUEST_HELPER_PATH, request, TIMEOUTS.helperRead, action, flight), action))),
     )
   }
 

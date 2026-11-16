@@ -48,7 +48,7 @@ export interface ChildLike {
   readonly stderr: Readable | null
   kill(signal?: NodeJS.Signals): boolean
   on(event: "error", listener: (error: Error) => void): this
-  on(event: "close", listener: (code: number | null, signal: NodeJS.Signals | null) => void): this
+  on(event: "close" | "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): this
 }
 
 /** Starts one process. The default spawns it in its own process group, so a kill reaches its whole tree. */
@@ -63,7 +63,20 @@ export interface RunnerOptions {
 }
 
 /** The runner's own extras beyond the port: what a test and the CLI port use to check the lock rule. */
+/**
+ * A spawn with a check that runs when the child's slot is granted, just before it starts: the read rule is checked
+ * there, so a read that waited in a queue never starts on a listing that has since gone stale (design §4.1).
+ */
+export type GuardedSpawn = SpawnRequest & { readonly guard?: () => void }
+
 export interface PluginRunner extends Runner {
+  spawn(request: GuardedSpawn): Promise<SpawnResult>
+  /**
+   * A shared flight that each caller joins with its own signal: one run for every caller with the same key, started
+   * outside any caller's machine lock, with a signal of its own that aborts only once every joiner has left. A
+   * joiner's Stop detaches that joiner alone (it answers `CANCELLED` at once); the others keep the answer.
+   */
+  join<T>(key: string, context: OpContext, fn: (context: OpContext) => Promise<T>): Promise<T>
   /** True while the current async context holds this machine's lock. */
   holds(key: MachineLockKey): boolean
   /** How many machine locks are held or waited for now. */
@@ -88,8 +101,12 @@ interface Waiter {
 interface Running {
   readonly pool: Pool
   terminate(): void
+  /** Resolves when the child has exited and, once it was terminated, its group's SIGKILL has been sent. */
   readonly done: Promise<void>
 }
+
+/** After the leader exits, how long its stdout and stderr may stay open (a descendant holding them) before they are cut. */
+const DRAIN_MS = 250
 
 const lockKey = (key: MachineLockKey): string => ("id" in key ? `id:${key.id}` : `create:${key.create.region}/${key.create.name}`)
 
@@ -138,6 +155,7 @@ export function createRunner(options: RunnerOptions = {}): PluginRunner {
   const running = new Set<Running>()
   const locks = keyedMutex()
   const flights = new Map<string, Promise<unknown>>()
+  const joined = new Map<string, Joined<unknown>>()
   // Lock names carry this runner's own id, so two runners in one process never read each other's locks.
   const instance = `r${++runners}:`
   let peak = 0
@@ -263,7 +281,7 @@ export function createRunner(options: RunnerOptions = {}): PluginRunner {
     })
   }
 
-  function run(request: SpawnRequest, command: string): Promise<SpawnResult> {
+  function run(request: GuardedSpawn, command: string): Promise<SpawnResult> {
     const pool = request.pool ?? "foreground"
     const started = now()
     const cap = request.stdoutCap ?? OUTPUT_CAP_BYTES
@@ -273,6 +291,13 @@ export function createRunner(options: RunnerOptions = {}): PluginRunner {
       if (disposed || request.signal?.aborted) {
         release(pool)
         reject(cancelled(command, false))
+        return
+      }
+      try {
+        request.guard?.()
+      } catch (error) {
+        release(pool)
+        reject(error)
         return
       }
       let child: ChildLike
@@ -289,8 +314,14 @@ export function createRunner(options: RunnerOptions = {}): PluginRunner {
       let failure: BoxdError | undefined
       let exited = false
       let killTimer: ReturnType<typeof setTimeout> | undefined
-      let markDone!: () => void
-      const done = new Promise<void>((resolveDone) => (markDone = resolveDone))
+      let markExited!: () => void
+      const exitedOnce = new Promise<void>((resolveExit) => (markExited = resolveExit))
+      /** Resolves once the group's SIGKILL is sent: right away when nothing was terminated. */
+      let escalated: Promise<void> = Promise.resolve()
+      const done = (async () => {
+        await exitedOnce
+        await escalated
+      })()
 
       const signalGroup = (signal: NodeJS.Signals) => {
         // The child leads its own process group: a negative pid reaches everything it started.
@@ -311,10 +342,15 @@ export function createRunner(options: RunnerOptions = {}): PluginRunner {
       const terminate = () => {
         if (exited || killTimer) return
         signalGroup("SIGTERM")
-        killTimer = setTimeout(() => {
-          if (!exited) signalGroup("SIGKILL")
-        }, killGraceMs)
-        killTimer.unref?.()
+        // After the grace the whole group gets SIGKILL whatever the leader did: a member that ignores SIGTERM and
+        // outlives the leader dies too. A group that is already gone answers ESRCH, which is harmless.
+        escalated = new Promise<void>((resolveKill) => {
+          killTimer = setTimeout(() => {
+            signalGroup("SIGKILL")
+            resolveKill()
+          }, killGraceMs)
+          killTimer.unref?.()
+        })
       }
       const stop = (error: BoxdError) => {
         failure ??= error
@@ -353,11 +389,11 @@ export function createRunner(options: RunnerOptions = {}): PluginRunner {
         settled = true
         exited = true
         clearTimeout(timer)
-        if (killTimer) clearTimeout(killTimer)
         request.signal?.removeEventListener("abort", onAbort)
-        running.delete(entry)
+        markExited()
+        // A terminated group keeps its pending SIGKILL; the entry leaves the running set once it is sent.
+        void done.then(() => running.delete(entry))
         release(pool)
-        markDone()
         const out = Buffer.concat(stdout).toString("utf8")
         const err = stderr.toString("utf8")
         if (spawnError) reject(missing(request.bin, spawnError))
@@ -366,6 +402,16 @@ export function createRunner(options: RunnerOptions = {}): PluginRunner {
       }
       child.on("error", (error) => finish(null, error))
       child.on("close", (code) => finish(code))
+      // A descendant that holds stdout or stderr open would keep "close" from ever firing: once the child itself has
+      // exited, its pipes get a short drain and are then cut, so the request, its slot and a dispose always settle.
+      child.on("exit", (code) => {
+        const drain = setTimeout(() => {
+          child.stdout?.destroy()
+          child.stderr?.destroy()
+          finish(code)
+        }, DRAIN_MS)
+        drain.unref?.()
+      })
     })
   }
 
@@ -396,9 +442,53 @@ export function createRunner(options: RunnerOptions = {}): PluginRunner {
     singleFlight<T>(key: string, fn: () => Promise<T>): Promise<T> {
       const current = flights.get(key) as Promise<T> | undefined
       if (current) return current
-      const flight = (async () => fn())().finally(() => flights.delete(key))
+      // A flight runs for every caller, so it holds no caller's machine lock: it takes its own, like any call.
+      const flight = heldLocks.exit(() => (async () => fn())()).finally(() => flights.delete(key))
       flights.set(key, flight)
       return flight
+    },
+
+    join<T>(key: string, context: OpContext, fn: (context: OpContext) => Promise<T>): Promise<T> {
+      const command = `the shared ${key.split(":")[1] ?? key}`
+      if (disposed || context.signal?.aborted) return Promise.reject(cancelled(command, false))
+      let flight = joined.get(key) as Joined<T> | undefined
+      if (!flight) {
+        const controller = new AbortController()
+        const created: Joined<T> = { joiners: 0, controller, promise: Promise.resolve(undefined as T) }
+        const flightContext: OpContext = { call: context.call, ...(context.pool ? { pool: context.pool } : {}), signal: controller.signal }
+        created.promise = heldLocks.exit(() => (async () => fn(flightContext))()).finally(() => {
+          if (joined.get(key) === created) joined.delete(key)
+        })
+        created.promise.catch(() => {})
+        joined.set(key, created)
+        flight = created
+      }
+      const current = flight
+      current.joiners += 1
+      return new Promise<T>((resolve, reject) => {
+        let left = false
+        const leave = () => {
+          if (left) return false
+          left = true
+          context.signal?.removeEventListener("abort", onAbort)
+          current.joiners -= 1
+          return true
+        }
+        const onAbort = () => {
+          if (!leave()) return
+          // The last joiner to leave stops the flight; a later caller starts a new one.
+          if (current.joiners === 0) {
+            if (joined.get(key) === current) joined.delete(key)
+            current.controller.abort()
+          }
+          reject(cancelled(command, false))
+        }
+        context.signal?.addEventListener("abort", onAbort, { once: true })
+        current.promise.then(
+          (value) => leave() && resolve(value),
+          (error: unknown) => leave() && reject(error),
+        )
+      })
     },
 
     assertReadable(target) {
@@ -436,14 +526,25 @@ export function createRunner(options: RunnerOptions = {}): PluginRunner {
       }
       locks.dispose()
       flights.clear()
+      for (const flight of joined.values()) flight.controller.abort()
+      joined.clear()
       for (const entry of [...running]) entry.terminate()
-      await Promise.all([...running].map((entry) => entry.done))
+      // Bounded: each child gets SIGTERM, its group SIGKILL after the grace, and a child whose pipes a descendant holds
+      // is settled by its exit and the drain; the extra second is a margin, never a wait on a stuck pipe.
+      const bound = new Promise<void>((resolveBound) => setTimeout(resolveBound, killGraceMs + DRAIN_MS + 1_000).unref?.())
+      await Promise.race([Promise.all([...running].map((entry) => entry.done)), bound])
       lag.update()
     },
   }
 }
 
 let runners = 0
+
+interface Joined<T> {
+  joiners: number
+  readonly controller: AbortController
+  promise: Promise<T>
+}
 
 /**
  * One lock per key, handed over first in, first out. A waiter's signal takes it out of the queue with `CANCELLED`, so a

@@ -985,9 +985,16 @@ def own_digest():
     return digest(os.path.abspath(__file__))[1]
 
 
-def install():
-    """An uploaded copy moves itself to the stable path, then acts on its request from there."""
+def install(expected):
+    """An uploaded copy checks that it is the copy the laptop sent (its sha256), moves itself to the stable path, then
+    acts on its request from there. A copy that does not match is deleted and changes nothing."""
     source = os.path.abspath(__file__)
+    if expected != own_digest():
+        try:
+            os.unlink(source)
+        except OSError:
+            pass
+        fail("HELPER_OUTDATED", "the uploaded helper is not the copy the plugin sent")
     ensure_home()
     if source != HELPER_PATH:
         with open(source, "rb") as handle:
@@ -1008,7 +1015,7 @@ def main():
         if action in CHANGES:
             expected = request.get("helper")
             if installing:
-                install()
+                install(expected)
             elif expected != own_digest():
                 # An older or newer copy changes nothing: the laptop uploads the one it expects, then calls again.
                 fail("HELPER_OUTDATED", "this helper is not the copy the plugin expects")

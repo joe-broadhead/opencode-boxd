@@ -33,8 +33,9 @@ const FIXED: ReadonlyArray<{ readonly kind: Exclude<BoxdFailureKind, "missing" |
   { kind: "auth", pattern: /^Not logged in\b|\bnot signed in\b|\brun `?boxd auth login`?|^error: (?:unauthori[sz]ed|authentication required)\b|\bAPI key (?:is )?(?:invalid|expired|revoked)\b/im },
   // #14 §6: a machine whose VM agent never came back after a resize.
   { kind: "agent-silent", pattern: /\bcannot connect to VM agent\b/i },
-  // clap's conflict, when --vcpu or --memory meets --from-snapshot: a restore keeps its snapshot's size (F11).
-  { kind: "size-on-restore", pattern: /^error: the argument '--(?:vcpu|memory)[^']*' cannot be used with '--from-snapshot/im },
+  // --vcpu or --memory with --from-snapshot: a restore keeps its snapshot's size (F11). The CLI 0.3.5 binary's own
+  // words; provisional until live check L2 captures the whole answer.
+  { kind: "size-on-restore", pattern: /--vcpu\/--memory only apply to fresh machines|snapshot restores keep their source's size/i },
   // The org's quota does not allow the size asked for.
   { kind: "quota", pattern: /\b(?:exceeds|above|over) (?:your |the )?org(?:anization|anisation)?'?s? (?:size |machine size )?quota\b|\bsize (?:is )?not allowed by (?:your |the )?org/i },
   // No room for another machine (live check L5 pins the exact words).

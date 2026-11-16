@@ -16,7 +16,7 @@ import { createRunner, type Launch, type PluginRunner } from "./runner.js"
 export interface RuntimeSeam {
   readonly launch?: Launch
   readonly helperPath?: string
-  /** The laptop's `opencode`; the one on the server's PATH by default. */
+  /** The laptop's `opencode`, over the one the plugin resolved from the server's PATH. */
   readonly opencodeBin?: string
 }
 
@@ -24,10 +24,11 @@ export interface PluginRuntime extends Runtime {
   readonly runner: PluginRunner
 }
 
-export function createRuntime(host: Pick<HostServices, "boxdBin">, seam: RuntimeSeam = {}): PluginRuntime {
+export function createRuntime(host: Pick<HostServices, "boxdBin"> & Partial<Pick<HostServices, "opencodeBin">>, seam: RuntimeSeam = {}): PluginRuntime {
   const runner = createRunner(seam.launch ? { launch: seam.launch } : {})
   const boxd = createBoxdCli({ runner, bin: host.boxdBin })
   const guest = createGuestPort({ boxd, runner, ...(seam.helperPath ? { helperPath: seam.helperPath } : {}) })
-  const laptop = createLaptopPort({ runner, ...(seam.opencodeBin ? { bin: seam.opencodeBin } : {}) })
+  const opencodeBin = seam.opencodeBin ?? host.opencodeBin
+  const laptop = createLaptopPort({ runner, ...(opencodeBin ? { bin: opencodeBin } : {}) })
   return { runner, boxd, guest, laptop, dispose: () => runner.dispose() }
 }

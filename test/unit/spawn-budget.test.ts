@@ -118,7 +118,7 @@ describe("the steady-state sequences fit their rows", () => {
     expect(budgetProblems(row("boxd_harvest", "an idle work"), counter.count(call))).toEqual([])
   })
 
-  test("boxd_ensure of a new work from its image: one listing, the create, and one setup that finds the server up", async () => {
+  test("boxd_ensure of a new work from its image: one listing, the create, setup, and a fresh listing for one serve poll", async () => {
     counter.fake.snapshot({ region: "fra", name: "oc-golden-2.2.6-2x8" })
     // The image carries the helper, as a golden build installs it.
     const seed = counter.fake.machine({ name: "oc-seed", region: "fra" })
@@ -135,6 +135,9 @@ describe("the steady-state sequences fit their rows", () => {
     const target = { region: "fra", name: "oc-fresh", machineId: info.id, checkedAt: Date.now() } as unknown as ChangeTarget
     const setup = await runtime.runner.withMachineLock({ id: info.id }, context(call), () => runtime.guest.setup(target, { directory: "/home/boxd/work/fresh", opencode: "2.2.6" }, context(call, "boxd_ensure")))
     expect(setup).toMatchObject({ server: "up", workspace: "ready", helperUploaded: false })
+    // The wait's serve poll is a read: it needs a listing at most 2 s old that holds the new machine.
+    const listing = await runtime.boxd.list({ maxAgeMs: 0 }, context(call, "boxd_ensure"))
+    expect(await runtime.guest.serve({ region: "fra", name: "oc-fresh", listing, machineId: null }, context(call, "boxd_ensure"))).toMatchObject({ server: "up" })
     expect(budgetProblems(row("boxd_ensure", "a new work"), counter.count(call))).toEqual([])
     expect(counter.count(call)["machine cp"]).toBeUndefined()
   })

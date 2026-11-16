@@ -17,6 +17,8 @@ describe("the runtime on a stock host", () => {
     const runtime = createRuntime({ boxdBin: host.boxd.bin })
     try {
       const machine = host.boxd.fake.machine({ name: "oc-stop", region: "fra" })
+      // A command no other process on this machine runs, so every check below is about this test's own tree.
+      const marker = `sleep 60.${String(process.pid).padStart(7, "0")}${Math.floor(Math.random() * 1e6)}`
       const ctx = host.probe()
       const registration = await ctx.tool.transform((editor) => {
         editor.add({
@@ -29,7 +31,7 @@ describe("the runtime on a stock host", () => {
             try {
               await runtime.runner.withMachineLock({ id: machine.id as MachineId }, op, async () => {
                 const target = await runtime.boxd.checkOwned("fra", "oc-stop", machine.id as MachineId, op)
-                return runtime.boxd.exec(target, "sleep 60", { timeoutSeconds: 120, json: false }, op)
+                return runtime.boxd.exec(target, marker, { timeoutSeconds: 120, json: false }, op)
               })
               return { output: { state: "ran" }, content: "ran" }
             } catch (error) {
@@ -42,7 +44,7 @@ describe("the runtime on a stock host", () => {
       const executor = await until("the probe tool is registered", async () => (await ctx.tool.list()).find((item) => item.id === "runtime_stop_probe"))
       const stop = new AbortController()
       const run = executor.execute({}, { sessionID: "ses_probe", agent: "build", messageID: "msg_probe", id: "call_probe", signal: stop.signal, progress: async () => {} } as never)
-      await until("the remote command runs", async () => runtime.runner.health().pools.exec.running === 1 && host.boxd.fake.spawns().some((spawn) => spawn.argv.includes("sleep 60")))
+      await until("the remote command runs", async () => runtime.runner.health().pools.exec.running === 1 && host.boxd.fake.spawns().some((spawn) => spawn.argv.includes(marker)))
       const stoppedAt = Date.now()
       stop.abort()
       // The host may end the call itself on Stop (an interruption), or return what the tool answered.
@@ -54,8 +56,12 @@ describe("the runtime on a stock host", () => {
       expect([{ state: "cancelled", error: "CANCELLED", uncertain: true }, "interrupted by the host"]).toContainEqual(result as never)
       // Either way the tool saw the signal: the runner killed its child.
       await until("the runner has no child", async () => runtime.runner.health().children.now === 0, 5_000)
-      // Nothing the call started is left: the runner killed the CLI's process group, the remote command with it.
-      await until("the remote command is gone", async () => Bun.spawnSync(["pgrep", "-f", "^sleep 60$"]).stdout.toString().trim() === "", 5_000)
+      // Nothing the call started is left: the runner killed the CLI's process group (its pid is the group's id), and
+      // the remote command with it. Only this test's own processes are looked at.
+      const groups = host.boxd.fake.spawns().filter((spawn) => spawn.argv.includes(marker)).map((spawn) => spawn.pid)
+      expect(groups.length).toBeGreaterThan(0)
+      const left = () => [...groups.map((group) => Bun.spawnSync(["pgrep", "-g", String(group)]).stdout.toString().trim()), Bun.spawnSync(["pgrep", "-fx", marker]).stdout.toString().trim()].join("")
+      await until("the call's process tree is gone", async () => left() === "", 5_000)
       await registration.dispose()
     } finally {
       await runtime.dispose()

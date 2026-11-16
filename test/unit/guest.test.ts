@@ -78,6 +78,20 @@ describe("the helper on the machine", () => {
     expect(verbs().filter((verb) => verb === "machine cp")).toHaveLength(1)
   })
 
+  test("an upload that is not the copy the plugin sent installs nothing and changes nothing", async () => {
+    const upload = onDisk("/home/boxd/.opencode-boxd-upload.py")
+    writeFileSync(upload, readFileSync(new URL("../../guest/guest.py", import.meta.url)))
+    const target = await readTarget()
+    const result = await change((owned) =>
+      runtime.boxd.exec(owned, "python3 /home/boxd/.opencode-boxd-upload.py --install", { timeoutSeconds: 8, json: false, stdin: JSON.stringify({ action: "setup", helper: "0".repeat(64), directory: DIRECTORY }) }, context()),
+    )
+    expect(JSON.parse(result.stdout.trim())).toMatchObject({ ok: false, error: "HELPER_OUTDATED" })
+    expect(existsSync(upload)).toBe(false)
+    expect(existsSync(onDisk(GUEST_HELPER_PATH))).toBe(false)
+    expect(existsSync(onDisk(DIRECTORY))).toBe(false)
+    expect(target.name).toBe("oc-review-api")
+  })
+
   test("a read never uploads: a machine without the helper answers GUEST_FAILED with no copy", async () => {
     const error = await fail(runtime.guest.serve(await readTarget(), context()))
     expect(error?.code).toBe("GUEST_FAILED")

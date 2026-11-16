@@ -147,10 +147,12 @@ export function parseCreated(value: unknown, command: string): { readonly id: Ma
 }
 
 /**
- * `manage machine-limit --json`. Per region when the answer has `regions`; otherwise the org's one limit, which every
- * region shares, so each region reports the same headroom.
+ * `manage machine-limit --json`. Per region when the answer has `regions`. Otherwise the org's limit, which the CLI
+ * says each region applies to its own machines ("up to N in every region"): the caller counts each region's machines
+ * from a listing (`regionLimits`), because an org-wide count would understate every region's room. Both shapes are
+ * provisional until live check L3.
  */
-export function parseMachineLimit(value: unknown): RegionLimit[] {
+export function parseMachineLimit(value: unknown): { readonly perRegion: RegionLimit[] } | { readonly limit: number } {
   const item = record(value)
   const limitOf = (entry: Json) => number(entry.limit ?? entry.max_vms ?? entry.maxVms ?? entry.machine_limit)
   const inUseOf = (entry: Json) => number(entry.in_use ?? entry.inUse ?? entry.machines ?? entry.count ?? entry.used)
@@ -162,11 +164,18 @@ export function parseMachineLimit(value: unknown): RegionLimit[] {
       const inUse = inUseOf(entry)
       return region && limit !== undefined && inUse !== undefined ? [{ region, limit, inUse, free: Math.max(0, limit - inUse) }] : []
     })
-  if (perRegion.length > 0) return perRegion
+  if (perRegion.length > 0) return { perRegion }
   const limit = limitOf(item)
-  const inUse = inUseOf(item)
-  if (limit === undefined || inUse === undefined) throw boxdError("BOXD_FAILED", "manage machine-limit answered no limit or machine count.")
-  return REGIONS.map((region) => ({ region, limit, inUse, free: Math.max(0, limit - inUse) }))
+  if (limit === undefined) throw boxdError("BOXD_FAILED", "manage machine-limit answered no limit.")
+  return { limit }
+}
+
+/** One limit applied in every region, with each region's own machines counted from a listing. */
+export function regionLimits(limit: number, machines: readonly MachineRow[]): RegionLimit[] {
+  return REGIONS.map((region) => {
+    const inUse = machines.filter((machine) => machine.region === region && machine.status !== "destroyed").length
+    return { region, limit, inUse, free: Math.max(0, limit - inUse) }
+  })
 }
 
 const MICRO = 1_000_000

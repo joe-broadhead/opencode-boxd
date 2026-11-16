@@ -73,6 +73,8 @@ export interface FakeState {
 /** One child as the fake binaries logged it. */
 export interface FakeSpawn {
   readonly id: string
+  /** The fake's own pid: the runner starts it as a process group leader, so it is also its group's id. */
+  readonly pid: number
   readonly call: string | null
   readonly bin: "boxd" | "opencode"
   readonly argv: readonly string[]
@@ -207,14 +209,14 @@ export function startFakeCli(options: { readonly dir?: string; readonly version?
     calls: () => read().log,
     spawns() {
       const lines = readFileSync(`${statePath}.spawns.jsonl`, "utf8").split("\n").filter(Boolean)
-      const starts = new Map<string, { id: string; call: string | null; bin: "boxd" | "opencode"; argv: string[]; at: number }>()
+      const starts = new Map<string, { id: string; pid: number; call: string | null; bin: "boxd" | "opencode"; argv: string[]; at: number }>()
       const ends = new Map<string, number>()
       for (const line of lines) {
-        const entry = JSON.parse(line) as { phase: "start" | "end"; id: string; call: string | null; bin: "boxd" | "opencode"; argv: string[]; at: number }
+        const entry = JSON.parse(line) as { phase: "start" | "end"; id: string; pid: number; call: string | null; bin: "boxd" | "opencode"; argv: string[]; at: number }
         if (entry.phase === "start") starts.set(entry.id, entry)
         else ends.set(entry.id, entry.at)
       }
-      return [...starts.values()].map((start) => ({ id: start.id, call: start.call, bin: start.bin, argv: start.argv, startedAt: start.at, endedAt: ends.get(start.id) ?? Number.POSITIVE_INFINITY }))
+      return [...starts.values()].map((start) => ({ id: start.id, pid: start.pid, call: start.call, bin: start.bin, argv: start.argv, startedAt: start.at, endedAt: ends.get(start.id) ?? Number.POSITIVE_INFINITY }))
     },
     dispose() {
       if (!options.dir) rmSync(dir, { recursive: true, force: true })

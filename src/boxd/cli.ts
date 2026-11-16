@@ -23,7 +23,6 @@ import {
   type ReadTarget,
   type Region,
   type RegionLimit,
-  type Runner,
   type SnapshotRow,
   type SpawnResult,
 } from "../ports.js"
@@ -52,12 +51,12 @@ import {
 } from "./argv.js"
 import { classify, failure, type Asked } from "./errors-table.js"
 import { assertLaptopCli } from "./flavor.js"
-import { parseCreated, parseJson, parseListing, parseMachine, parseMachineLimit, parseSecrets, parseSnapshots, parseUsage } from "./parse.js"
+import { parseCreated, parseJson, parseListing, parseMachine, parseMachineLimit, parseSecrets, parseSnapshots, parseUsage, regionLimits } from "./parse.js"
 
 export interface BoxdCliOptions {
   /** The laptop boxd binary; `boxd` on the server's PATH by default. */
   readonly bin?: string
-  readonly runner: Runner
+  readonly runner: PluginRunner
   readonly now?: () => number
 }
 
@@ -70,20 +69,20 @@ export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
   const bin = options.bin ?? "boxd"
   const runner = options.runner
   const now = options.now ?? Date.now
-  /** The runner's own lock check, when it has one: a change outside its machine's lock is a bug, not a race. */
-  const holds = (runner as Partial<PluginRunner>).holds?.bind(runner)
+  /** A change outside its machine's lock is a bug, not a race. */
+  const holds = (key: MachineLockKey) => runner.holds(key)
 
   let listing: Listing | undefined
   let limits: { readonly at: number; readonly value: readonly RegionLimit[] } | undefined
   let snapshots: { readonly at: number; readonly value: readonly SnapshotRow[] } | undefined
 
   /** One CLI call: the flavour check first, then the child in its pool, then the stderr table on a failure. */
-  async function cli(args: readonly string[], context: OpContext, timeoutMs: number, asked: Asked = {}, stdin?: string): Promise<SpawnResult> {
+  async function cli(args: readonly string[], context: OpContext, timeoutMs: number, asked: Asked = {}, guard?: () => void): Promise<SpawnResult> {
     await assertLaptopCli(bin, runner, context)
     const command = `boxd ${args.filter((arg) => !arg.startsWith("-")).slice(0, 2).join(" ")}`
     let result: SpawnResult
     try {
-      result = await runner.spawn({ ...context, bin, args, timeoutMs, ...(stdin !== undefined ? { stdin } : {}) })
+      result = await runner.spawn({ ...context, bin, args, timeoutMs, ...(guard ? { guard } : {}) })
     } catch (error) {
       // A CLI that is not signed in starts a browser sign-in and waits: the timeout cut it, and its words say why.
       const partial = partialOutput(error)
@@ -119,12 +118,18 @@ export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
   }
 
   async function exec(target: ReadTarget | ChangeTarget, command: string, settings: { readonly timeoutSeconds: number; readonly json: boolean; readonly stdin?: string }, context: OpContext) {
-    if (isChangeTarget(target)) change(target, context.pool)
-    else runner.assertReadable(target)
+    const guard = readGuard(target, context.pool)
     const args = execArgs(target.region, target.name, command, settings.timeoutSeconds, settings.json)
     await assertLaptopCli(bin, runner, context)
     // boxd kills the remote command at its timeout; the laptop kills the CLI shortly after, should it not return.
-    const result = await runner.spawn({ ...context, bin, args, timeoutMs: settings.timeoutSeconds * 1000 + TIMEOUTS.killGraceMs, ...(settings.stdin !== undefined ? { stdin: settings.stdin } : {}) })
+    const result = await runner.spawn({
+      ...context,
+      bin,
+      args,
+      timeoutMs: settings.timeoutSeconds * 1000 + TIMEOUTS.killGraceMs,
+      ...(settings.stdin !== undefined ? { stdin: settings.stdin } : {}),
+      ...(guard ? { guard } : {}),
+    })
     if (settings.json) {
       if (result.code !== 0) {
         const classified = classify(`${result.stderr}\n${result.stdout}`, { machine: target.name, region: target.region })
@@ -140,20 +145,36 @@ export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
     return result
   }
 
+  async function list(settings: { readonly maxAgeMs: number }, context: OpContext): Promise<Listing> {
+    if (settings.maxAgeMs <= 0) {
+      // The gone rule and the import need a listing taken in this call; it still refreshes the shared one.
+      listing = await takeListing(context)
+      return listing
+    }
+    if (listing && now() - listing.takenAt <= settings.maxAgeMs) return { ...listing, fresh: false }
+    const taken = await runner.join("boxd:list", context, takeListing)
+    listing = taken
+    return { ...taken, fresh: false }
+  }
+
+  /**
+   * A change target passes the change check now; a read target passes the read rule now, so a refused read starts
+   * nothing, and again when its slot is granted, so a read that waited in a queue never starts on a listing that has
+   * since gone stale or on a machine that has since gone to sleep (M1).
+   */
+  function readGuard(target: ReadTarget | ChangeTarget, pool?: OpContext["pool"]): (() => void) | undefined {
+    if (isChangeTarget(target)) {
+      change(target, pool)
+      return undefined
+    }
+    runner.assertReadable(target)
+    return () => runner.assertReadable(target)
+  }
+
   return {
     assertLaptopCli: (context) => assertLaptopCli(bin, runner, context),
 
-    async list(settings, context) {
-      if (settings.maxAgeMs <= 0) {
-        // The gone rule and the import need a listing taken in this call; it still refreshes the shared one.
-        listing = await takeListing(context)
-        return listing
-      }
-      if (listing && now() - listing.takenAt <= settings.maxAgeMs) return { ...listing, fresh: false }
-      const taken = await runner.singleFlight("boxd:list", () => takeListing(context))
-      listing = taken
-      return { ...taken, fresh: false }
-    },
+    list,
 
     get,
 
@@ -253,16 +274,21 @@ export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
     },
 
     async copyFrom(target, guestPath, localPath, context) {
-      if (isChangeTarget(target)) change(target)
-      else runner.assertReadable(target)
-      await cli(copyFromArgs(target.region, target.name, guestPath, localPath), context, TIMEOUTS.cp, { machine: target.name, region: target.region })
+      const guard = readGuard(target)
+      await cli(copyFromArgs(target.region, target.name, guestPath, localPath), context, TIMEOUTS.cp, { machine: target.name, region: target.region }, guard)
     },
 
     async machineLimit(context) {
       if (limits && now() - limits.at <= TIMEOUTS.machineLimitCacheMs) return limits.value
-      return runner.singleFlight("boxd:machine-limit", async () => {
-        const result = await cli(machineLimitArgs(), context, TIMEOUTS.cliRead)
-        const value = parseMachineLimit(parseJson(result.stdout, "boxd manage machine-limit"))
+      return runner.join("boxd:machine-limit", context, async (flight) => {
+        const result = await cli(machineLimitArgs(), flight, TIMEOUTS.cliRead)
+        const answer = parseMachineLimit(parseJson(result.stdout, "boxd manage machine-limit"))
+        // The org-wide answer is a limit that every region applies to its own machines (provisional until live
+        // check L3): each region's use is counted from the listing, never taken from the org's total.
+        const value =
+          "perRegion" in answer
+            ? answer.perRegion
+            : regionLimits(answer.limit, (await list({ maxAgeMs: TIMEOUTS.phaseListingMaxAgeMs }, flight)).machines)
         limits = { at: now(), value }
         return value
       })
@@ -282,8 +308,8 @@ export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
 
     async snapshots(context) {
       if (snapshots && now() - snapshots.at <= TIMEOUTS.snapshotsCacheMs) return snapshots.value
-      return runner.singleFlight("boxd:snapshots", async () => {
-        const result = await cli(snapshotsArgs(), context, TIMEOUTS.cliRead)
+      return runner.join("boxd:snapshots", context, async (flight) => {
+        const result = await cli(snapshotsArgs(), flight, TIMEOUTS.cliRead)
         const value = parseSnapshots(parseJson(result.stdout, "boxd snapshots list"))
         snapshots = { at: now(), value }
         return value

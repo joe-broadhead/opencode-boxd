@@ -29,7 +29,7 @@ const argv = process.argv.slice(asOpencode ? 3 : 2)
 const spawnId = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 const spawnLog = `${statePath}.spawns.jsonl`
 const logLine = (value) => appendFileSync(spawnLog, `${JSON.stringify(value)}\n`)
-logLine({ phase: "start", id: spawnId, call: process.env.OPENCODE_BOXD_CALL ?? null, bin: asOpencode ? "opencode" : "boxd", argv, at: Date.now() })
+logLine({ phase: "start", id: spawnId, pid: process.pid, call: process.env.OPENCODE_BOXD_CALL ?? null, bin: asOpencode ? "opencode" : "boxd", argv, at: Date.now() })
 const ended = () => logLine({ phase: "end", id: spawnId, at: Date.now() })
 process.on("exit", ended)
 for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, () => process.exit(143))
@@ -254,7 +254,7 @@ switch (verb) {
   case "machine new": {
     const name = positionals[0]
     if (flags["--shared"] || flags["--isolated"]) fail("the plugin must never ask for --shared or --isolated")
-    if ((flags["--vcpu"] || flags["--memory"]) && flags["--from-snapshot"]) fail("error: the argument '--vcpu <VCPU>' cannot be used with '--from-snapshot <FROM_SNAPSHOT>'", 2)
+    if ((flags["--vcpu"] || flags["--memory"]) && flags["--from-snapshot"]) fail("error: --vcpu/--memory only apply to fresh machines; forks and snapshot restores keep their source's size")
     const created = update((state) => {
       if (find(state, region, name)) fail(`error: a machine named "${name}" already exists in ${region}`)
       const used = state.machines.filter((machine) => machine.region === region && machine.status !== "destroyed").length

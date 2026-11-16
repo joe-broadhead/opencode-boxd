@@ -14,7 +14,8 @@ const FIXTURES = {
   unknownRegion: 'error: unknown region "ams"\n',
   agent: "error: cannot connect to VM agent: connection refused\n",
   signIn: "Not logged in. Let's fix that.\n\n  Was not able to launch a web browser\n  Please go to this URL manually and complete the sign-in:\n",
-  sizeOnRestore: "error: the argument '--vcpu <VCPU>' cannot be used with '--from-snapshot <FROM_SNAPSHOT>'\n\nUsage: boxd machine new --vcpu <VCPU> [NAME]\n",
+  sizeOnRestore: "error: --vcpu/--memory only apply to fresh machines; forks and snapshot restores keep their source's size\n",
+  clapConflict: "error: the argument '--vcpu <VCPU>' cannot be used with '--from-snapshot <FROM_SNAPSHOT>'\n",
   limit: "error: your org has reached its machine limit (2 machines in fra). Ask for more with `boxd manage machine-limit request --max-vms <n>`.\n",
   quota: "error: 8 vCPU exceeds your org's size quota (4 vCPU)\n",
 } as const
@@ -47,6 +48,8 @@ describe("classify", () => {
     expect(classify(FIXTURES.agent).kind).toBe("agent-silent")
     expect(classify(FIXTURES.signIn).kind).toBe("auth")
     expect(classify(FIXTURES.sizeOnRestore).kind).toBe("size-on-restore")
+    // clap never raises this conflict for the real CLI; words it does not print are not this kind.
+    expect(classify(FIXTURES.clapConflict).kind).toBe("unknown")
     expect(classify(FIXTURES.limit).kind).toBe("limit")
     expect(classify(FIXTURES.quota).kind).toBe("quota")
   })
