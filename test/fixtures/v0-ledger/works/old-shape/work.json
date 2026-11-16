@@ -1,0 +1,38 @@
+{
+  "workId": "old-shape",
+  "machine": "oc-old-shape",
+  "snapshot": "opencode-golden",
+  "laptopDirectory": "/work/projects/old",
+  "guestDirectory": "/home/boxd/work/old-shape",
+  "repo": "https://github.com/acme/old",
+  "rootSessionId": "ses_oldroot",
+  "lastSubmitAt": "2025-11-10T10:00:00.000Z",
+  "proof": {
+    "harvestedAt": "2025-11-10T11:00:00.000Z",
+    "guestVersion": "2.2.3",
+    "sessions": [
+      {
+        "remoteId": "ses_oldroot",
+        "importedId": "ses_oldroot"
+      }
+    ],
+    "sha256": {
+      "ses_oldroot": "d2c87dff72dccb08c12596eca7780c72080a9655f90c89437fa46d0e3f2246a1"
+    }
+  },
+  "lastOutcome": {
+    "state": "aborted",
+    "at": "2025-11-10T11:00:00.000Z"
+  },
+  "git": {
+    "known": false,
+    "remote": null,
+    "branch": null,
+    "sha": null,
+    "dirty": false,
+    "patchStored": false,
+    "untracked": [],
+    "ignored": [],
+    "untrackedStored": false
+  }
+}

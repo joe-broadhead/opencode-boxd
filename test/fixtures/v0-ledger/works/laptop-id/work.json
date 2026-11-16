@@ -1,0 +1,33 @@
+{
+  "workId": "laptop-id",
+  "machine": "oc-laptop-id",
+  "snapshot": "opencode-golden",
+  "laptopDirectory": "/work/projects/api",
+  "guestDirectory": "/home/boxd/work/laptop-id",
+  "rootSessionId": "ses_remoteroot",
+  "lastSubmitAt": "2025-11-14T16:00:00.000Z",
+  "proof": {
+    "harvestedAt": "2025-11-14T16:30:00.000Z",
+    "guestVersion": "2.2.6",
+    "sessions": [
+      {
+        "remoteId": "ses_remoteroot",
+        "importedId": "ses_laptoproot"
+      }
+    ],
+    "sha256": {
+      "ses_remoteroot": "61c6b5c3e8379979ed31afe6316467fac62f4ce1c884abb20c4ebf0c6461867e"
+    }
+  },
+  "git": {
+    "known": true,
+    "remote": "https://github.com/acme/api.git",
+    "branch": "main",
+    "sha": "0123456789abcdef0123456789abcdef01234567",
+    "dirty": false,
+    "patchStored": false,
+    "untracked": [],
+    "ignored": [],
+    "untrackedStored": false
+  }
+}

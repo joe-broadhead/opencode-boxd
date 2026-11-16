@@ -1,0 +1,11 @@
+{
+  "workId": "pending-create",
+  "machine": "oc-pending-create",
+  "snapshot": "opencode-golden",
+  "laptopDirectory": "/work/projects/api",
+  "guestDirectory": "/home/boxd/work/pending-create",
+  "pendingCreate": {
+    "at": "2025-11-14T13:00:00.000Z",
+    "snapshot": "opencode-golden"
+  }
+}

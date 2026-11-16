@@ -1,0 +1,34 @@
+{
+  "workId": "dropped-work",
+  "machine": "oc-dropped-work",
+  "snapshot": "opencode-golden",
+  "laptopDirectory": "/work/projects/api",
+  "guestDirectory": "/home/boxd/work/dropped-work",
+  "rootSessionId": "ses_droproot",
+  "lastSubmitAt": "2025-11-13T08:00:00.000Z",
+  "proof": {
+    "harvestedAt": "2025-11-13T09:00:00.000Z",
+    "guestVersion": "2.2.5",
+    "sessions": [
+      {
+        "remoteId": "ses_droproot",
+        "importedId": "ses_droproot"
+      }
+    ],
+    "sha256": {
+      "ses_droproot": "6850d63c3a6c4abecc1b65553486da02f2c4391d0ec2f9c8b25a7835b523f458"
+    }
+  },
+  "git": {
+    "known": true,
+    "remote": "https://github.com/acme/api.git",
+    "branch": "main",
+    "sha": "0123456789abcdef0123456789abcdef01234567",
+    "dirty": false,
+    "patchStored": false,
+    "untracked": [],
+    "ignored": [],
+    "untrackedStored": false
+  },
+  "dropped": true
+}
