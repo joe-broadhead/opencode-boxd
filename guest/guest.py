@@ -906,22 +906,38 @@ def entry(root, name):
 
 def pinned_git(directory, *args, text=True):
     """git on the work folder alone: discovery stops at the folder's parent (GIT_CEILING_DIRECTORIES), so a work folder
-    nested inside another repository is never read as part of it."""
-    env = dict(os.environ)
+    nested inside another repository is never read as part of it. Every inherited GIT_* variable (GIT_DIR,
+    GIT_WORK_TREE, GIT_COMMON_DIR, GIT_INDEX_FILE, GIT_OBJECT_DIRECTORY and the rest) is dropped, so the guest's
+    environment can neither point git at another repository nor make the read fail."""
+    env = {name: value for name, value in os.environ.items() if not name.startswith("GIT_")}
     env["GIT_CEILING_DIRECTORIES"] = os.path.dirname(os.path.realpath(directory))
-    env.pop("GIT_DIR", None)
-    env.pop("GIT_WORK_TREE", None)
     return subprocess.run(["git", "-C", directory, *args], capture_output=True, text=text, env=env)
+
+
+def under(path, root):
+    """True when the real path is the root or under it."""
+    real, top = os.path.realpath(path), os.path.realpath(root)
+    return real == top or real.startswith(top + os.sep)
 
 
 def own_repository(directory):
     """True when the work folder is the top of its own repository; false when it is in none. A repository whose top is
-    elsewhere is refused: its state is not the work's."""
+    elsewhere is refused, and so is one whose git data lies outside the work folder (a `.git` file or symlink linking
+    to another repository's gitdir, or a linked worktree): works are plain clones, and another repository's history is
+    not the work's."""
     top = pinned_git(directory, "rev-parse", "--show-toplevel")
     if top.returncode != 0:
         return False
     if os.path.realpath(top.stdout.strip()) != os.path.realpath(directory):
         fail("GIT_UNKNOWN", "the work folder is not the top of its own git repository")
+    dirs = pinned_git(directory, "rev-parse", "--absolute-git-dir", "--git-common-dir")
+    lines = dirs.stdout.strip().split("\n") if dirs.returncode == 0 else []
+    if len(lines) != 2:
+        fail("GUEST_FAILED", "git rev-parse failed: " + dirs.stderr.strip()[-200:])
+    git_dir = lines[0]
+    common = lines[1] if os.path.isabs(lines[1]) else os.path.join(directory, lines[1])
+    if not under(git_dir, directory) or not under(common, directory):
+        fail("GIT_UNKNOWN", "the work folder's git data lies outside it (a .git link to another repository); works are plain clones")
     return True
 
 

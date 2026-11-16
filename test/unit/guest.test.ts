@@ -273,6 +273,57 @@ describe("the work tree", () => {
     expect([error?.code, error?.what]).toEqual(["GIT_UNKNOWN", "The guest helper's git failed (the work folder is not the top of its own git repository)."])
   })
 
+  test("git ignores every inherited GIT_* variable: the work's own repository is read, never another, and nothing fails", async () => {
+    await setup()
+    const git = (...args: string[]) => Bun.spawnSync(["git", "-C", onDisk(DIRECTORY), ...args])
+    const outer = onDisk("/home/boxd")
+    Bun.spawnSync(["git", "init", "--quiet", outer])
+    git("init", "--quiet")
+    writeFileSync(onDisk(`${DIRECTORY}/a.txt`), "a")
+    git("add", "a.txt")
+    git("-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "--quiet", "-m", "a")
+    const inherited = {
+      GIT_DIR: join(outer, ".git"),
+      GIT_WORK_TREE: outer,
+      GIT_COMMON_DIR: join(outer, ".git"),
+      GIT_INDEX_FILE: join(fake.dir, "no-such-index"),
+      GIT_OBJECT_DIRECTORY: join(fake.dir, "no-such-objects"),
+      GIT_CEILING_DIRECTORIES: "",
+    }
+    const saved = Object.fromEntries(Object.keys(inherited).map((name) => [name, process.env[name]]))
+    Object.assign(process.env, inherited)
+    try {
+      const answer = await change((target) => runtime.guest.git(target, { directory: DIRECTORY }, context()))
+      expect(answer).toMatchObject({ known: true, dirty: false, untracked: [] })
+      expect(answer.sha).toMatch(/^[0-9a-f]{40}$/)
+    } finally {
+      for (const [name, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[name]
+        else process.env[name] = value
+      }
+    }
+  })
+
+  test("git refuses a .git link to another repository's git data, as a file or a symlink: works are plain clones", async () => {
+    await setup()
+    const git = (...args: string[]) => Bun.spawnSync(["git", "-C", onDisk(DIRECTORY), ...args])
+    const other = join(fake.dir, "other")
+    Bun.spawnSync(["git", "init", "--quiet", other])
+    writeFileSync(onDisk(`${DIRECTORY}/.git`), `gitdir: ${join(other, ".git")}\n`)
+    const linked = await fail(change((target) => runtime.guest.git(target, { directory: DIRECTORY }, context())))
+    expect([linked?.code, linked?.what]).toEqual([
+      "GIT_UNKNOWN",
+      "The guest helper's git failed (the work folder's git data lies outside it (a .git link to another repository); works are plain clones).",
+    ])
+    rmSync(onDisk(`${DIRECTORY}/.git`))
+    symlinkSync(join(other, ".git"), onDisk(`${DIRECTORY}/.git`))
+    expect((await fail(change((target) => runtime.guest.git(target, { directory: DIRECTORY }, context()))))?.code).toBe("GIT_UNKNOWN")
+    // Its own plain repository is read as before.
+    rmSync(onDisk(`${DIRECTORY}/.git`))
+    git("init", "--quiet")
+    expect(await change((target) => runtime.guest.git(target, { directory: DIRECTORY }, context()))).toMatchObject({ known: true })
+  })
+
   test("git on a folder that is not a repository says so", async () => {
     await setup()
     expect(await change((target) => runtime.guest.git(target, { directory: DIRECTORY }, context()))).toMatchObject({ known: false, dirty: false, untracked: [], ignored: [] })
