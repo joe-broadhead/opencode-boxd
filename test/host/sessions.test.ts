@@ -243,18 +243,25 @@ describe("package C2 on a stock host", () => {
       const spawns = host.boxd.fake.spawns().filter((spawn) => spawn.startedAt >= started)
       const boxd = spawns.filter((spawn) => spawn.bin === "boxd").map((spawn) => ({ call: spawn.call, bin: spawn.bin, argv: spawn.argv, verb: verbOf(spawn.bin, spawn.argv), startedAt: spawn.startedAt, endedAt: spawn.endedAt }))
       expect(peakOf(boxd)).toBeLessThanOrEqual(CAPS.shared)
-      // Every exec in the window, by the helper action it asked for, its machine and its call. Exactly one prompt per
-      // work, each from the submit's own call: a submit never reaches a guest twice. A call that outlasts the watcher's
-      // 60 s interval (a slow test machine) also sees the watcher's phase reads of the works it made busy; anything
-      // else is a bug.
+      // Every exec in the window, classified by the call it belongs to (the runner's tag), never by the action the fake
+      // logged: the fake logs an action only once it has read the exec's stdin, so a watcher read cut off on a slow
+      // machine logs none. A call that outlasts the watcher's 60 s interval (a slow test machine) also sees the
+      // watcher's reads of the works it made busy.
       const execs = spawns.filter((spawn) => spawn.bin === "boxd" && verbOf(spawn.bin, spawn.argv) === "machine exec").map((spawn) => ({ machine: spawn.argv[2], action: spawn.action, call: spawn.call }))
-      const prompts = execs.filter((exec) => exec.action === "prompt")
-      expect(prompts).toHaveLength(300)
-      expect(new Set(prompts.map((exec) => exec.machine)).size).toBe(300)
-      expect(new Set(prompts.map((exec) => exec.call)).size).toBe(1)
-      expect(prompts[0]!.call?.startsWith("watcher-")).toBe(false)
-      expect(execs.filter((exec) => exec.action !== "prompt" && !(exec.action === "phase" && exec.call?.startsWith("watcher-")))).toEqual([])
-      expect(lag).toBeLessThan(150)
+      const watcher = (call: string | null) => call !== null && call.startsWith("watcher-")
+      const own = execs.filter((exec) => !watcher(exec.call))
+      // The submit's own execs: exactly 300 prompts, one per machine, all from the one submit call. A submit never
+      // reaches a guest twice, and nothing else (no other call, no untagged child) runs an exec in the window.
+      expect(own).toHaveLength(300)
+      expect(own.filter((exec) => exec.action !== "prompt")).toEqual([])
+      expect(new Set(own.map((exec) => exec.machine)).size).toBe(300)
+      expect(new Set(own.map((exec) => exec.call)).size).toBe(1)
+      expect(own[0]!.call).not.toBeNull()
+      // Every other exec is the watcher's, with any action or none, and never a prompt.
+      expect(execs.filter((exec) => watcher(exec.call) && exec.action === "prompt")).toEqual([])
+      // The event loop stays free: a loop the 300 items blocked would stall for seconds. The bound leaves headroom for
+      // a slow shared runner's scheduling, which has delayed one 50 ms tick by about 150 ms with no stall at all.
+      expect(lag).toBeLessThan(500)
     } finally {
       await host.close()
     }
