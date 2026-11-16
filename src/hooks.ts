@@ -49,7 +49,7 @@ interface RequestLike {
 
 /**
  * A new `user` message holding only `text`. Made with the class of the request's own messages, so it is the same kind
- * of value OpenCode built (the plugin may not import `@opencode/ai`); a plain object when they are plain.
+ * of value OpenCode built (the plugin imports no AI package of its own); a plain object when they are plain.
  */
 export function userMessage(messages: readonly unknown[], text: string): unknown {
   const init = { role: "user", content: [{ type: "text", text }] }

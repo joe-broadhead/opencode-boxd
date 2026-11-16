@@ -132,7 +132,7 @@ export function record(workId: string, over: Partial<WorkRecord> = {}): WorkReco
     machineId: `vm_${workId}` as MachineId,
     size: "4x16",
     image: { name: "oc-golden-2.2.3-4x16", opencode: "2.2.3" },
-    laptopDirectory: "/tmp/w",
+    laptopDirectory: "/work/laptop",
     guestDirectory: `/home/boxd/work/${workId}`,
     createdAt: minutesAgo(T0, 600),
     session: { rootId: `ses_${workId}`, notify: "ses_coord" },
