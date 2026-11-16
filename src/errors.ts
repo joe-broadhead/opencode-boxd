@@ -53,7 +53,7 @@ export const CODES = {
   NOT_OURS: {
     state: "refused",
     message:
-      "No open work has this id; or oc-<id> now has another id than the recorded machineId; or the recorded machine lives under another name; or two regions hold oc-<id>. Nothing was changed.",
+      "No open work has this id; or oc-<id> now has another id than the recorded machineId; or the recorded machine lives under another name; or two regions hold oc-<id>; or the machine to adopt is one another open work records (even with adopt: true). Nothing was changed.",
     next: "For an unknown id, boxd_ensure({ workId }). Otherwise look at the machines the message names with boxd machine get, and rename them back or boxd_reassign.",
   },
   NOT_REASSIGNABLE: {

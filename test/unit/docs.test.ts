@@ -8,6 +8,7 @@ import { CODES } from "../../src/errors.js"
 import { COMMAND_STEM, TESTED_HOSTS } from "../../src/constants.js"
 import { CHANGING_TOOLS, TOOLS } from "../../src/tools.js"
 import { defaultRules } from "../../src/permissions.js"
+import { DEFAULT_OPTIONS, parseOptions } from "../../src/options.js"
 
 const root = new URL("../../", import.meta.url)
 const read = (path: string) => readFileSync(new URL(path, root), "utf8")
@@ -215,6 +216,21 @@ describe("the docs set", () => {
     expect(jelly).toContain("Every tool the plugin registers is declared")
     expect(jelly).toContain("Jelly applies the `access` setting itself")
     expect(jelly).not.toContain("a declared `allow` changes nothing in Jelly")
+  })
+
+  test("configuration has one Options row for every option the parser takes, with its default", () => {
+    const section = CONFIG.slice(CONFIG.indexOf("## Options"), CONFIG.indexOf("## Where the ledger lives"))
+    const rows = new Map([...section.matchAll(/^\| `([A-Za-z]+)` \| ([^|]+) \|/gm)].map((match) => [match[1]!, match[2]!.trim()]))
+    // The options with no default: each is accepted, and left out when not given.
+    const optional = { git: { name: "Work", email: "work@example.invalid" }, goldenSetup: "/srv/setup.sh", budget: { daily: 5, action: "warn" } }
+    expect([...rows.keys()].sort()).toEqual([...Object.keys(DEFAULT_OPTIONS), ...Object.keys(optional)].sort())
+    for (const [key, value] of Object.entries(DEFAULT_OPTIONS)) {
+      expect({ key, documented: rows.get(key)!.replace(/[`\s]/g, "") }).toEqual({ key, documented: JSON.stringify(value) })
+    }
+    for (const [key, value] of Object.entries(optional)) {
+      expect({ key, documented: rows.get(key) }).toEqual({ key, documented: "none" })
+      expect(parseOptions({ [key]: value })).toMatchObject({ [key]: value })
+    }
   })
 
   test("the AGENTS file states the rules the checks enforce", () => {

@@ -181,7 +181,8 @@ export const LIST_WAIT_CREATED_ABOVE = 50
 export const POLL_INTERVAL_MS = 3_000
 /**
  * `B`: the longest any tool call waits before it answers its real state (`creating`, `starting`) or `cancelled`
- * with `started: false`. Set from the host's measured limit less 30 s (§7.2); 4 minutes until then.
+ * with `started: false`. Calls of 2, 5 and 10 minutes finished on every tested host, through Code Mode and the tools
+ * RPC (§7.2); a longer call was not measured, so `B` stays well inside that.
  */
 export const CALL_BOUND_MS = 4 * 60_000
 

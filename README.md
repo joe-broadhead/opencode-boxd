@@ -211,7 +211,7 @@ A tool that fails returns `state`, `error` (the code), `message` (what happened)
 | `PATH_REFUSED` | A laptop path is outside the project and the allowed roots, or is a symlink. Name its root in `allowedRoots`, and allow it with the `external_directory` rule. |
 | `FILE_TOO_LARGE` | A file is over 8 MiB, or the call is over 32 MiB. Move a smaller file, or split it. |
 | `FILE_CONFLICT` | A harvested file changed on the laptop since the last harvest, so it was not overwritten. Keep the edit and leave that path out, or restore it and harvest again. |
-| `NOT_OURS` | No open work has this id, or `oc-<work id>` now has another machine id than the ledger records, or two regions hold it. Nothing was changed. `boxd_ensure` for an unknown id; otherwise look at the machines the message names. |
+| `NOT_OURS` | No open work has this id, or `oc-<work id>` now has another machine id than the ledger records, or two regions hold it, or the machine to adopt is another open work's (even with `adopt: true`). Nothing was changed. `boxd_ensure` for an unknown id; otherwise look at the machines the message names. |
 | `NOT_REASSIGNABLE` | `from` has a session, uploaded files or a dirty tree, or `to` is an open work. Drop it after a harvest, or reassign a work with no prompt yet. |
 | `MACHINE_LIMIT` | No region has room; `limit`, `inUse` and `free` are given per region. Pass the other `region` when it has room; otherwise free machines with `boxd_drop` or `boxd_reassign`, or have the owner raise the limit. |
 | `SIZE_UNAVAILABLE` | The organisation's quota does not allow this size. Pick a smaller `size`. |
@@ -268,13 +268,34 @@ and notices, health, tools, agents without the default rules, the OpenCode versi
 
 ## Known limits
 
-- **No live check has run against this release yet.** The release rests on the unit and host suites and on the boxd
-  behaviour measured for earlier releases, against one account:
-  [docs/architecture.md](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/architecture.md) records each
-  measurement, and [docs/live-check.md](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/live-check.md)
-  lists the live checks, L1 to L13, ready to run. Until live check L3 runs, the per-region shape of
+- **No live check has run against this release.** Not one of the live checks L1 to L13 in
+  [docs/live-check.md](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/live-check.md) has run: L1 (regions,
+  ids and the listing's keys), L2 (the creation flags and idle billing), L3 (the machine limit and usage shapes), L4
+  (boxd's not-found words), L5 (the machine limit's refusal), L6 (many resizes and the VM agent), L7 (golden builds),
+  L8 (steer, queue and interrupt on a real model), L9 (rename and labels), L10 (a second harvest and a bypassing
+  prompt), L11 (the import of a real earlier ledger), L12 (the parallel-ensure stall on the owner's Mac) and L13 (the
+  macOS paths). The release rests on the unit and host suites and on the boxd behaviour measured for earlier releases,
+  against one account, which
+  [docs/architecture.md](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/architecture.md) records.
+- **The machine limit and usage are read from boxd's documentation.** Until L3 runs, the per-region shape of
   `manage machine-limit --json` and the keys of `manage usage --json` are read as boxd's documentation describes them,
-  unconfirmed against real boxd; the region headroom in status and the machine cost rest on that reading.
+  unconfirmed against real boxd; the region headroom in status, `MACHINE_LIMIT`'s numbers, `auto`'s region choice and
+  the machine cost rest on that reading, and L3 may change it.
+- **A call waits at most 4 minutes, measured up to 10.** A tool call answers its real state (`creating`, `starting`)
+  with a `next` after at most 4 minutes. Calls of 2, 5 and 10 minutes finished on every tested OpenCode, through Code
+  Mode and the tools RPC; whether a longer call would be cut was not measured.
+- **Model spend is not measured.** `cost.today`, the budget and `/boxd-cleanup` count boxd's machine cost only, as boxd
+  estimates it, and the per-hour figure is the plugin's estimate from boxd's rates; what the guests' models cost is not
+  in any figure.
+- **Automation consent is per OpenCode process.** `automation` and `access` are read by each OpenCode process, and the
+  ledger is one per laptop: a process at `access: "all"`, or with `automation: "on"`, also harvests and hibernates the
+  finished works that a project at `"ask-changes"` created.
+- **A harvest's copy can be raced by your own user.** Each laptop path is checked before the copy (inside a root, no
+  symlink) and the file is renamed into place after it is verified; a process running as your own user that swaps a
+  folder on that path for a symlink in between can still redirect the file. Another user cannot.
+- **The import of earlier works is time-limited.** This release imports the ledger of the earlier releases once, and
+  reads and adopts a guest still running the earlier helper; the v0.2 line removes that import, so a laptop that skips
+  this release cannot bring its earlier works forward.
 - **The laptop's boxd CLI only.** The CLI inside a boxd machine acts in one region and has no organisation usage, so
   every tool answers `BOXD_MISSING` on it, and no machine is changed.
 - **"Gone" takes two checks.** A work's machine counts as gone only when a fresh all-region listing has no

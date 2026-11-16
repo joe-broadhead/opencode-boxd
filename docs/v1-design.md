@@ -898,8 +898,8 @@ build in flight), it leaves its item slot and joins one shared poll loop. That l
 300 waiting items cost about one listing plus the `serve` polls of machines already running.
 
 **The time bound is honest.** The plugin measures nothing it cannot keep: a list call has a bound `B`, set below the
-longest tool call the host and Code Mode allow (measured in §7.2, with 30 s of margin; until then
-`B = 4 minutes`). What a list can finish in `B` is roughly: creates at about 1 s each through 8 item slots
+longest tool call the host and Code Mode allow (§7.2). `B = 4 minutes`: calls of 2, 5 and 10 minutes finished on all
+six hosts through Code Mode and the tools RPC, and longer calls were not measured. What a list can finish in `B` is roughly: creates at about 1 s each through 8 item slots
 (300 → about 40 s), one `setup` each (about 2 to 5 s, so 300 → 75 to 190 s), and the waits in parallel. One ensure of
 300 new works fits only when the clones are small. So when `B` runs out:
 
@@ -1232,7 +1232,7 @@ Every error is `CODE: What happened. Next step: What to do.`, built through `box
 | `PATH_REFUSED` | refused | A laptop path is outside the project and `allowedRoots`, or is a symlink. | Pass a path inside the project, or add its root to `allowedRoots` and allow it with `external_directory`. |
 | `FILE_TOO_LARGE` | refused | Over 8 MiB a file or 32 MiB a call. | Move a smaller file, or split it. |
 | `FILE_CONFLICT` | refused | The laptop file changed since the last harvest. | Keep the edit and leave that path out, or restore it and harvest again. |
-| `NOT_OURS` | refused | No open work with this id; or `oc-<id>` now has another id than the recorded `machineId` (renamed, re-pointed); or the recorded machine lives under another name; or two regions hold `oc-<id>`. Nothing was changed. | `boxd_ensure({ workId })` for an unknown id; otherwise look at the machines the message names with `boxd machine get`, and rename them back or `boxd_reassign`. |
+| `NOT_OURS` | refused | No open work with this id; or `oc-<id>` now has another id than the recorded `machineId` (renamed, re-pointed); or the recorded machine lives under another name; or two regions hold `oc-<id>`; or the machine to adopt is one another open work records (even with `adopt: true`). Nothing was changed. | `boxd_ensure({ workId })` for an unknown id; otherwise look at the machines the message names with `boxd machine get`, and rename them back or `boxd_reassign`. |
 | `NOT_REASSIGNABLE` | refused | `from` has a session, uploaded files or a dirty tree, or `to` is open. | `boxd_drop` it after a harvest, or pick a work with no prompt yet. |
 | `MACHINE_LIMIT` | refused | No region has room; `limit`, `inUse` and `free` per region. | `region: "<other>"` when it has room; otherwise free machines (`boxd_drop`, `boxd_reassign`) or ask for more: `boxd manage machine-limit request --max-vms <n>` (owner). |
 | `SIZE_UNAVAILABLE` | refused | The org's quota does not allow this size. | Pick a smaller `size`. |
@@ -1542,7 +1542,8 @@ machine-limit, usage, rename, reboot, label, a configurable latency, an injected
   event-loop delay under 150 ms in the server process, sampled by the test;
 - **the longest call the host allows:** a tool that sleeps on its signal for 2, 5, 10 and 20 minutes, called from the
   model path, from Code Mode and from the tools RPC, on every host. The shortest limit found, less 30 s, becomes the
-  list bound `B` (§4.2). If a host has no limit, `B` stays 4 minutes;
+  list bound `B` (§4.2). Measured: 2, 5 and 10 minutes finished on all six hosts through Code Mode and the tools RPC;
+  20 minutes was not measured, so `B` stays 4 minutes;
 - **the cost hooks on every host (§C.4):**
   - `ctx.session.hook("context")`, `hook("compaction")` and `hook("experimental.idle")` register and fire on each of
     the six hosts. The mock provider records the requests:
@@ -1685,7 +1686,14 @@ A list the owner can forward:
   D's TUI renders it and its buttons run `/boxd-cleanup`, which confirms each action with the host's prompt.
 - **Owned targets.** `checkOwned` returns `{ target, status }`; `create` and a `get` of a machine with the plugin's
   labels carry the same as `owned`, so a fresh create or adoption needs no second `get`. Only the boxd port makes a
-  target.
+  target. Adoption by labels is only for a work with no recorded machine id, and never takes a machine whose id another
+  open work records, even with `adopt: true` (`NOT_OURS`). A create boxd refuses because the name is taken adopts the
+  machine a `get` then shows; a `get` that does not show it yet is read once more after 1 s, and then the call answers
+  `creating` or `starting` with the same call as `next`, never `BOXD_FAILED`.
+- **Read markers.** A guest read the read rule did not make carries a marker in `details.kind`, and is never a guest
+  failure: `not-readable` (`MACHINE_ASLEEP`: a fresh listing does not show the machine running), `listing-stale` (the
+  listing aged past 2 s while the read waited, `rule: "listing-age"`; `boxd_read` answers `TIMEOUT` when no listing
+  young enough could be had) and `listing-failed` (the listing the read needed failed; retryable). A signed-out CLI is `BOXD_MISSING`, never a marker, and fails at once.
 - **Serve and export.** `GuestPort.serve` takes the work `directory` and reports its detached clone. `export` checks the
   tree is idle in the same exec and answers `exported` (with `busy` for a partial export, and the root's run outcome)
   or `busy` with its reason, writing nothing; harvest needs no phase read or listing first.

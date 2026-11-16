@@ -39,8 +39,8 @@ options and the guest helper all change. Works that ran on v0.0.x are imported, 
   `LEDGER_IMPORTING`. **Going back to v0.0.6 is safe only before v0.1.0's first change** (a submit, harvest, drop or
   reassign): after that, v0's drop could accept a stale proof and destroy unharvested work.
 - **By id.** Every change acts on the machine id the ledger recorded; a name that now points at another machine is
-  refused with `NOT_OURS`. A machine counts as gone only when a fresh all-region listing and a `get` of the recorded id
-  find it nowhere.
+  refused with `NOT_OURS`, and no adoption takes a machine another open work records, even with `adopt: true`. A
+  machine counts as gone only when a fresh all-region listing and a `get` of the recorded id find it nowhere.
 - **Golden images.** The option `snapshot` is gone (now `goldenBase`); images are built by the plugin from a recipe,
   per region and size, and named `<goldenPrefix>-<opencode version>-<size>`. `boxd_golden` never saves a work's machine,
   so `boxd_image`'s path is gone.
