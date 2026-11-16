@@ -62,8 +62,9 @@ export function figures(works: readonly WorkSnapshot[], rates: Rates): FleetFigu
 const call = (tool: string, select: SelectName) => `${tool}({ select: "${select}" })`
 
 /**
- * The suggested actions, in the order a person or an agent should take them: the sleeps (biggest saving first), then
- * the harvest that a drop needs, then the drop. Each names one call and how much it saves.
+ * The suggested actions, in the order a person or an agent should take them: the sleep of finished works, then the
+ * broader sleep of every idle work when it reaches more, then the harvest that a drop needs, then the drop. Each names
+ * one call and how much it saves.
  */
 export function suggestions(works: readonly WorkSnapshot[], rates: Rates): CleanupAction[] {
   const of = (select: SelectName) => works.filter((work) => matches(select, work))
@@ -71,10 +72,9 @@ export function suggestions(works: readonly WorkSnapshot[], rates: Rates): Clean
   const sleeps: CleanupAction[] = []
   const finished = of("finished")
   const idle = of("idle")
+  // `finished` first: the narrowest safe sleep, the one §C.4 leads with; `idle` only when it reaches more works.
   if (finished.length) sleeps.push({ action: "sleep", select: "finished", works: finished.length, savesPerHour: sleepSaves(finished), call: call("boxd_sleep", "finished") })
-  // `idle` only when it reaches works `finished` does not (ready works, or idle ones with no outcome yet).
   if (idle.length > finished.length) sleeps.push({ action: "sleep", select: "idle", works: idle.length, savesPerHour: sleepSaves(idle), call: call("boxd_sleep", "idle") })
-  sleeps.sort((a, b) => (b.savesPerHour ?? 0) - (a.savesPerHour ?? 0))
   const out = [...sleeps]
   const unsaved = of("unsaved-finished")
   if (unsaved.length) {
@@ -91,3 +91,11 @@ export const sign = (currency: string) => (currency === "EUR" ? "€" : currency
 
 /** Money for a line: two decimals. */
 export const shown = (currency: string, value: number) => `${sign(currency)}${value.toFixed(2)}`
+
+/**
+ * What a figure from these rates is labelled with: nothing for the organisation's own rates; for a member, who cannot
+ * read them, the public rates' currency, so a figure is never presented as the organisation's own currency.
+ */
+export const ratesLabel = (rates: Rates) => (rates.source === "public" ? ` (public ${rates.currency} rates)` : "")
+/** The same, inside parentheses that are already open. */
+export const ratesNote = (rates: Rates) => (rates.source === "public" ? `, public ${rates.currency} rates` : "")

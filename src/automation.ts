@@ -4,26 +4,30 @@
  * it with the plugin.
  *
  * - **Consent** (round 4, M-2): harvest and sleep run only when `consent(options)` is on: by default at `access: "all"`,
- *   at the other levels only with the person's `automation: "on"`. Lease renewals need only `leaseDays`, which is
- *   itself the person's consent to them (§C.2).
- * - **One owner:** only the process holding `automation.lock` (B's heartbeat lock) acts, so a work is never harvested
- *   twice at once by two OpenCode processes.
+ *   at the other levels only with the person's `automation: "on"`.
+ * - **Leases protect work, at every access level.** A work's `lease` is the delete-after timer boxd enforces, set with the
+ *   person's `leaseDays` when the work was made: that is the consent (§C.2). So every open record that holds a lease is
+ *   renewed with its own `lease.days`, whatever this process's `leaseDays` is, while it is busy or not saved; a renewal
+ *   never shortens a lease. The loop takes the lock whenever any open record holds one.
+ * - **One owner:** only the process holding `automation.lock` (B's heartbeat lock) acts, and it checks the lock again just
+ *   before each work's actions, so a work is never harvested twice at once by two OpenCode processes.
  * - **A finished work** (idle for `autoSleepMinutes`, or ready with no prompt for 30 minutes) and **an orphan** (its
- *   coordinator deleted or archived, or untouched for `orphanHours`) is harvested, then slept. A busy work, and a work
- *   waiting on a person, is left alone. A failed harvest still sleeps (`UNHARVESTED_SLEEP`); a failed sleep is recorded
- *   (`AUTOMATION_BLOCKED`) and retried after 30 minutes.
- * - **Reads:** the loop works from the watcher's snapshot. The only guest read of an idle work is one `phase` read just
- *   before acting, under the read rule, which confirms no prompt arrived and nobody is asked anything.
+ *   coordinator deleted, archived or re-parented, as the watcher marks it, or untouched for `orphanHours`) is harvested,
+ *   then slept, one work at a time. Harvest's export checks the tree is idle in its own exec, so it is the one guest
+ *   read before acting. The work is slept only when that harvest answered `saved`, or failed for an old guest or a
+ *   timeout (then `UNHARVESTED_SLEEP`: hibernation keeps the memory and the disk). Any other answer, a busy session
+ *   above all, means the work moved on or cannot be saved, and it is not slept. A busy work, and one waiting on a
+ *   person, is never touched.
  * - **Never a drop:** this module calls `actions.harvest` and `actions.sleep` only, tagged `automation`. It never calls
  *   `actions.drop`, removes a machine, or sets a delete timer the person did not opt into.
  */
 import { mkdir } from "node:fs/promises"
 import { join } from "node:path"
 import { allowed, sharedOf } from "./cost/shared.js"
-import { isCode } from "./errors.js"
+import { isCode, type Code } from "./errors.js"
 import { acquireLock, type LockHandle } from "./ledger/lock.js"
 import { LEDGER_PATHS, type WorkRecord, type WorkWarning } from "./ledger/types.js"
-import type { CallTag, MachineName, OpContext, PhaseAnswer, ReadTarget, WorkSnapshot } from "./ports.js"
+import type { CallTag, MachineName, OpContext, WorkSnapshot } from "./ports.js"
 import type { ListResult } from "./results.js"
 import type { ActionContext, CostServices, Dispose } from "./services.js"
 
@@ -37,10 +41,15 @@ export const RETRY_MS = 30 * 60_000
 export const LEASE_RENEW_MS = 6 * 60 * 60_000
 /** Before a lease ends, an idle unsaved work is harvested. */
 export const LEASE_WARN_MS = 24 * 60 * 60_000
-/** Guest reads before acting, at once. */
-const READ_CONCURRENCY = 4
+/** Works acted on at once, each harvest then sleep. */
+const ACT_CONCURRENCY = 4
 /** Works acted on in one pass; the rest wait for the next one. */
 const MAX_PER_TICK = 50
+/**
+ * The harvest failures after which the work is still slept (§C.3 step 1): an old guest whose transcript cannot move, and
+ * a step that did not answer in time. Both leave the work idle, and hibernating it keeps everything.
+ */
+export const SLEEP_DESPITE: ReadonlySet<Code> = new Set(["GUEST_VERSION", "TIMEOUT"])
 
 export type Why = "finished" | "orphan" | "lease"
 
@@ -62,14 +71,14 @@ export interface Automation {
 const minutes = (value: number) => value * 60_000
 
 /** A refusal's code, or `RUN_FAILED` for anything that is not a §5 code. */
-const codeOf = (item: unknown) => {
+const codeOf = (item: unknown): Code => {
   const code = (item as { error?: unknown } | undefined)?.error
   return isCode(code) ? code : "RUN_FAILED"
 }
 
 /** The loop itself, apart from its timer, so the unit tests drive each pass. */
 export function automation(services: CostServices, seam: AutomationSeam = {}): Automation {
-  const { options, watch, ledger, boxd, guest, importV0, actions, clock } = services
+  const { options, watch, ledger, boxd, actions, clock } = services
   const shared = sharedOf(services.cost)
   const consented = allowed(options)
   const lockPath = seam.lockPath ?? join(services.ledgerRoot, LEDGER_PATHS.automationLock)
@@ -84,6 +93,7 @@ export function automation(services: CostServices, seam: AutomationSeam = {}): A
   const op = (call: CallTag, pool: OpContext["pool"] = "background"): OpContext => ({ call, signal: controller.signal, pool })
   const act = (call: CallTag): ActionContext => ({ by: "automation", call, signal: controller.signal })
   const now = () => clock.now().getTime()
+  const message = (error: unknown) => (error instanceof Error ? error.message.split("\n")[0]!.slice(0, 160) : String(error))
 
   async function holdLock(): Promise<boolean> {
     if (lock && !lock.lost) return true
@@ -97,30 +107,23 @@ export function automation(services: CostServices, seam: AutomationSeam = {}): A
     return lock !== null
   }
 
-  /** Checks each coordinator once per pass with the host's own session read: archived or not found is gone. */
-  async function checkCoordinators(works: readonly WorkSnapshot[]): Promise<void> {
-    const targets = new Set(works.flatMap((work) => (work.notify && !shared.goneSessions.has(work.notify) ? [work.notify] : [])))
-    for (const sessionID of targets) {
-      try {
-        const session = (await services.sessions.get({ sessionID })) as { time?: { archived?: number } } | undefined
-        if (session?.time?.archived) shared.goneSessions.add(sessionID)
-      } catch (error) {
-        const text = error instanceof Error ? `${error.name} ${error.message}` : String(error)
-        if (/not ?found|404/i.test(text)) shared.goneSessions.add(sessionID)
-      }
-    }
+  /** Still the owner, read from the lock folder now: checked just before each work's actions. */
+  async function stillOwner(): Promise<boolean> {
+    const held = lock !== null && !lock.lost && (await lock.holds().catch(() => false))
+    if (!held) shared.owner = "not-owner"
+    return held && !controller.signal.aborted
   }
 
   /** Why automation should harvest and sleep this work now, or nothing. */
   function due(work: WorkSnapshot, at: number): Why | undefined {
     if (!work.region || !work.machineId || work.needsInput !== undefined) return undefined
     if (work.phase !== "idle" && work.phase !== "ready") return undefined
-    const idleFor = work.idleSince ? at - Date.parse(work.idleSince) : 0
     if (options.autoSleepMinutes > 0 && work.idleSince) {
+      const idleFor = at - Date.parse(work.idleSince)
       const after = work.phase === "idle" ? minutes(options.autoSleepMinutes) : minutes(Math.max(READY_IDLE_MINUTES, options.autoSleepMinutes))
       if (idleFor >= after) return "finished"
     }
-    if (work.notify && shared.goneSessions.has(work.notify)) return "orphan"
+    if (work.orphaned) return "orphan"
     if (work.touchedAt && at - Date.parse(work.touchedAt) >= options.orphanHours * 60 * 60_000) return "orphan"
     return undefined
   }
@@ -130,21 +133,6 @@ export function automation(services: CostServices, seam: AutomationSeam = {}): A
     const last = attempts.get(work.workId)
     if (!last || last.key !== attemptKey(work)) return true
     return !last.ok && at - last.at >= RETRY_MS
-  }
-
-  /** The one guest read before acting: still running, not busy, nobody asked anything. */
-  async function confirm(work: WorkSnapshot, record: WorkRecord | undefined): Promise<"act" | "skip" | "asleep"> {
-    const call = tag()
-    const listing = await boxd.list({ maxAgeMs: 2_000 }, op(call))
-    const name = `oc-${work.workId}` as MachineName
-    const row = listing.machines.find((machine) => machine.name === name && machine.region === work.region)
-    if (!row || row.status !== "running") return "asleep"
-    const sessionId = record?.session?.rootId
-    // A work never prompted has no session to read: the listing is the only check it needs.
-    if (!sessionId) return "act"
-    const target: ReadTarget = { region: work.region!, name, listing, machineId: work.machineId }
-    const answer: PhaseAnswer = record?.guestHelper === "v0" ? await importV0.readPhase(target, { sessionId }, op(call)) : await guest.phase(target, { sessionId }, op(call))
-    return answer.phase === "busy" || answer.needsInput !== undefined ? "skip" : "act"
   }
 
   async function addWarning(workId: string, code: WorkWarning["code"]): Promise<void> {
@@ -159,136 +147,164 @@ export function automation(services: CostServices, seam: AutomationSeam = {}): A
         op(tag(), "foreground"),
       )
     } catch (error) {
-      services.report("automation", `Could not record ${code} for ${workId}: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`)
+      services.report("automation", `Could not record ${code} for ${workId}: ${message(error)}`)
     }
   }
 
-  /** Harvest, then sleep, the confirmed works; a failed harvest still sleeps. */
-  async function harvestThenSleep(works: ReadonlyArray<{ readonly work: WorkSnapshot; readonly why: Why }>): Promise<void> {
-    if (!works.length) return
-    const ids = works.map(({ work }) => work.workId)
-    const whyOf = new Map(works.map(({ work, why }) => [work.workId, why]))
+  /** One work: still running and still ours, then harvest, then sleep only when the harvest allows it. */
+  async function harvestThenSleep(work: WorkSnapshot, why: Why): Promise<void> {
+    const { workId } = work
+    const done = (ok: boolean) => attempts.set(workId, { key: attemptKey(work), at: now(), ok })
+    // A machine already asleep is left alone: a harvest would wake it.
+    const listing = await boxd.list({ maxAgeMs: 2_000 }, op(tag()))
+    const name = `oc-${workId}` as MachineName
+    const row = listing.machines.find((machine) => machine.name === name && machine.region === work.region)
+    if (!row || row.status !== "running") {
+      log.push({ workId, why, step: "skip", result: "asleep" })
+      return void done(true)
+    }
+    if (!(await stillOwner())) {
+      log.push({ workId, why, step: "skip", result: "not-owner" })
+      return
+    }
     const call = tag()
-    const outcome = (result: ListResult<{ state: string }> | undefined, index: number, success: string) => {
-      const item = result?.results[index] as { state?: string } | undefined
-      return item?.state === success ? "ok" : (codeOf(item) as string)
-    }
-    let harvested: ListResult<{ state: string }> | undefined
+    let harvested: ListResult<{ state: string }>
     try {
-      harvested = await actions.harvest(ids, act(call))
+      harvested = await actions.harvest([workId], act(call))
     } catch (error) {
-      services.report("automation", `Automatic harvest failed: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`)
+      services.report("automation", `Automatic harvest of ${workId} failed: ${message(error)}`)
+      shared.failed.set(workId, { step: "harvest", code: "RUN_FAILED", at: now() })
+      log.push({ workId, why, step: "harvest", result: "RUN_FAILED" })
+      return void done(false)
     }
-    let slept: ListResult<{ state: string }> | undefined
-    try {
-      slept = await actions.sleep(ids, act(call))
-    } catch (error) {
-      services.report("automation", `Automatic sleep failed: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`)
-    }
-    for (const [index, workId] of ids.entries()) {
-      const why = whyOf.get(workId)!
-      const harvest = outcome(harvested, index, "saved")
-      const sleep = outcome(slept, index, "asleep")
-      log.push({ workId, why, step: "harvest", result: harvest }, { workId, why, step: "sleep", result: sleep })
-      const work = works[index]!.work
-      attempts.set(workId, { key: attemptKey(work), at: now(), ok: sleep === "ok" })
-      if (sleep === "ok") {
-        shared.failed.delete(workId)
-        if (harvest !== "ok") await addWarning(workId, "UNHARVESTED_SLEEP")
-      } else {
-        shared.failed.set(workId, { step: "sleep", code: sleep, at: now() })
+    const item = harvested.results[0] as { state?: string } | undefined
+    const saved = item?.state === "saved"
+    const harvest = saved ? "ok" : item?.state === "partial" ? "partial" : codeOf(item)
+    log.push({ workId, why, step: "harvest", result: harvest })
+    if (!saved && !SLEEP_DESPITE.has(harvest as Code)) {
+      // The work moved on (a new prompt: busy, or a partial export of a running tree), or it cannot be saved now: it is
+      // left running, never frozen mid-run. A busy work is not a failure; anything else is recorded.
+      if (harvest !== "SESSION_BUSY" && harvest !== "partial") {
+        shared.failed.set(workId, { step: "harvest", code: harvest, at: now() })
         await addWarning(workId, "AUTOMATION_BLOCKED")
       }
+      return void done(false)
+    }
+    let sleep: string
+    try {
+      const slept = await actions.sleep([workId], act(call))
+      const answer = slept.results[0] as { state?: string } | undefined
+      sleep = answer?.state === "asleep" ? "ok" : codeOf(answer)
+    } catch (error) {
+      services.report("automation", `Automatic sleep of ${workId} failed: ${message(error)}`)
+      sleep = "RUN_FAILED"
+    }
+    log.push({ workId, why, step: "sleep", result: sleep })
+    done(sleep === "ok")
+    if (sleep === "ok") {
+      shared.failed.delete(workId)
+      if (!saved) await addWarning(workId, "UNHARVESTED_SLEEP")
+    } else {
+      shared.failed.set(workId, { step: "sleep", code: sleep, at: now() })
+      await addWarning(workId, "AUTOMATION_BLOCKED")
     }
   }
 
   async function sweep(): Promise<void> {
     const at = now()
-    const works = watch.snapshot().works.filter((work) => work.phase === "idle" || work.phase === "ready")
-    await checkCoordinators(works)
-    const candidates = works.flatMap((work) => {
-      const why = due(work, at)
-      return why && shouldTry(work, at) ? [{ work, why }] : []
-    })
-    const confirmed: { work: WorkSnapshot; why: Why }[] = []
-    const queue = candidates.slice(0, MAX_PER_TICK)
-    const reader = async () => {
+    const queue = watch
+      .snapshot()
+      .works.flatMap((work) => {
+        const why = due(work, at)
+        return why && shouldTry(work, at) ? [{ work, why }] : []
+      })
+      .slice(0, MAX_PER_TICK)
+    const worker = async () => {
       for (let next = queue.shift(); next && !controller.signal.aborted; next = queue.shift()) {
         try {
-          const answer = await confirm(next.work, await ledger.get(next.work.workId, op(tag())))
-          if (answer === "act") confirmed.push(next)
-          else {
-            log.push({ workId: next.work.workId, why: next.why, step: "skip", result: answer })
-            attempts.set(next.work.workId, { key: attemptKey(next.work), at: now(), ok: answer === "asleep" })
-          }
+          await harvestThenSleep(next.work, next.why)
         } catch (error) {
-          const code = (error as { code?: unknown }).code
-          shared.failed.set(next.work.workId, { step: "read", code: isCode(code) ? code : "RUN_FAILED", at: now() })
+          services.report("automation", `Automation of ${next.work.workId} failed: ${message(error)}`)
           attempts.set(next.work.workId, { key: attemptKey(next.work), at: now(), ok: false })
-          log.push({ workId: next.work.workId, why: next.why, step: "skip", result: isCode(code) ? code : "RUN_FAILED" })
         }
       }
     }
-    await Promise.all(Array.from({ length: READ_CONCURRENCY }, reader))
-    // Input order, so a test and a person read the same sequence.
-    confirmed.sort((a, b) => candidates.indexOf(a) - candidates.indexOf(b))
-    await harvestThenSleep(confirmed)
+    await Promise.all(Array.from({ length: ACT_CONCURRENCY }, worker))
   }
 
-  /** `leaseDays` renewals for busy or unsaved works nobody calls, and a harvest before a lease ends (§C.2, L-2). */
-  async function leases(): Promise<void> {
+  /** The open records holding a lease; none until the v0 import is complete, so the loop never starts the import. */
+  async function leased(): Promise<readonly WorkRecord[]> {
+    if (services.importV0.state().state !== "complete") return []
+    try {
+      return (await ledger.list({}, op(tag()))).filter((record) => record.lease !== undefined)
+    } catch {
+      return []
+    }
+  }
+
+  /** Renewals for busy or unsaved leased works, with each lease's own days, and a harvest before a lease ends (§C.2, L-2). */
+  async function leases(records: readonly WorkRecord[]): Promise<void> {
     const at = now()
-    const phases = new Map(watch.snapshot().works.map((work) => [work.workId, work.phase]))
-    const records = await ledger.list({}, op(tag()))
-    const expiring: { work: WorkSnapshot; why: Why }[] = []
+    const snapshot = new Map(watch.snapshot().works.map((work) => [work.workId, work]))
+    const other = records.filter((record) => record.lease!.days !== options.leaseDays)
+    services.report(
+      "lease",
+      other.length
+        ? `${other.length} open ${other.length === 1 ? "work holds" : "works hold"} a lease (the timer boxd deletes a machine at) of another length than leaseDays (${options.leaseDays}) would set, from the option when ${other.length === 1 ? "it was" : "they were"} made (${other
+            .slice(0, 5)
+            .map((record) => `${record.workId}: ${record.lease!.days}d`)
+            .join(", ")}${other.length > 5 ? ", …" : ""}). The plugin keeps renewing each with its own length while it is busy or unsaved; boxd_drop ends one.`
+        : undefined,
+    )
+    const expiring: WorkSnapshot[] = []
     for (const record of records) {
-      if (!record.lease || !record.region || !record.machineId || controller.signal.aborted) continue
-      const phase = phases.get(record.workId)
+      if (!record.region || !record.machineId || controller.signal.aborted) continue
+      const work = snapshot.get(record.workId)
       const saved = ledger.saved(record)
-      if ((phase === "busy" || saved !== "fresh") && at - Date.parse(record.lease.renewedAt) >= LEASE_RENEW_MS) {
+      if ((work?.phase === "busy" || saved !== "fresh") && at - Date.parse(record.lease!.renewedAt) >= LEASE_RENEW_MS) {
+        if (!(await stillOwner())) return
         try {
           await renew(record.workId)
           log.push({ workId: record.workId, why: "lease", step: "renew", result: "ok" })
         } catch (error) {
-          const code = (error as { code?: unknown }).code
-          log.push({ workId: record.workId, why: "lease", step: "renew", result: isCode(code) ? code : "RUN_FAILED" })
+          log.push({ workId: record.workId, why: "lease", step: "renew", result: codeOfError(error) })
         }
       }
-      const work = watch.snapshot().works.find((item) => item.workId === record.workId)
-      if (consented && work && phase === "idle" && saved !== "fresh" && Date.parse(record.lease.expiresAt) - at <= LEASE_WARN_MS && shouldTry(work, at)) expiring.push({ work, why: "lease" })
+      if (consented && work && work.phase === "idle" && saved !== "fresh" && Date.parse(record.lease!.expiresAt) - at <= LEASE_WARN_MS && shouldTry(work, at)) expiring.push(work)
     }
-    if (!expiring.length) return
-    const call = tag()
-    const ids = expiring.map(({ work }) => work.workId)
-    try {
-      const result = await actions.harvest(ids, act(call))
-      for (const [index, { work }] of expiring.entries()) {
-        const item = result.results[index] as { state?: string } | undefined
+    for (const work of expiring) {
+      if (!(await stillOwner())) return
+      try {
+        const result = await actions.harvest([work.workId], act(tag()))
+        const item = result.results[0] as { state?: string } | undefined
         attempts.set(work.workId, { key: attemptKey(work), at: now(), ok: item?.state === "saved" })
         log.push({ workId: work.workId, why: "lease", step: "harvest", result: item?.state === "saved" ? "ok" : codeOf(item) })
+      } catch (error) {
+        services.report("automation", `Harvest before ${work.workId}'s lease ends failed: ${message(error)}`)
       }
-    } catch (error) {
-      services.report("automation", `Harvest before a lease ends failed: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`)
     }
   }
 
-  /** One renewal, by id, under the work's lock and then the machine's (the lock order of §4.1). */
+  /**
+   * One renewal, by id, under the work's lock and then the machine's (the lock order of §4.1), with the lease's own
+   * length: a renewal moves the end later and never shortens it.
+   */
   async function renew(workId: string): Promise<void> {
-    const call = tag()
-    const context = op(call, "foreground")
+    const context = op(tag(), "foreground")
     await ledger.update(
       [workId],
       async (current) => {
         const record = current.get(workId)
         if (!record?.lease || !record.region || !record.machineId) return { write: [], value: undefined }
         const { region, machine, machineId } = record
+        const days = record.lease.days
         await services.runner.withMachineLock({ id: machineId }, context, async () => {
-          const target = await boxd.checkOwned(region, machine, machineId, context)
-          await boxd.renewLease(target, options.leaseDays, context)
+          const { target } = await boxd.checkOwned(region, machine, machineId, context)
+          await boxd.renewLease(target, days, context)
         })
         const renewedAt = clock.now()
-        const lease = { days: options.leaseDays, renewedAt: renewedAt.toISOString(), expiresAt: new Date(renewedAt.getTime() + options.leaseDays * 24 * 60 * 60_000).toISOString() }
-        return { write: [{ ...record, lease }], value: undefined }
+        const expiresAt = new Date(Math.max(renewedAt.getTime() + days * 24 * 60 * 60_000, Date.parse(record.lease.expiresAt))).toISOString()
+        return { write: [{ ...record, lease: { days, renewedAt: renewedAt.toISOString(), expiresAt } }], value: undefined }
       },
       context,
     )
@@ -297,13 +313,18 @@ export function automation(services: CostServices, seam: AutomationSeam = {}): A
   async function pass(): Promise<void> {
     try {
       if (options.budget) await services.cost.budget(tag()).catch(() => undefined)
-      if (!consented && options.leaseDays === 0) return
+      const holding = await leased()
+      if (!consented && !holding.length) {
+        services.report("lease", undefined)
+        return
+      }
       if (!(await holdLock())) return
       if (consented) await sweep()
-      if (options.leaseDays > 0) await leases()
+      if (holding.length) await leases(holding)
+      else services.report("lease", undefined)
     } catch (error) {
       if (controller.signal.aborted) return
-      services.report("automation", `The automation pass failed: ${error instanceof Error ? error.message.split("\n")[0]!.slice(0, 160) : String(error)}`)
+      services.report("automation", `The automation pass failed: ${message(error)}`)
     }
   }
   let current: Promise<void> = Promise.resolve()
@@ -326,13 +347,17 @@ export function automation(services: CostServices, seam: AutomationSeam = {}): A
   }
 }
 
+/** A thrown error's code, when it carries one from the table. */
+const codeOfError = (error: unknown): Code => {
+  const code = (error as { code?: unknown } | undefined)?.code
+  return isCode(code) ? code : "RUN_FAILED"
+}
+
 /**
- * Starts the loop: a pass every `TICK_MS`, and one soon after a phase change or a coordinator's deletion. Nothing runs
- * when there is nothing to do: no consent, no lease and no budget means no timer at all.
+ * Starts the loop: a pass at start, every `TICK_MS`, and soon after a phase change or a coordinator's deletion. A pass
+ * with no consent, no leased work and no budget reads nothing from boxd and takes no lock.
  */
 export function startAutomation(services: CostServices, seam: AutomationSeam = {}): Dispose {
-  const options = services.options
-  if (!allowed(options) && options.leaseDays === 0 && !options.budget) return async () => {}
   const loop = automation(services, seam)
   const shared = sharedOf(services.cost)
   let stopped = false

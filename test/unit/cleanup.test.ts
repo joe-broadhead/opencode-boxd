@@ -3,7 +3,7 @@
 // "read-only" only reports; a "no" skips only that action; the resources are exactly the ids acted on; and no session
 // message carries anything that could approve an action.
 import { afterEach, describe, expect, test } from "bun:test"
-import { CLEANUP_COMMAND, cleanupReport, registerCleanupCommand, runCleanup } from "../../src/cleanup.js"
+import { CLEANUP_COMMAND, cleanupReport, cleanupView, registerCleanupCommand, runCleanup } from "../../src/cleanup.js"
 import { CLEANUP_ACTION, defaultRules } from "../../src/permissions.js"
 import { fakes, work, type Fakes } from "../support/cost-fakes.js"
 
@@ -47,7 +47,9 @@ describe("/boxd-cleanup", () => {
     expect(report).toStartWith("boxd cleanup: 4 running, 1 asleep; ~€")
     expect(report).toContain("- fin: idle, ~€0.0376/h, idle 60 min, saved stale")
     expect(report).toContain('- sleep finished: 3 works, saves ~€')
-    expect(report).toContain("Machine cost today: €2.00.")
+    expect(report).toContain("Machine cost today: €2.00, boxd's estimate.")
+    // The usage read gave the organisation's rates: no public label.
+    expect(report).toStartWith("boxd cleanup: 4 running, 1 asleep; ~€0.15/h (an estimate).")
   })
 
   test('"ask-changes": each action asserts the tool\'s own action once, with no source and exactly the matched ids', async () => {
@@ -154,5 +156,52 @@ describe("/boxd-cleanup with no open works", () => {
     const { f, run } = setup({ access: "all" }, () => "no")
     await run()
     expect(f.synthetic.at(-1)?.text).toEndWith("Nothing was changed.")
+  })
+})
+
+describe("the cleanup view for the TUI (CleanupViewRpc)", () => {
+  const call = { callId: "v", source: "cleanup-command" } as const
+
+  test("the same figures as the report, as data; it matches and changes nothing", async () => {
+    const { f } = setup({ access: "ask-changes" })
+    const view = await cleanupView(f.services).view(call)
+    expect(view).toMatchObject({ state: "ok", currency: "EUR", automation: "off (access)", confirm: "tool-action", command: "/boxd-cleanup" })
+    expect(view.perHour).toBeCloseTo(4 * 0.0376 + 0.0016, 4)
+    expect(view.works.map((item) => item.workId)).toEqual(["busy", "fin", "fin2", "saved"])
+    expect(view.works[0]).toEqual({ workId: "busy", phase: "busy", saved: "stale", perHour: 0.0376, idleMinutes: null })
+    expect(view.works[1]).toMatchObject({ workId: "fin", idleMinutes: 60 })
+    expect(view.actions.map((action) => action.call)[0]).toBe('boxd_sleep({ select: "finished" })')
+    expect(view.note).toBeUndefined()
+    expect(f.actions.calls).toEqual([])
+  })
+
+  test("how it confirms at each access level", async () => {
+    for (const [access, confirm] of [["all", "cleanup-action"], ["ask-changes", "tool-action"], ["read-only", "report-only"]] as const) {
+      const { f } = setup({ access })
+      expect((await cleanupView(f.services).view(call)).confirm).toBe(confirm)
+    }
+  })
+
+  test("a member: public rates, said in the note", async () => {
+    const f = fakes({ works: [work("a")], usage: { available: false, reason: "owners and admins" } })
+    open.push(f)
+    const view = await cleanupView(f.services).view(call)
+    expect(view.state).toBe("ok")
+    expect(view.note).toContain("boxd's public EUR rates")
+  })
+
+  test("no open works: no boxd read, nothing suggested", async () => {
+    const f = fakes()
+    open.push(f)
+    const view = await cleanupView(f.services).view(call)
+    expect(view).toMatchObject({ state: "ok", works: [], actions: [], perHour: 0, note: "No open works." })
+    expect(f.calls).toEqual([])
+  })
+
+  test("a failure reads as unavailable with the reason", async () => {
+    const { f } = setup()
+    const broken = { ...f.services, cost: { ...f.services.cost, cleanup: async () => Promise.reject(new Error("the watcher is down")), automation: () => "on" } }
+    const view = await cleanupView(broken as never).view(call)
+    expect(view).toMatchObject({ state: "unavailable", currency: null, perHour: null, works: [], actions: [], note: "the watcher is down" })
   })
 })

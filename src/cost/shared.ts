@@ -1,7 +1,7 @@
 /**
  * What cost, automation and the hooks share inside one plugin instance (design §C.3, §C.4): whether this process is the
- * automation owner, the works whose automatic harvest or sleep failed, and the coordinator sessions that were deleted
- * or archived. Kept beside the `CostPort` it belongs to, so the contract in `src/services.ts` stays as it is. Package E
+ * automation owner, and the works whose automatic harvest or sleep failed. (A coordinator that was deleted or archived
+ * is the watcher's `WorkSnapshot.orphaned`.) Kept beside the `CostPort` it belongs to, so the contract in `src/services.ts` stays as it is. Package E
  * owns this file.
  */
 import type { Options } from "../options.js"
@@ -12,8 +12,6 @@ export interface CostShared {
   owner: "unknown" | "owner" | "not-owner"
   /** Works whose automatic harvest or sleep failed, with the step and its code, for status and the idle check. */
   readonly failed: Map<string, { readonly step: "harvest" | "sleep" | "read"; readonly code: string; readonly at: number }>
-  /** Coordinator sessions seen deleted or archived: the works they drove are orphans (§C.3). */
-  readonly goneSessions: Set<string>
   /** Wakes the automation loop early, after an event; set by the loop, a no-op before it starts. */
   poke: () => void
 }
@@ -24,7 +22,7 @@ const registry = new WeakMap<object, CostShared>()
 export function sharedOf(key: object): CostShared {
   let shared = registry.get(key)
   if (!shared) {
-    shared = { owner: "unknown", failed: new Map(), goneSessions: new Set(), poke: () => {} }
+    shared = { owner: "unknown", failed: new Map(), poke: () => {} }
     registry.set(key, shared)
   }
   return shared

@@ -42,5 +42,11 @@ export function perHour(phase: Phase, size: Size, reading: Reading | undefined, 
 /** What sleeping a running work saves per hour: everything but its disk. */
 export const sleepSaving = (size: Size, reading: Reading | undefined, rates: Rates) => perHour("idle", size, reading, rates) - perHour("asleep", size, reading, rates)
 
-export const BASIS =
-  "rates × the last guest reading (1-minute load, capped at the machine's vCPUs, and resident GiB; 1 GiB before the first reading) + 20 GiB of written disk; disk only for asleep works"
+const READING_BASIS =
+  "the last guest reading (1-minute load, capped at the machine's vCPUs, and resident GiB; 1 GiB before the first reading) + 20 GiB of written disk; disk only for asleep works"
+
+/** How `perHour` is made, naming whose rates: the organisation's, or boxd's public ones in their own currency. */
+export const basis = (rates: Pick<Rates, "source" | "currency">) =>
+  rates.source === "usage"
+    ? `the organisation's rates × ${READING_BASIS}`
+    : `boxd's public ${rates.currency} rates (this sign-in cannot read the organisation's rates or its billing currency) × ${READING_BASIS}`

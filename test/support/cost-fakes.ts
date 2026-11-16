@@ -40,6 +40,8 @@ export interface FakeWatch extends FleetWatch {
   works: WorkSnapshot[]
   listeners: Set<(event: WorkEvent) => void>
   emit(event: Partial<WorkEvent>): void
+  /** Every `sessionGone` call, as the watcher (D) received it. */
+  readonly gone: Array<{ sessionID: string; why: string }>
 }
 
 export function fakeWatch(works: WorkSnapshot[] = []): FakeWatch {
@@ -66,6 +68,12 @@ export function fakeWatch(works: WorkSnapshot[] = []): FakeWatch {
     },
     emit(event) {
       for (const listener of listeners) listener({ seq: 1, at: T0.toISOString(), workId: "x", from: "busy", to: "idle", ...event })
+    },
+    gone: [],
+    // As the watcher does: every open work that session drove is orphaned, and its notify cleared.
+    sessionGone(sessionID, why) {
+      watch.gone.push({ sessionID, why })
+      watch.works = current.map((item) => (item.notify === sessionID ? { ...item, notify: undefined, orphaned: { why, session: sessionID, at: T0.toISOString() } } : item))
     },
   }
   return watch
@@ -241,7 +249,7 @@ export function fakes(input: { options?: Record<string, unknown>; works?: WorkSn
       },
       checkOwned: async (region: Region, name: string, machineId: MachineId) => {
         calls.push(`checkOwned ${name} ${machineId}`)
-        return { region, name, machineId, checkedAt: state.clock.now.getTime() } as never
+        return { target: { region, name, machineId, checkedAt: state.clock.now.getTime() }, status: "running" } as never
       },
       renewLease: async (target: { machineId: string }, days: number) => void calls.push(`renewLease ${target.machineId} ${days}d`),
       remove: async () => void calls.push("remove"),
@@ -256,6 +264,7 @@ export function fakes(input: { options?: Record<string, unknown>; works?: WorkSn
       },
     },
     importV0: {
+      state: () => ({ state: "complete", works: records.size, blocked: [] }),
       readPhase: async (target: { name: string }) => {
         calls.push(`v0-phase ${target.name}`)
         return phase(workOf(target.name))

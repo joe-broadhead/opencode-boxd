@@ -16,16 +16,15 @@
  *   the tools RPC. Its children are tagged `cleanup-command`.
  */
 import type { Plugin } from "@opencode/plugin"
-import { COMMAND_STEM } from "./constants.js"
 import { internalsOf } from "./cost/index.js"
 import { figures, shown, sign, workPerHour } from "./cost/fleet.js"
 import { isRunning } from "./cost/rates.js"
 import { CLEANUP_ACTION } from "./permissions.js"
 import type { WorkSnapshot } from "./ports.js"
-import type { ListResult } from "./results.js"
-import type { ActionContext, CostServices, SelectorValues } from "./services.js"
+import type { CostBlock, ListResult } from "./results.js"
+import { CLEANUP_COMMAND, type ActionContext, type CleanupView, type CleanupViewProvider, type CostServices, type SelectorValues } from "./services.js"
 
-export const CLEANUP_COMMAND = `${COMMAND_STEM}-cleanup`
+export { CLEANUP_COMMAND }
 /** The report lists at most this many running works, costliest first. */
 export const REPORT_MAX_WORKS = 30
 
@@ -48,31 +47,52 @@ export const CLEANUP_STEPS: readonly Step[] = [
 
 const minutesSince = (at: string | undefined, now: Date) => (at ? Math.max(0, Math.round((now.getTime() - Date.parse(at)) / 60_000)) : null)
 
-/** The report: what costs money now and the suggested actions. Plugin fields only. */
-export async function cleanupReport(services: CostServices, call: ActionContext["call"]): Promise<string> {
-  const rates = internalsOf(services.cost).rates()
+interface Picture {
+  readonly works: readonly WorkSnapshot[]
+  readonly rates: ReturnType<ReturnType<typeof internalsOf>["rates"]>
+  readonly running: ReadonlyArray<{ readonly work: WorkSnapshot; readonly hour: number; readonly idle: number | null }>
+  readonly block?: CostBlock
+  readonly blockError?: string
+}
+
+/** What costs money now: today's figures first (so the organisation's rates are known), then each running work. */
+async function picture(services: CostServices, call: ActionContext["call"]): Promise<Picture> {
   const works = services.watch.snapshot().works.filter((work) => work.phase !== "closed" && work.phase !== "gone")
-  const fleet = figures(works, rates)
+  let block: CostBlock | undefined
+  let blockError: string | undefined
+  // No open works: nothing is read from boxd.
+  if (works.length) {
+    try {
+      block = await services.cost.block({ works: false, limit: 0 }, call)
+    } catch (error) {
+      blockError = error instanceof Error ? error.message.split("\n")[0]!.slice(0, 160) : String(error)
+    }
+  }
+  const rates = internalsOf(services.cost).rates()
   const now = services.clock.now()
   const running = works
     .filter((work) => isRunning(work.phase))
-    .map((work) => ({ work, hour: workPerHour(work, rates) }))
+    .map((work) => ({ work, hour: workPerHour(work, rates), idle: work.phase === "busy" ? null : minutesSince(work.idleSince, now) }))
     .sort((a, b) => b.hour - a.hour || a.work.workId.localeCompare(b.work.workId))
-  const line = ({ work, hour }: { work: WorkSnapshot; hour: number }) => {
-    const idle = minutesSince(work.idleSince, now)
-    return `- ${work.workId}: ${work.phase}${work.needsInput ? " (waits on a person)" : ""}, ~${sign(rates.currency)}${hour.toFixed(4)}/h${idle !== null && work.phase !== "busy" ? `, idle ${idle} min` : ""}, saved ${work.saved}`
-  }
-  // No open works: nothing costs money, and nothing is read from boxd.
+  return { works, rates, running, ...(block ? { block } : {}), ...(blockError ? { blockError } : {}) }
+}
+
+/** The report: what costs money now and the suggested actions. Plugin fields only. */
+export async function cleanupReport(services: CostServices, call: ActionContext["call"]): Promise<string> {
+  const { works, rates, running, block } = await picture(services, call)
   if (!works.length) return "boxd cleanup: no open works, so no machine of this plugin costs money. Nothing was changed."
+  const fleet = figures(works, rates)
+  const line = ({ work, hour, idle }: Picture["running"][number]) =>
+    `- ${work.workId}: ${work.phase}${work.needsInput ? " (waits on a person)" : ""}, ~${sign(rates.currency)}${hour.toFixed(4)}/h${idle !== null ? `, idle ${idle} min` : ""}, saved ${work.saved}`
   const lines = [
-    `boxd cleanup: ${fleet.running} running, ${fleet.asleep} asleep; ~${shown(rates.currency, fleet.perHour)}/h (an estimate, ${rates.source} rates).`,
+    `boxd cleanup: ${fleet.running} running, ${fleet.asleep} asleep; ~${shown(rates.currency, fleet.perHour)}/h (an estimate${rates.source === "public" ? `, from boxd's public ${rates.currency} rates: this sign-in cannot read the organisation's` : ""}).`,
   ]
-  try {
-    const today = (await services.cost.block({ works: false, limit: 0 }, call)).today
-    lines.push(today.machines === null ? `Machine cost today: not available (${today.unavailable ?? "boxd's usage is for owners and admins"}).` : `Machine cost today: ${shown(rates.currency, today.machines)}${today.complete ? "" : " (incomplete; boxd lags up to 25 minutes)"}.`)
-  } catch {
-    lines.push("Machine cost today: not available.")
-  }
+  const today = block?.today
+  lines.push(
+    !today || today.machines === null
+      ? `Machine cost today: not available (${today?.unavailable ?? "boxd's usage could not be read"}).`
+      : `Machine cost today: ${shown(block.currency, today.machines)}, boxd's estimate${today.complete ? "" : " (boxd lags up to 25 minutes)"}.`,
+  )
   if (running.length) {
     lines.push("Running works, costliest first:", ...running.slice(0, REPORT_MAX_WORKS).map(line))
     if (running.length > REPORT_MAX_WORKS) lines.push(`- and ${running.length - REPORT_MAX_WORKS} more`)
@@ -88,6 +108,40 @@ export async function cleanupReport(services: CostServices, call: ActionContext[
   if (services.options.access === "read-only") lines.push("access is read-only, so this command only reports.")
   else if (actions.length) lines.push("Each action asks you in OpenCode's permission prompt; a no skips only that action.")
   return lines.join("\n")
+}
+
+/** How the command confirms each action at this `access` (design §C.5). */
+const confirmOf = (access: CostServices["options"]["access"]): CleanupView["confirm"] => (access === "all" ? "cleanup-action" : access === "ask-changes" ? "tool-action" : "report-only")
+
+/**
+ * The view `/boxd-cleanup`'s TUI renders (`CleanupViewRpc`): the same figures as the report, as data. It approves
+ * nothing: its buttons run the command, which asks the person for each action.
+ */
+export function cleanupView(services: CostServices): CleanupViewProvider {
+  return {
+    async view(call): Promise<CleanupView> {
+      const base = { automation: services.cost.automation(), confirm: confirmOf(services.options.access), command: `/${CLEANUP_COMMAND}` } as const
+      try {
+        const { works, rates, running, block, blockError } = await picture(services, call)
+        const note = [
+          rates.source === "public" ? `Figures use boxd's public ${rates.currency} rates: this sign-in cannot read the organisation's rates or billing currency.` : undefined,
+          blockError ? `Today's machine cost could not be read: ${blockError}` : undefined,
+        ].filter((text): text is string => text !== undefined)
+        return {
+          state: "ok",
+          currency: rates.currency,
+          perHour: figures(works, rates).perHour,
+          works: running.slice(0, REPORT_MAX_WORKS).map(({ work, hour, idle }) => ({ workId: work.workId, phase: work.phase, saved: work.saved, perHour: Math.round(hour * 10_000) / 10_000, idleMinutes: idle })),
+          actions: works.length ? await services.cost.cleanup(call) : [],
+          ...base,
+          ...(note.length ? { note: note.join(" ") } : {}),
+          ...(block === undefined && !works.length ? { note: "No open works." } : {}),
+        }
+      } catch (error) {
+        return { state: "unavailable", currency: null, perHour: null, works: [], actions: [], ...base, note: error instanceof Error ? error.message.split("\n")[0]!.slice(0, 160) : String(error) }
+      }
+    },
+  }
 }
 
 const counted = (result: ListResult<{ state: string }>) =>

@@ -1,8 +1,9 @@
 // Package E's automation (design §C.2, §C.3, §7.1 "Cost and cleanup"): harvest then sleep of finished and orphaned
-// works through C2's FleetActions (faked), gated by access, one owner, one guest read just before acting, lease
-// renewals by id, and never a drop.
+// works through C2's FleetActions (faked), one work at a time, sleeping only after a saved harvest (or an old guest or a
+// timeout); gated by access; one owner; lease renewals by id with each lease's own length at every access level; and
+// never a drop.
 import { afterEach, describe, expect, test } from "bun:test"
-import { readFileSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { automation, LEASE_RENEW_MS, startAutomation, type Automation } from "../../src/automation.js"
 import { costHooks } from "../../src/hooks.js"
@@ -32,7 +33,7 @@ afterEach(async () => {
 const acted = (f: Fakes) => f.actions.calls.filter((call) => call.method !== "match").map((call) => `${call.method} ${call.ids.join(",")}`)
 
 describe("a finished work is harvested, then slept, after autoSleepMinutes", () => {
-  test("idle past 10 minutes: one guest read, then harvest and sleep, tagged automation", async () => {
+  test("idle past 10 minutes: harvest, whose export checks the tree is idle, then sleep, tagged automation", async () => {
     const { f, loop } = setup({ works: [work("a", { idleSince: minutesAgo(T0, 11) })], records: [record("a")] })
     await loop().tick()
     expect(acted(f)).toEqual(["harvest a", "sleep a"])
@@ -40,7 +41,20 @@ describe("a finished work is harvested, then slept, after autoSleepMinutes", () 
       expect(call.context.by).toBe("automation")
       expect(call.context.call.source).toBe("automation")
     }
-    expect(f.calls.filter((call) => call.startsWith("phase"))).toEqual(["phase oc-a"])
+    // The harvest's own export is the one guest read: no separate phase read, one listing to skip a sleeping machine.
+    expect(f.calls.filter((call) => call.startsWith("phase") || call.startsWith("v0-phase"))).toEqual([])
+    expect(f.calls.filter((call) => call === "list")).toEqual(["list"])
+  })
+
+  test("each work is harvested and slept on its own, never a batch waiting on every harvest", async () => {
+    const ids = ["w0", "w1", "w2"]
+    const { f, loop } = setup({ works: ids.map((id) => work(id)), records: ids.map((id) => record(id)) })
+    await loop().tick()
+    expect(acted(f).sort()).toEqual(["harvest w0", "harvest w1", "harvest w2", "sleep w0", "sleep w1", "sleep w2"])
+    for (const id of ids) {
+      const order = acted(f).filter((entry) => entry.endsWith(` ${id}`))
+      expect(order).toEqual([`harvest ${id}`, `sleep ${id}`])
+    }
   })
 
   test("not yet due: no read, no action", async () => {
@@ -50,17 +64,20 @@ describe("a finished work is harvested, then slept, after autoSleepMinutes", () 
     expect(f.calls.filter((call) => call.startsWith("phase") || call === "list")).toEqual([])
   })
 
-  test("a new prompt in the window cancels it: busy in the snapshot, or busy on the guest", async () => {
+  test("a new prompt in the window cancels it: busy in the snapshot, or the harvest's export finds the tree busy", async () => {
     const { f, loop } = setup({ works: [work("a", { phase: "busy", idleSince: undefined })], records: [record("a")] })
     const one = loop()
     await one.tick()
     expect(acted(f)).toEqual([])
     f.watch.works = [work("b", { idleSince: minutesAgo(T0, 30) })]
     f.records.set("b", record("b"))
-    f.phases.set("b", { phase: "busy" })
+    f.actions.failing.harvest = { b: "SESSION_BUSY" }
     await one.tick()
-    expect(acted(f)).toEqual([])
-    expect(one.log.at(-1)).toMatchObject({ workId: "b", step: "skip", result: "skip" })
+    // Harvested (refused: busy), and never slept: a run someone asked for is not frozen.
+    expect(acted(f)).toEqual(["harvest b"])
+    expect(one.log.at(-1)).toMatchObject({ workId: "b", step: "harvest", result: "SESSION_BUSY" })
+    // A busy work is not a failure: no warning, nothing for the idle check.
+    expect(f.records.get("b")?.warnings).toBeUndefined()
   })
 
   test("a ready work with no prompt waits 30 minutes, not 10", async () => {
@@ -73,14 +90,32 @@ describe("a finished work is harvested, then slept, after autoSleepMinutes", () 
     expect(acted(f)).toEqual(["harvest r", "sleep r"])
   })
 
-  test("a failed harvest still sleeps, and the work gets UNHARVESTED_SLEEP", async () => {
+  for (const code of ["GUEST_VERSION", "TIMEOUT"]) {
+    test(`a harvest that failed for ${code} (an old guest, a timeout) still sleeps, with UNHARVESTED_SLEEP`, async () => {
+      const { f, loop } = setup({ works: [work("a")], records: [record("a")] })
+      f.actions.failing.harvest = { a: code }
+      const one = loop()
+      await one.tick()
+      expect(acted(f)).toEqual(["harvest a", "sleep a"])
+      expect(f.records.get("a")?.warnings?.map((warning) => warning.code)).toEqual(["UNHARVESTED_SLEEP"])
+      expect(one.log.filter((entry) => entry.workId === "a").map((entry) => `${entry.step}:${entry.result}`)).toEqual([`harvest:${code}`, "sleep:ok"])
+    })
+  }
+
+  test("any other harvest failure is not slept: AUTOMATION_BLOCKED, shared with the idle check, retried after 30 minutes", async () => {
     const { f, loop } = setup({ works: [work("a")], records: [record("a")] })
-    f.actions.failing.harvest = { a: "GUEST_VERSION" }
+    f.actions.failing.harvest = { a: "EXPORT_INVALID" }
     const one = loop()
     await one.tick()
-    expect(acted(f)).toEqual(["harvest a", "sleep a"])
-    expect(f.records.get("a")?.warnings?.map((warning) => warning.code)).toEqual(["UNHARVESTED_SLEEP"])
-    expect(one.log.filter((entry) => entry.workId === "a").map((entry) => `${entry.step}:${entry.result}`)).toEqual(["harvest:GUEST_VERSION", "sleep:ok"])
+    expect(acted(f)).toEqual(["harvest a"])
+    expect(f.records.get("a")?.warnings?.map((warning) => warning.code)).toEqual(["AUTOMATION_BLOCKED"])
+    const { sharedOf } = await import("../../src/cost/shared.js")
+    expect(sharedOf(f.services.cost).failed.get("a")).toMatchObject({ step: "harvest", code: "EXPORT_INVALID" })
+    await one.tick()
+    expect(acted(f)).toEqual(["harvest a"])
+    f.clock.now = new Date(T0.getTime() + 31 * 60_000)
+    await one.tick()
+    expect(acted(f)).toEqual(["harvest a", "harvest a"])
   })
 
   test("a failed sleep is recorded (AUTOMATION_BLOCKED), shared with the idle check, and retried only after 30 minutes", async () => {
@@ -96,18 +131,27 @@ describe("a finished work is harvested, then slept, after autoSleepMinutes", () 
     expect(acted(f)).toEqual(["harvest a", "sleep a", "harvest a", "sleep a"])
   })
 
-  test("a work waiting on a person is never slept, in the snapshot or on the guest", async () => {
-    const { f, loop } = setup({ works: [work("a", { needsInput: "form" }), work("b")], records: [record("a"), record("b")] })
-    f.phases.set("b", { needsInput: "permission" })
+  test("a work waiting on a person is never touched", async () => {
+    const { f, loop } = setup({ works: [work("a", { needsInput: "form" }), work("b", { needsInput: "permission", touchedAt: minutesAgo(T0, 48 * 60) })], records: [record("a"), record("b")] })
     await loop().tick()
     expect(acted(f)).toEqual([])
   })
 
-  test("a v0 guest is read through the import port, never uploaded to", async () => {
-    const { f, loop } = setup({ works: [work("old")], records: [record("old", { guestHelper: "v0" })] })
-    await loop().tick()
-    expect(f.calls).toContain("v0-phase oc-old")
-    expect(acted(f)).toEqual(["harvest old", "sleep old"])
+  test("a lock taken over between the listing and the harvest: nothing is done by the old holder", async () => {
+    const { f, loop } = setup({ works: [work("a")], records: [record("a")] })
+    const one = loop()
+    // The listing is the last step before the actions; the lock is lost right then.
+    const list = f.services.boxd.list.bind(f.services.boxd)
+    ;(f.services.boxd as { list: unknown }).list = async (...args: Parameters<typeof list>) => {
+      const answer = await list(...args)
+      const { rmSync } = await import("node:fs")
+      rmSync(join(f.services.ledgerRoot, "automation.lock"), { recursive: true, force: true })
+      return answer
+    }
+    await one.tick()
+    expect(acted(f)).toEqual([])
+    expect(one.log.at(-1)).toMatchObject({ workId: "a", step: "skip", result: "not-owner" })
+    expect(f.services.cost.automation()).toBe("not-owner")
   })
 
   test("a machine already asleep in the listing is left alone", async () => {
@@ -128,19 +172,19 @@ describe("a finished work is harvested, then slept, after autoSleepMinutes", () 
 describe("orphans (§C.3)", () => {
   const fresh = { idleSince: minutesAgo(T0, 1), touchedAt: minutesAgo(T0, 1) }
 
-  test("the coordinator deleted (the session event): harvested and slept", async () => {
+  test("the coordinator deleted (the session event, through the watcher's sessionGone): harvested and slept", async () => {
     const { f, loop } = setup({ works: [work("a", { ...fresh, notify: "ses_gone" })], records: [record("a")] })
-    costHooks(f.services).sessionGone("ses_gone")
+    costHooks(f.services).sessionGone("ses_gone", "deleted")
+    expect(f.watch.gone).toEqual([{ sessionID: "ses_gone", why: "deleted" }])
     await loop().tick()
     expect(acted(f)).toEqual(["harvest a", "sleep a"])
   })
 
-  test("the coordinator archived or not found (the sweep's own check)", async () => {
-    const { f, loop } = setup({ works: [work("a", { ...fresh, notify: "ses_arch" }), work("b", { ...fresh, notify: "ses_missing" }), work("c", { ...fresh, notify: "ses_live" })], records: [record("a"), record("b"), record("c")] })
-    f.sessions.set("ses_arch", { archived: 1 })
-    f.sessions.set("ses_missing", "missing")
+  test("orphaned as the watcher's sweep marks it (archived, re-parented); a live coordinator's work waits", async () => {
+    const orphaned = (why: "archived" | "reparented") => ({ why, session: "ses_x", at: T0.toISOString() })
+    const { f, loop } = setup({ works: [work("a", { ...fresh, orphaned: orphaned("archived") }), work("b", { ...fresh, orphaned: orphaned("reparented") }), work("c", { ...fresh, notify: "ses_live" })], records: [record("a"), record("b"), record("c")] })
     await loop().tick()
-    expect(acted(f)).toEqual(["harvest a,b", "sleep a,b"])
+    expect(acted(f).sort()).toEqual(["harvest a", "harvest b", "sleep a", "sleep b"])
   })
 
   test("untouched for orphanHours", async () => {
@@ -151,7 +195,7 @@ describe("orphans (§C.3)", () => {
 
   test("a busy orphan is left to finish", async () => {
     const { f, loop } = setup({ works: [work("a", { phase: "busy", notify: "ses_gone", touchedAt: minutesAgo(T0, 24 * 60) })], records: [record("a")] })
-    costHooks(f.services).sessionGone("ses_gone")
+    costHooks(f.services).sessionGone("ses_gone", "archived")
     await loop().tick()
     expect(acted(f)).toEqual([])
   })
@@ -211,12 +255,14 @@ describe("automation and access (M-2)", () => {
     expect(f.services.cost.automation()).toBe("on")
   })
 
-  test("startAutomation with no consent, no lease and no budget starts nothing", async () => {
+  test("startAutomation with no consent, no leased work and no budget reads nothing from boxd and takes no lock", async () => {
     const { f } = setup({ options: { access: "read-only" }, ...due() })
     const stop = startAutomation(f.services, { tickMs: 5 })
     await Bun.sleep(30)
     await stop()
     expect(f.calls).toEqual([])
+    expect(acted(f)).toEqual([])
+    expect(existsSync(join(f.services.ledgerRoot, "automation.lock"))).toBe(false)
     expect(f.watch.listeners.size).toBe(0)
   })
 })
@@ -303,6 +349,43 @@ describe("lease renewals (§C.2, L-2)", () => {
     await loop().tick()
     expect(f.calls.filter((call) => call.startsWith("renewLease"))).toEqual(["renewLease vm_u 2d"])
     expect(acted(f)).toEqual([])
+  })
+
+  test("leaseDays turned off (0) at ask-changes after works were leased: the loop still renews them, with their own length", async () => {
+    const { f } = setup({ options: { leaseDays: 0, access: "ask-changes" }, works: [work("a", { phase: "busy", idleSince: undefined })], records: [record("a", { lease: lease(23, 3) })] })
+    const stop = startAutomation(f.services, { tickMs: 60_000 })
+    for (let i = 0; i < 50 && !f.calls.some((call) => call.startsWith("renewLease")); i++) await Bun.sleep(10)
+    await stop()
+    expect(f.calls.filter((call) => call.startsWith("renewLease"))).toEqual(["renewLease vm_a 3d"])
+    expect(f.records.get("a")!.lease!.days).toBe(3)
+    // Renewing protects the work; it is not a cleanup action, so nothing else ran.
+    expect(acted(f)).toEqual([])
+    // Status says the record holds a lease the current option would not set.
+    expect(f.reports.get("lease")).toContain("a: 3d")
+  })
+
+  test("the lock holder has leaseDays 0 (another project leased the work for 3 days): it renews it", async () => {
+    const { f, loop } = setup({ options: { leaseDays: 0 }, works: [work("a", { phase: "busy", idleSince: undefined })], records: [record("a", { lease: lease(23, 1) })] })
+    await loop().tick()
+    expect(f.calls.filter((call) => call.startsWith("renewLease"))).toEqual(["renewLease vm_a 1d"])
+    expect(Date.parse(f.records.get("a")!.lease!.expiresAt)).toBe(T0.getTime() + 86_400_000)
+  })
+
+  test("the holder has leaseDays 1 and the work was leased for 7 days: renewed for 7, never shortened", async () => {
+    const before = lease(7, 7)
+    const { f, loop } = setup({ options: { leaseDays: 1 }, works: [work("a", { phase: "busy", idleSince: undefined })], records: [record("a", { lease: before })] })
+    await loop().tick()
+    expect(f.calls.filter((call) => call.startsWith("renewLease"))).toEqual(["renewLease vm_a 7d"])
+    const after = f.records.get("a")!.lease!
+    expect(after.days).toBe(7)
+    expect(Date.parse(after.expiresAt)).toBeGreaterThan(Date.parse(before.expiresAt))
+    expect(f.reports.get("lease")).toContain("a: 7d")
+  })
+
+  test("a lease equal to the option is not reported", async () => {
+    const { f, loop } = setup({ options: { leaseDays: 1 }, works: [work("a", { phase: "busy", idleSince: undefined })], records: [record("a", { lease: lease(7, 1) })] })
+    await loop().tick()
+    expect(f.reports.has("lease")).toBe(false)
   })
 
   test("within 24 hours of the end, an idle unsaved work is harvested, and not slept for it", async () => {

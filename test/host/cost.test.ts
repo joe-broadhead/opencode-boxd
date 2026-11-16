@@ -12,7 +12,6 @@ import { join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { Model, Plugin, Provider } from "@opencode/plugin"
 import { CLEANUP_COMMAND, registerCleanupCommand } from "../../src/cleanup.js"
-import { sharedOf } from "../../src/cost/shared.js"
 import { IDLE_TAG, registerCostHooks } from "../../src/hooks.js"
 import { defaultRules, registerDefaultRules } from "../../src/permissions.js"
 import type { Dispose } from "../../src/services.js"
@@ -42,7 +41,11 @@ type Body = { messages: Array<{ role: string; content?: unknown }>; tools?: unkn
 const textOf = (content: unknown): string =>
   typeof content === "string" ? content : Array.isArray(content) ? content.map((part) => (part as { text?: string }).text ?? "").join("") : ""
 
-/** An OpenAI-compatible model on loopback that records every request body and answers "ok". */
+/**
+ * An OpenAI-compatible model on loopback that records every request body and answers "ok"; a user message holding
+ * `[[call]]` gets one Code Mode program that calls the test's `probe_echo` tool, and the request after the tool result
+ * gets "done".
+ */
 function recordingModel() {
   const bodies: Body[] = []
   const chunk = (delta: Record<string, unknown>, finish: string | null = null) =>
@@ -56,7 +59,24 @@ function recordingModel() {
       if (url.pathname.endsWith("/models")) return Response.json({ object: "list", data: [{ id: "m1", object: "model", owned_by: "mock" }] })
       const body = (await request.json()) as Body
       bodies.push(body)
-      const value = (body.tools ?? []).length === 0 ? "Mock summary" : "ok"
+      const last = body.messages.at(-1)
+      // The person's own message: the plugin's fleet line may follow it.
+      const person = [...body.messages].reverse().find((message) => message.role === "user" && !textOf(message.content).startsWith("boxd: "))
+      if ((body.tools ?? []).length > 0 && last?.role === "user" && textOf(person?.content).includes("[[call]]")) {
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              const send = (line: string) => controller.enqueue(new TextEncoder().encode(line))
+              send(chunk({ role: "assistant", content: null, tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "execute", arguments: JSON.stringify({ code: "return await tools.probe.echo({})" }) } }] }))
+              send(chunk({}, "tool_calls"))
+              send("data: [DONE]\n\n")
+              controller.close()
+            },
+          }),
+          { headers: { "content-type": "text/event-stream" } },
+        )
+      }
+      const value = (body.tools ?? []).length === 0 ? "Mock summary" : last?.role === "tool" ? "done" : "ok"
       return new Response(
         new ReadableStream({
           start(controller) {
@@ -87,6 +107,8 @@ async function startCostHost(options: Record<string, unknown>) {
   const model = recordingModel()
   const f: Fakes = fakes({ options })
   let ctxRef: Plugin.Context | undefined
+  /** What the `probe_echo` tool does when the model calls it: the test changes the fleet mid tool loop with it. */
+  let onTool: () => void = () => {}
   const stops: Dispose[] = []
   const plugin = Plugin.define({
     id: "boxd.host-test.cost",
@@ -99,6 +121,20 @@ async function startCostHost(options: Record<string, unknown>) {
         })
       })
       await ctx.model.transform((editor) => editor.default.set("mock", "m1"))
+      await ctx.tool.transform((editor) => {
+        editor.namespace({ name: "probe", description: "The cost host test's own tool" })
+        editor.add({
+          name: "echo",
+          description: "Echoes; the test changes the fleet while it runs.",
+          input: { type: "object", properties: {} },
+          output: { type: "object" },
+          options: { namespace: "probe", permission: "probe_echo" },
+          execute: async () => {
+            onTool()
+            return { output: { ok: true }, content: "echoed" }
+          },
+        })
+      })
       // The host's own session domain: the idle check reads its newest input and posts through it.
       const services = { ...f.services, sessions: ctx.session }
       await registerDefaultRules(ctx.agent, defaultRules(f.services.options.access), () => {}, f.services.options.access)
@@ -131,6 +167,9 @@ async function startCostHost(options: Record<string, unknown>) {
     model,
     location,
     ctx: () => ctxRef!,
+    set onTool(value: () => void) {
+      onTool = value
+    },
     async session() {
       return (await client.session.create({ location, agent: "build" })).id as string
     },
@@ -194,6 +233,29 @@ describe(`the cost hooks on @opencode/sdk ${HOST_VERSION}`, () => {
     }
   })
 
+  test("a change mid tool loop waits for the next turn: the step after the tool result carries no line", async () => {
+    const host = await startCostHost({})
+    try {
+      const owner = await host.session()
+      host.f.watch.works = [work("a", { phase: "busy", idleSince: undefined, notify: owner })]
+      // The fleet changes while the tool runs, between the loop's first request and its second.
+      host.onTool = () => void (host.f.watch.works = [work("a", { notify: owner }), work("b", { notify: owner })])
+      const before = turns(host.model.bodies).length
+      await host.prompt(owner, "[[call]] go")
+      const loop = turns(host.model.bodies).slice(before)
+      expect(loop).toHaveLength(2)
+      expect(lastText(loop[0]!)).toStartWith("boxd: 1 works — 1 busy")
+      // The host's tail on the step after a tool result is that result: the line waits, so the cached tail is reused.
+      expect(loop[1]!.messages.at(-1)?.role).toBe("tool")
+      expect(hasLine(loop[1]!)).toBe(false)
+      expect(system(loop[1]!)).toBe(system(loop[0]!))
+      await host.prompt(owner, "next turn")
+      expect(lastText(turns(host.model.bodies).at(-1)!)).toStartWith("boxd: 2 works — 2 idle (2 unsaved)")
+    } finally {
+      await host.close()
+    }
+  })
+
   test("a compaction request carries the works part on its tail", async () => {
     const host = await startCostHost({})
     try {
@@ -243,10 +305,14 @@ describe(`the cost hooks on @opencode/sdk ${HOST_VERSION}`, () => {
     try {
       const deleted = await host.session()
       const archived = await host.session()
-      const shared = sharedOf(host.f.services.cost)
       await host.client.session.update({ sessionID: archived, archived: true })
       await host.client.session.remove({ sessionID: deleted })
-      await until("both events arrive", async () => shared.goneSessions.has(deleted) && shared.goneSessions.has(archived), 30_000)
+      // Passed to the watcher's sessionGone, which marks the works orphaned.
+      const gone = await until("both events arrive", async () => (host.f.watch.gone.length >= 2 ? host.f.watch.gone : undefined), 30_000)
+      expect([...gone].sort((a, b) => a.why.localeCompare(b.why))).toEqual([
+        { sessionID: archived, why: "archived" },
+        { sessionID: deleted, why: "deleted" },
+      ])
     } finally {
       await host.close()
     }

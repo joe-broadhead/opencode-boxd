@@ -12,7 +12,7 @@ import type { CallTag, FleetWatch, OpContext, Rates, Usage, WorkSnapshot } from 
 import type { BudgetState, CleanupAction, CostBlock } from "../results.js"
 import type { CoreServices, CostPort } from "../services.js"
 import { figures, suggestions } from "./fleet.js"
-import { BASIS, money, PUBLIC_RATES } from "./rates.js"
+import { basis, money, PUBLIC_RATES } from "./rates.js"
 import { automationState, sharedOf } from "./shared.js"
 
 /** How long one `manage usage` read for today is reused. */
@@ -37,13 +37,25 @@ const counted = (works: readonly WorkSnapshot[]) => works.filter((work) => work.
 export interface CostInternals extends CostPort {
   /** The rates now: the organisation's when usage was read in the last day, else boxd's public ones. */
   rates(): Rates
-  /** Today's machine cost with the unmetered tail, or null with boxd's reason. */
-  today(context: CallTag): Promise<{ readonly machines: number | null; readonly complete: boolean; readonly unavailable?: string }>
+  /**
+   * Today's boxd machine cost with the unmetered tail, rounded for display, or null with boxd's reason; `raw` is the
+   * unrounded figure the budget compares; `estimated` is boxd's own flag on the figure.
+   */
+  today(context: CallTag): Promise<Today>
   /**
    * The budget from the last usage read only, with no CLI call: what the hooks show. Undefined with no `budget`
    * option, or before any read today.
    */
   cachedBudget(): BudgetState | undefined
+}
+
+export interface Today {
+  readonly machines: number | null
+  readonly raw: number | null
+  readonly currency: string | null
+  readonly complete: boolean
+  readonly estimated: boolean
+  readonly unavailable?: string
 }
 
 /** The rates and the cached budget of a cost port, with boxd's public rates for a port that is not this one (a fake). */
@@ -80,21 +92,23 @@ export function createCost(core: CostCore): CostInternals {
     })
   }
 
-  function todayOf(value: Usage) {
-    if (!value.available) return { machines: null, complete: false, unavailable: value.reason }
+  function todayOf(value: Usage): Today {
+    if (!value.available) return { machines: null, raw: null, currency: null, complete: false, estimated: true, unavailable: value.reason }
     const tail = value.complete ? 0 : figures(counted(core.watch.snapshot().works), currentRates()).perHour * (UNMETERED_MINUTES / 60)
-    return { machines: Math.round((value.total + tail) * 100) / 100, complete: value.complete }
+    const raw = value.total + tail
+    return { machines: Math.round(raw * 100) / 100, raw, currency: value.currency, complete: value.complete, estimated: value.estimated || !value.complete }
   }
   const today = async (call: CallTag) => todayOf(await todayUsage(call))
 
-  function budgetOf(machines: number | null): BudgetState | undefined {
+  /** The budget compares the unrounded figure; `today` in the answer is rounded for display only. */
+  function budgetOf(day: Today): BudgetState | undefined {
     const option = core.options.budget
     if (!option) return undefined
-    const state = machines === null ? "unknown" : machines >= option.daily ? "reached" : "ok"
-    return { daily: option.daily, today: machines, action: option.action, state }
+    const state = day.raw === null ? "unknown" : day.raw >= option.daily ? "reached" : "ok"
+    return { daily: option.daily, today: day.machines, action: option.action, state }
   }
-  const budget = async (call: CallTag) => (core.options.budget ? budgetOf((await today(call)).machines) : undefined)
-  const cachedBudget = () => (core.options.budget && usage && usage.day === localMidnight(now()) ? budgetOf(todayOf(usage.value).machines) : undefined)
+  const budget = async (call: CallTag) => (core.options.budget ? budgetOf(await today(call)) : undefined)
+  const cachedBudget = () => (core.options.budget && usage && usage.day === localMidnight(now()) ? budgetOf(todayOf(usage.value)) : undefined)
 
   /** Machine cost per work since the oldest open work was created, matched by machine id; null for a member. */
   async function perWork(works: readonly WorkSnapshot[], call: CallTag): Promise<Map<string, number> | null> {
@@ -123,11 +137,10 @@ export function createCost(core: CostCore): CostInternals {
       const fleet = figures(works, rate)
       const block: CostBlock = {
         currency: rate.currency,
-        perHour: { estimate: fleet.perHour, running: fleet.running, asleep: fleet.asleep, basis: BASIS, ratesSource: rate.source },
+        perHour: { estimate: fleet.perHour, running: fleet.running, asleep: fleet.asleep, basis: basis(rate), ratesSource: rate.source },
+        // boxd machine cost only: model spend is not measured in v0.1.0.
         today: {
           machines: day.machines,
-          // Model spend is OpenCode's own USD estimate per session; the watcher's snapshot does not carry it yet.
-          models: { currency: "USD", total: 0 },
           complete: day.complete,
           ...(day.unavailable ? { unavailable: day.unavailable } : {}),
         },
@@ -146,12 +159,15 @@ export function createCost(core: CostCore): CostInternals {
     automation: () => automationState(core.options, sharedOf(port)),
     budget,
     async assertBudget(call) {
-      const state = await budget(call)
+      if (!core.options.budget) return
+      const day = await today(call)
+      const state = budgetOf(day)
       if (!state || state.action !== "refuse" || state.state !== "reached") return
-      const currency = currentRates().currency
+      const currency = day.currency ?? currentRates().currency
+      const estimate = day.estimated ? " (boxd's estimate)" : ""
       throw boxdError(
         "BUDGET_REACHED",
-        `Today's machine cost, ${currency} ${state.today?.toFixed(2)}, has reached the budget's daily limit of ${currency} ${state.daily.toFixed(2)}, and budget.action is refuse. A call that would make a machine run is refused.`,
+        `Today's machine cost${estimate}, ${currency} ${state.today!.toFixed(2)}, has reached the budget's daily limit of ${currency} ${state.daily.toFixed(2)}, and budget.action is refuse. A call that would make a machine run is refused.`,
         { today: state.today, daily: state.daily, currency },
       )
     },

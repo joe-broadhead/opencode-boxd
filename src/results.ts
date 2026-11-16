@@ -142,10 +142,10 @@ export interface CostBlock {
   /** The org's billing currency, from boxd. */
   readonly currency: string
   readonly perHour: { readonly estimate: number; readonly running: number; readonly asleep: number; readonly basis: string; readonly ratesSource: "usage" | "public" }
+  /** boxd machine cost only: model spend is not measured in v0.1.0. */
   readonly today: {
-    /** `manage usage` since local midnight; it lags up to 25 minutes. */
+    /** `manage usage` since local midnight, boxd's estimate until `complete`; it lags up to 25 minutes. */
     readonly machines: number | null
-    readonly models: { readonly currency: "USD"; readonly total: number }
     readonly complete: boolean
     readonly unavailable?: string
   }

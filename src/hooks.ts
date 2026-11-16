@@ -1,19 +1,27 @@
 /**
  * The session hooks and events of cost and cleanup (design §C.3, §C.4). Package E owns this file.
  *
- * - **`context`**: one fleet line, only for a session that owns works (`session.notify` of an open work), only on the
- *   first request after the coarse fleet fingerprint changes, at most 240 characters, plugin fields only (no guest
- *   text). `system` is never touched: it stays byte-identical, so the provider's prompt cache holds. The line is
- *   inserted as a **new** trailing `user` message holding only the line; an existing message, and its part array, is
- *   never changed (review note N-1). The edit applies to this request only and is never stored.
+ * - **`context`**: one fleet line, only for a session that owns works (`session.notify` of an open work), at most 240
+ *   characters, plugin fields only (no guest text), and only on a request that **starts a turn** (its tail is a `user`
+ *   message: the person's prompt, or a notice that woke the session) after the coarse fleet fingerprint changed. A change
+ *   seen mid tool loop waits for the next turn; the notices and the idle check cover it meanwhile. Why: providers that
+ *   cache by breakpoint put the tail breakpoint on the last message, so a line on a mid-loop request makes the next step
+ *   miss that entry and write the step's tool output again. At the start of a turn the only extra is the line itself
+ *   (about 50 tokens) and the person's prompt written to the cache once more. `system` is never touched: it stays
+ *   byte-identical, so the provider's prompt cache holds. The line is inserted as a **new** trailing `user` message; an
+ *   existing message, and its part array, is never changed (review note N-1). The edit applies to this request only
+ *   and is never stored.
  * - **`compaction`**: for an owner session, one new trailing `user` message asking the summary to keep the open works
- *   (at most 30 ids with their phase); `system` untouched; the fingerprint is reset afterwards.
+ *   (at most 30 ids with their phase); `system` untouched. A summariser may drop it (an overflow compaction always
+ *   does), so the first request after a compaction carries the line and the same ids once, whatever its tail: the
+ *   compaction has replaced the cached history anyway.
  * - **`experimental.idle`**: speaks only when money burns and automation will not act; one note at most per 30 minutes
  *   per session, tagged `metadata: { boxd: "idle-check", id }`, silent while its fingerprint is unchanged and when the
  *   session's newest input is its own note. Experimental in OpenCode: if it fails to register, status says so and
  *   layers 1 and 2 still hold.
- * - **Events** `session.deleted` and `session.archived`: a fast path to orphan the works that session drove. The
- *   watcher's `ctx.session.get` check stays the ground truth. OpenCode has no separate "session ended" event.
+ * - **Events** `session.deleted` and `session.archived`: passed to the watcher's `sessionGone`, the fast path that marks
+ *   the works that session drove `orphaned`; then automation is woken. The watcher's `ctx.session.get` check stays the
+ *   ground truth. OpenCode has no separate "session ended" event.
  *
  * No hook makes a CLI call or a guest read: each reads the watcher's snapshot and the last usage read, in memory. Every
  * callback catches its own errors, so a hook never fails a request.
@@ -21,7 +29,7 @@
 import { randomBytes } from "node:crypto"
 import type { Plugin } from "@opencode/plugin"
 import { internalsOf } from "./cost/index.js"
-import { burning, compactionText, fleetLine } from "./cost/lines.js"
+import { burning, compactionText, fleetLine, openWorks } from "./cost/lines.js"
 import { sharedOf } from "./cost/shared.js"
 import type { WorkSnapshot } from "./ports.js"
 import type { CostServices, Dispose } from "./services.js"
@@ -71,14 +79,19 @@ export interface CostHooks {
   readonly context: (input: RequestLike) => void
   readonly compaction: (input: RequestLike) => void
   readonly idle: (input: { readonly sessionID: string }) => Promise<void>
-  readonly sessionGone: (sessionID: string) => void
+  readonly sessionGone: (sessionID: string, why: "deleted" | "archived") => void
 }
+
+/** Whether a request starts a turn: its tail is a `user` message, not a tool result or an assistant step. */
+const startsTurn = (messages: readonly unknown[]) => (messages.at(-1) as { role?: unknown } | undefined)?.role === "user"
 
 /** The hook callbacks, apart from their registration, so the unit tests drive them directly. */
 export function costHooks(services: CostServices): CostHooks {
   const shared = sharedOf(services.cost)
   const internals = internalsOf(services.cost)
   const lines = new Map<string, string>()
+  /** Sessions whose next request follows a compaction: it carries the open ids once. */
+  const compacted = new Set<string>()
   const spoken = new Map<string, { readonly fingerprint: string; readonly at: number; readonly id: string }>()
   let owners: { readonly from: ReadonlyArray<WorkSnapshot>; readonly set: ReadonlySet<string> } | undefined
 
@@ -104,7 +117,12 @@ export function costHooks(services: CostServices): CostHooks {
         const { works, owners: set } = fleet()
         if (!set.has(input.sessionID)) return
         const line = fleetLine({ works, rates: internals.rates(), automation: services.cost.automation(), budget: internals.cachedBudget() })
-        if (lines.get(input.sessionID) === line.fingerprint) return
+        if (compacted.delete(input.sessionID)) {
+          lines.set(input.sessionID, line.fingerprint)
+          input.messages.push(userMessage(input.messages, `${line.text}\n${openWorks(works)}; boxd_status lists all.`))
+          return
+        }
+        if (lines.get(input.sessionID) === line.fingerprint || !startsTurn(input.messages)) return
         lines.set(input.sessionID, line.fingerprint)
         input.messages.push(userMessage(input.messages, line.text))
       }),
@@ -114,8 +132,8 @@ export function costHooks(services: CostServices): CostHooks {
         const { works, owners: set } = fleet()
         if (!set.has(input.sessionID)) return
         input.messages.push(userMessage(input.messages, compactionText(works)))
-        // After a compaction the line goes in again on the next request.
-        lines.delete(input.sessionID)
+        // After a compaction the line and the ids go in again on the next request.
+        compacted.add(input.sessionID)
       }),
     async idle(input) {
       try {
@@ -125,8 +143,10 @@ export function costHooks(services: CostServices): CostHooks {
         const now = services.clock.now()
         const burn = burning({ works, rates: internals.rates(), automation: services.cost.automation(), budget: internals.cachedBudget(), now, failed: new Set(shared.failed.keys()) })
         if (!burn) {
-          // Nothing burns now: the same set burning again later is news.
-          spoken.delete(input.sessionID)
+          // Nothing burns now: the same set burning again later is news, but the 30-minute gap still counts from the
+          // last note, so burning, not burning and burning again cannot speak twice within it.
+          const last = spoken.get(input.sessionID)
+          if (last) spoken.set(input.sessionID, { ...last, fingerprint: "" })
           return
         }
         const last = spoken.get(input.sessionID)
@@ -142,9 +162,10 @@ export function costHooks(services: CostServices): CostHooks {
         services.report("hooks:idle", `The idle check failed: ${error instanceof Error ? error.message.split("\n")[0]!.slice(0, 160) : String(error)}`)
       }
     },
-    sessionGone(sessionID) {
-      shared.goneSessions.add(sessionID)
+    sessionGone(sessionID, why) {
+      services.watch.sessionGone(sessionID, why)
       lines.delete(sessionID)
+      compacted.delete(sessionID)
       spoken.delete(sessionID)
       shared.poke()
     },
@@ -177,8 +198,8 @@ export async function registerCostHooks(ctx: HookContext, services: CostServices
   const listening = (async () => {
     try {
       for await (const event of ctx.event.subscribe({ types: [...SESSION_GONE_EVENTS], signal: events.signal })) {
-        const sessionID = (event as { data?: { sessionID?: unknown } }).data?.sessionID
-        if (typeof sessionID === "string") hooks.sessionGone(sessionID)
+        const { type, data } = event as { type?: unknown; data?: { sessionID?: unknown } }
+        if (typeof data?.sessionID === "string") hooks.sessionGone(data.sessionID, type === "session.archived" ? "archived" : "deleted")
       }
     } catch {
       // A stream that ends with the plugin is not a problem; the watcher's sweep is the ground truth.

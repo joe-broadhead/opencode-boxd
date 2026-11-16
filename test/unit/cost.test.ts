@@ -57,7 +57,7 @@ describe("the per-hour estimate (§C.1)", () => {
     expect(block.perHour.estimate).toBeCloseTo(expected, 4)
     expect(block.perHour).toMatchObject({ running: 2, asleep: 1, ratesSource: "usage" })
     expect(block.perHour.basis).toContain("rates ×")
-    expect(block.today).toMatchObject({ machines: 2, complete: true })
+    expect(block.today).toEqual({ machines: 2, complete: true })
     expect(block.works?.map((row) => row.workId)).toEqual(["b", "a", "c"])
     expect(block.works?.[0]).toMatchObject({ model: null, perHour: expect.any(Number) })
   })
@@ -82,13 +82,22 @@ describe("the per-hour estimate (§C.1)", () => {
     expect(localMidnight(T0)).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/)
   })
 
-  test("a member: today's machine cost is null with boxd's reason, and the public rates are used and marked", async () => {
+  test("a member: today's machine cost is null with boxd's reason, and the public rates are used and named as such", async () => {
     const f = make({ works: [work("a")], usage: { available: false, reason: "boxd's machine usage is for organisation owners and admins." } })
     const block = await f.services.cost.block({ works: true, limit: 5 }, tag)
     expect(block.today.machines).toBeNull()
     expect(block.today.unavailable).toContain("owners and admins")
     expect(block.perHour.ratesSource).toBe("public")
+    expect(block.perHour.basis).toStartWith("boxd's public EUR rates (this sign-in cannot read the organisation's rates or its billing currency)")
     expect(block.works?.[0]?.machine).toBeNull()
+  })
+
+  test("today is boxd machine cost only: no model figure anywhere in the block (MEDIUM-4)", async () => {
+    const f = make({ works: [work("a")] })
+    const block = await f.services.cost.block({ works: true, limit: 5 }, tag)
+    expect(Object.keys(block.today).sort()).toEqual(["complete", "machines"])
+    expect(JSON.stringify(block.today)).not.toContain("model")
+    expect(block.works?.[0]?.model).toBeNull()
   })
 
   test("per-work machine cost is matched by machine id", async () => {
@@ -123,11 +132,11 @@ describe("the selectors and the cleanup suggestions (§C.4)", () => {
     expect(ids("saved-finished")).toEqual(["zz", "done"])
   })
 
-  test("the suggestions: sleeps by saving, then the harvest, then the drop, each one call", () => {
+  test("the suggestions: finished first, then the broader idle sleep, then the harvest, then the drop, each one call", () => {
     const actions = suggestions(fleet, EUR)
     expect(actions.map((action) => action.call)).toEqual([
-      'boxd_sleep({ select: "idle" })',
       'boxd_sleep({ select: "finished" })',
+      'boxd_sleep({ select: "idle" })',
       'boxd_harvest({ select: "unsaved-finished" })',
       'boxd_drop({ select: "saved-finished" })',
     ])
@@ -159,6 +168,19 @@ describe("the budget (§C.5)", () => {
     expect(error).toBeInstanceOf(BoxdError)
     expect((error as BoxdError).code).toBe("BUDGET_REACHED")
     expect((error as BoxdError).details).toEqual({ today: 2, daily: 1, currency: "EUR" })
+  })
+
+  test("the budget compares the unrounded figure: 4.9983 of 5.00 is not reached, though it shows as 5.00", async () => {
+    const usage: Usage = { available: true, currency: "USD", total: 4.98, estimated: true, complete: false, asOf: T0.toISOString(), rates: { ...USD, source: "usage" }, machines: [] }
+    const f = make({ options: { budget: { daily: 5, action: "refuse" } }, works: [work("a")], usage })
+    const state = await f.services.cost.budget(tag)
+    expect(state).toMatchObject({ state: "ok", today: 5, daily: 5 })
+    await f.services.cost.assertBudget(tag)
+    f.usage = { ...usage, total: 4.99 }
+    f.clock.now = new Date(T0.getTime() + 11 * 60_000)
+    const error = (await f.services.cost.assertBudget(tag).catch((caught: unknown) => caught)) as BoxdError
+    expect(error.code).toBe("BUDGET_REACHED")
+    expect(error.what).toContain("Today's machine cost (boxd's estimate), USD 5.01, has reached the budget's daily limit of USD 5.00")
   })
 
   test("refuse below the limit passes", async () => {

@@ -4,10 +4,10 @@
  * guest text, so nothing a guest model wrote can reach a coordinator's context this way. Package E owns this file.
  */
 import { assertWorkId } from "../names.js"
-import type { Phase } from "../ledger/types.js"
+import { PHASES, type Phase } from "../ledger/types.js"
 import type { Rates, WorkSnapshot } from "../ports.js"
 import type { AutomationState, BudgetState } from "../results.js"
-import { matches, sign, suggestions, workPerHour } from "./fleet.js"
+import { matches, ratesLabel, ratesNote, sign, suggestions, workPerHour } from "./fleet.js"
 import { isRunning } from "./rates.js"
 
 /** The fleet line's limit, in characters (about 50 tokens). */
@@ -67,9 +67,9 @@ export function fleetLine(input: LineInput): FleetLine {
     input.budget && input.budget.state !== "ok"
       ? input.budget.state === "unknown"
         ? " Budget not measurable (BUDGET_UNKNOWN)."
-        : ` Budget reached: ${money(input.budget.today ?? 0)} of ${money(input.budget.daily)} today.`
+        : ` Budget reached: ${money(input.budget.today ?? 0)} of ${money(input.budget.daily)} today (boxd's estimate).`
       : ""
-  const head = `boxd: ${works.length} works — ${phases.join(", ") || "none running"}; ~${money(running)}/h running.`
+  const head = `boxd: ${works.length} works — ${phases.join(", ") || "none running"}; ~${money(running)}/h running${ratesLabel(input.rates)}.`
   // The parts in order of importance; a part that would pass the limit is left out.
   let text = head
   for (const part of [budget, cleanup, automation]) if (part && text.length + part.length <= LINE_MAX) text += part
@@ -77,16 +77,24 @@ export function fleetLine(input: LineInput): FleetLine {
   return { text: text.slice(0, LINE_MAX), fingerprint }
 }
 
-/** The compaction part: the open works with their phase, at most 30 ids, asking the summary to keep them. */
-export function compactionText(works: readonly WorkSnapshot[]): string {
+const KNOWN_PHASES: ReadonlySet<string> = new Set(PHASES)
+
+/** The open works as `id (phase)`, at most `COMPACTION_MAX_IDS`, and how many more: plugin ids and known phases only. */
+export function openWorks(works: readonly WorkSnapshot[]): string {
   const open = works.filter((work) => work.phase !== "closed" && work.phase !== "gone")
   const named = open.flatMap((work) => {
     const id = safeId(work.workId)
-    return id ? [`${id} (${work.phase})`] : []
+    if (!id) return []
+    return [KNOWN_PHASES.has(work.phase) ? `${id} (${work.phase})` : id]
   })
   const shown = named.slice(0, COMPACTION_MAX_IDS)
   const more = open.length - shown.length
-  return `Keep this list in the summary: boxd works open: ${shown.join(", ") || "none"}${more > 0 ? `, and ${more} more` : ""}; boxd_status lists all.`
+  return `boxd works open: ${shown.join(", ") || "none"}${more > 0 ? `, and ${more} more` : ""}`
+}
+
+/** The compaction part: the open works with their phase, at most 30 ids, asking the summary to keep them. */
+export function compactionText(works: readonly WorkSnapshot[]): string {
+  return `Keep this list in the summary: ${openWorks(works)}; boxd_status lists all.`
 }
 
 export type BurnReason = "idle-running" | "sleep-failed" | "needs-input" | "budget"
@@ -122,13 +130,13 @@ export function burning(input: IdleInput): Burn | undefined {
   if (!automationOn && idle.length) {
     reasons.push("idle-running")
     for (const work of idle) ids.add(work.workId)
-    sentences.push(`${idle.length} idle ${idle.length === 1 ? "work is" : "works are"} running (~${money(perHour(idle))}/h) and auto-sleep is ${input.automation}.`)
+    sentences.push(`${idle.length} idle ${idle.length === 1 ? "work is" : "works are"} running (~${money(perHour(idle))}/h${ratesNote(input.rates)}) and auto-sleep is ${input.automation}.`)
   }
   const failed = works.filter((work) => input.failed.has(work.workId) && work.phase !== "busy")
   if (failed.length) {
     reasons.push("sleep-failed")
     for (const work of failed) ids.add(work.workId)
-    sentences.push(`Auto-sleep failed for ${failed.length} running ${failed.length === 1 ? "work" : "works"} (~${money(perHour(failed))}/h).`)
+    sentences.push(`Auto-sleep failed for ${failed.length} running ${failed.length === 1 ? "work" : "works"} (~${money(perHour(failed))}/h${ratesNote(input.rates)}).`)
   }
   const waiting = works.filter((work) => {
     if (work.needsInput === undefined || !work.idleSince) return false
@@ -143,7 +151,7 @@ export function burning(input: IdleInput): Burn | undefined {
   }
   if (input.budget && input.budget.state === "reached") {
     reasons.push("budget")
-    sentences.push(`Today's machine cost has reached the budget (${money(input.budget.today ?? 0)} of ${money(input.budget.daily)}).`)
+    sentences.push(`Today's machine cost has reached the budget (${money(input.budget.today ?? 0)} of ${money(input.budget.daily)}, boxd's estimate).`)
   }
   if (!reasons.length) return undefined
   const call = idle.length || failed.length || reasons.includes("budget") ? 'Call boxd_sleep({ select: "idle" }) or say why not.' : "Say why they wait."
