@@ -797,8 +797,11 @@ def action_upgrade(request):
     emit({"opencode": current})
 
 
-def export_run(request, sid):
-    """The root session's last run, for the export's answer: the same reading as phase's, in the same exec."""
+def export_run(request, sid, active):
+    """The root session's last run, for the export's answer, read as phase reads it: a root that is running has no
+    outcome yet (a partial export of a live run), and only a busy stamp with no run in the server is an aborted run."""
+    if sid in active:
+        return {"outcome": None}
     info = session_info(request, sid)
     if not isinstance(info, dict):
         return {"outcome": None}
@@ -839,7 +842,10 @@ def action_export(request):
         write_file(path, json.dumps(exported, separators=(",", ":")).encode(), 0o600)
         size, sha = digest(path)
         sessions.append({**marks(exported, sid, parent), "file": guest(path), "bytes": size, "sha256": sha})
-    emit({"outcome": "exported", "busy": bool(running), "run": export_run(request, root), "sessions": sessions, "guestVersion": version})
+    # A run that started while the tree was written (a person on boxd connect, a queued item) makes this copy partial.
+    after = http(request, "GET", "/api/session/active") or {}
+    running = running or [sid for sid, _parent in sessions_tree if sid in after]
+    emit({"outcome": "exported", "busy": bool(running), "run": export_run(request, root, after), "sessions": sessions, "guestVersion": version})
 
 
 def action_import(request):

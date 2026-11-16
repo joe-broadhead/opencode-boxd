@@ -623,7 +623,9 @@ Input: `{ workId, files?: ["…"], to?, localDirectory?, partial?: boolean }`, o
 Flow:
 
 1. The session must be idle, or `partial: true`. A partial harvest stores and imports what exists now, and leaves
-   `saved` as `stale`: it is a copy, not a reason to drop.
+   `saved` as `stale`: it is a copy, not a reason to drop. (Day 0) The idle check is the `export` action's own, in the
+   same exec, and the harvest records `saved.complete = !input.partial && !answer.busy`: a partial harvest, or an
+   export of a tree that was running or started running while it was written, is never "saved".
 2. The guest helper (`export`) writes each session in the tree to `~/.opencode-boxd/exports/<id>.json` on the guest,
    and answers with ids, parent ids, sizes, sha256, and each session's last message id, message count and
    `time.updated`, which

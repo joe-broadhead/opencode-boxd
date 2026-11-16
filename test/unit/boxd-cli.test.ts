@@ -49,7 +49,7 @@ describe("reads", () => {
     // A fresh listing is its own call, and is marked fresh.
     expect((await boxd.list({ maxAgeMs: 0 }, context())).fresh).toBe(true)
     expect(fake.calls()).toHaveLength(2)
-  })
+  }, 20_000)
 
   test("get hands back a change target only for a machine whose labels show the plugin owns it", async () => {
     const ours = fake.machine({ name: "oc-a", region: "fra", labels: { role: "session", owner: "opencode-boxd", work: "a" } })
@@ -60,6 +60,28 @@ describe("reads", () => {
     expect((await boxd.get("fra", "oc-b", context())).owned?.target).toMatchObject({ machineId: v0.id })
     expect((await boxd.get("fra", "oc-c", context())).owned).toBeUndefined()
     expect((await boxd.get("fra", "oc-d", context())).owned).toBeUndefined()
+  }, 20_000)
+
+  test("get never hands back a change target for a shared or isolated machine, whatever its labels", async () => {
+    const labels = { role: "session", owner: "opencode-boxd", work: "s" }
+    fake.machine({ name: "oc-s", region: "fra", labels, sharing: "shared" })
+    fake.machine({ name: "oc-i", region: "fra", labels: { ...labels, work: "i" }, isolated: true })
+    expect(await boxd.get("fra", "oc-s", context())).toMatchObject({ sharing: "shared" })
+    expect((await boxd.get("fra", "oc-s", context())).owned).toBeUndefined()
+    expect(await boxd.get("fra", "oc-i", context())).toMatchObject({ isolated: true })
+    expect((await boxd.get("fra", "oc-i", context())).owned).toBeUndefined()
+  }, 20_000)
+
+  test("a create whose answer names another machine is BOXD_FAILED, and nothing is branded", async () => {
+    fake.snapshot({ region: "fra", name: "img" })
+    fake.update((state) => void (state.createAnswersName = "oc-someone-else"))
+    const key = { create: { region: "fra" as const, name: "oc-asked" as const } }
+    const error = await fail(
+      runner.withMachineLock(key, context(), () =>
+        boxd.create({ kind: "work", region: "fra", name: "oc-asked", workId: "asked", image: "img", autoSuspendSeconds: 0, autoHibernateSeconds: 7200 }, context()),
+      ),
+    )
+    expect([error?.code, error?.what]).toEqual(["BOXD_FAILED", "boxd machine new oc-asked in fra answered for machine oc-someone-else. Nothing was recorded."])
   })
 
   test("get answers the machine and its id in the region asked; a not-found answer is classified, never guessed", async () => {

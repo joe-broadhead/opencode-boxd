@@ -205,7 +205,8 @@ describe("sessions", () => {
     expect(existsSync(onDisk("/home/boxd/.opencode-boxd/exports/ses_parent.json"))).toBe(false)
     expect(verbs()).toEqual(["machine get", "machine exec"])
     const partial = await change((target) => runtime.guest.export(target, { rootId: "ses_parent", partial: true }, context()))
-    expect(partial).toMatchObject({ outcome: "exported", busy: true })
+    // A live run has no outcome yet: a partial export never reports it as aborted.
+    expect(partial).toMatchObject({ outcome: "exported", busy: true, run: { outcome: null } })
   })
 
   test("import puts a tree back, parents first, and answers its root", async () => {
