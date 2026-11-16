@@ -39,6 +39,7 @@ describe("the sweep", () => {
   test("reads a busy guest, appends busy then idle, and never reads an idle one", async () => {
     world = await startWorld()
     const w = world
+    w.sessions.add(COORDINATOR)
     await w.work("review-api", { busy: true, notify: COORDINATOR })
     const seen: WorkEvent[] = []
     w.watcher.watch.subscribe((item) => seen.push(item))
@@ -70,6 +71,46 @@ describe("the sweep", () => {
     expect(seen.map((item) => [item.workId, item.to])).toEqual([["made", "ready"]])
     await w.watcher.flushNotices()
     expect(w.sessions.posted.map((post) => post.text)).toEqual([`boxd: 1 work changed — made ready. boxd_status({ since: ${seen[0]!.seq - 1} }) has the details.`])
+  })
+
+  test("a coordinator that is gone makes its works orphans, from the sweep or from sessionGone, and clears notify", async () => {
+    world = await startWorld()
+    const w = world
+    w.sessions.add("ses_live")
+    w.sessions.add("ses_archived", { archived: 1 })
+    await w.work("by-sweep", { notify: "ses_archived" })
+    await w.work("by-event", { notify: "ses_live" })
+    await w.work("kept", { notify: "ses_live" })
+    // A host that is only busy says nothing about the session: no orphan.
+    await w.watcher.tick()
+    const snapshot = () => Object.fromEntries(w.watcher.watch.snapshot().works.map((work) => [work.workId, work.orphaned?.why ?? null]))
+    expect(snapshot()).toEqual({ "by-sweep": "archived", "by-event": null, kept: null })
+    w.watcher.watch.sessionGone("ses_live", "deleted")
+    await Bun.sleep(50)
+    expect(snapshot()).toEqual({ "by-sweep": "archived", "by-event": "deleted", kept: "deleted" })
+    for (const id of ["by-sweep", "by-event", "kept"]) expect((await w.ledger.get(id, w.context("read")))?.session?.notify).toBeUndefined()
+    // A model-path call that subscribes a live coordinator again clears the flag.
+    w.sessions.add("ses_new")
+    await w.record("kept", (record) => ({ ...record, session: { ...record.session, notify: "ses_new" } }))
+    later(w, 61_000)
+    await w.watcher.tick()
+    expect(snapshot().kept).toBeNull()
+  })
+
+  test("a restart starts from the ledger's cached phases: an idle work is not read again", async () => {
+    world = await startWorld()
+    const w = world
+    await w.work("rested")
+    await w.watcher.tick()
+    expect(w.watcher.watch.snapshot().works.map((work) => work.phase)).toEqual(["idle"])
+    const { createWatch } = await import("../../src/watch.js")
+    const again = createWatch({ ...w.services }, { autoStart: false })
+    w.counter.reset()
+    later(w, 61_000)
+    await again.tick()
+    expect(again.watch.snapshot().works.map((work) => [work.workId, work.phase])).toEqual([["rested", "idle"]])
+    expect(w.counter.spawns().filter((spawn) => spawn.verb === "machine exec")).toEqual([])
+    await again.dispose()
   })
 
   test("three failed listings in a row stop the watcher, and health says why", async () => {
@@ -129,7 +170,7 @@ describe("notices", () => {
     expect(w.sessions.posted[1]!.text).toContain("talker asleep (boxd_sleep)")
   })
 
-  test("a target that is gone, archived or now has a parent gets none, is unsubscribed, and health records it", async () => {
+  test("a target that is gone, archived or now has a parent gets none: the sweep orphans its works and unsubscribes them", async () => {
     world = await startWorld()
     const w = world
     w.sessions.add("ses_archived", { archived: 1 })
@@ -140,11 +181,11 @@ describe("notices", () => {
       ["child-target", "ses_child"],
     ])
     expect(w.sessions.posted).toEqual([])
-    expect(w.watcher.handle.health().notices.map((item) => [item.session, item.dropped]).sort()).toEqual([
-      ["ses_archived", "the session is archived"],
-      ["ses_child", "the session now has a parent"],
-      ["ses_missing", "the session is gone"],
-    ])
+    expect(Object.fromEntries(w.watcher.watch.snapshot().works.map((work) => [work.workId, work.orphaned?.why]))).toEqual({
+      "gone-target": "deleted",
+      "archived-target": "archived",
+      "child-target": "reparented",
+    })
     for (const id of ["gone-target", "archived-target", "child-target"]) expect((await w.ledger.get(id, w.context("read")))?.session?.notify).toBeUndefined()
   })
 

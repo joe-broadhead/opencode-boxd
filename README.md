@@ -104,8 +104,10 @@ work machine is created with auto-suspend off, auto-hibernate after 2 hours idle
 `idle.ignore-outbound` off, at every `access` level, so a forgotten work stops costing memory within 2 hours even with
 the laptop off. With `access: "all"` the plugin also harvests a finished work and then hibernates it after 10 idle
 minutes (`autoSleepMinutes`); at the other levels only with `automation: "on"`, which is your consent. It never drops
-anything by itself. `boxd_status` carries `cost` and `cleanup`, and `/boxd-cleanup` shows what costs money and confirms
-each cleanup action with a permission prompt that only you answer.
+anything by itself. Automation consent is per OpenCode process, and the ledger is one per laptop, so a process at
+`access: "all"` also acts on works another project created at `"ask-changes"`. `boxd_status` carries `cost` and
+`cleanup` (today's cost is boxd's machine cost only; model spend is not measured), and `/boxd-cleanup` shows what costs
+money and confirms each cleanup action with a permission prompt that only you answer.
 
 ## Files in and out
 

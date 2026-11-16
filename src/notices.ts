@@ -45,8 +45,11 @@ export interface NoticeDeps {
   readonly mode: () => NoticeMode
   readonly sessions: Pick<SessionAccess, "get" | "synthetic">
   readonly now: () => Date
-  /** Clears `session.notify` on every open work that names this session, after a drop. Never throws. */
-  readonly unsubscribe: (session: string) => Promise<void>
+  /**
+   * Clears `session.notify` on every open work that names this session, after a drop; `cause` says the session is gone
+   * (its works are orphans), and is absent when the host only refused the notice. Never throws.
+   */
+  readonly unsubscribe: (session: string, cause?: GoneCause) => Promise<void>
 }
 
 /** One work's change in a notice: `review-api idle (completed, not saved)`. Plugin words only. */
@@ -90,18 +93,22 @@ export function isNotFound(error: unknown): boolean {
 }
 
 /** What the host says about a session: present (and a root, not archived), gone for good, or unknown for now. */
-export type TargetCheck = { readonly state: "ok" } | { readonly state: "gone"; readonly why: string } | { readonly state: "unknown" }
+export type GoneCause = "deleted" | "archived" | "reparented"
+export type TargetCheck = { readonly state: "ok" } | { readonly state: "gone"; readonly why: string; readonly cause: GoneCause } | { readonly state: "unknown" }
+
+const GONE: Readonly<Record<GoneCause, string>> = { deleted: "the session is gone", archived: "the session is archived", reparented: "the session now has a parent" }
+const gone = (cause: GoneCause): TargetCheck => ({ state: "gone", why: GONE[cause], cause })
 
 export async function checkTarget(sessions: Pick<SessionAccess, "get">, target: string): Promise<TargetCheck> {
   let info: { readonly parentID?: unknown; readonly time?: { readonly archived?: unknown } } | undefined
   try {
     info = (await sessions.get({ sessionID: target } as never)) as typeof info
   } catch (error) {
-    return isNotFound(error) ? { state: "gone", why: "the session is gone" } : { state: "unknown" }
+    return isNotFound(error) ? gone("deleted") : { state: "unknown" }
   }
-  if (!info) return { state: "gone", why: "the session is gone" }
-  if (info.time?.archived !== undefined && info.time.archived !== null) return { state: "gone", why: "the session is archived" }
-  if (typeof info.parentID === "string" && info.parentID !== "") return { state: "gone", why: "the session now has a parent" }
+  if (!info) return gone("deleted")
+  if (info.time?.archived !== undefined && info.time.archived !== null) return gone("archived")
+  if (typeof info.parentID === "string" && info.parentID !== "") return gone("reparented")
   return { state: "ok" }
 }
 
@@ -205,7 +212,7 @@ export class NoticeQueue {
     // The minute starts now, before any await, so no second notice can pass the check meanwhile.
     this.lastSent.set(target, this.deps.now().getTime())
     const check = await checkTarget(this.deps.sessions, target)
-    if (check.state === "gone") return this.drop(target, check.why)
+    if (check.state === "gone") return this.drop(target, check.why, check.cause)
     if (check.state === "unknown") {
       // The host did not say: keep the changes (newer ones win) and try again at the next minute.
       const later = this.pending.get(target) ?? new Map<string, Pending>()
@@ -227,9 +234,9 @@ export class NoticeQueue {
     }
   }
 
-  private async drop(target: string, why: string): Promise<void> {
+  private async drop(target: string, why: string, cause?: GoneCause): Promise<void> {
     this.droppedList.push({ session: target, dropped: why, at: this.deps.now().toISOString() })
     if (this.droppedList.length > DROPPED_KEPT) this.droppedList.splice(0, this.droppedList.length - DROPPED_KEPT)
-    await this.deps.unsubscribe(target)
+    await this.deps.unsubscribe(target, cause)
   }
 }

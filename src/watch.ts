@@ -20,7 +20,7 @@ import { join } from "node:path"
 import { BoxdError } from "./errors.js"
 import { LEDGER_PATHS, type Phase, type WorkRecord } from "./ledger/types.js"
 import { base, codeOf, notRead, observe, observeFailure, outcomeOf, phaseOf, promptedSince, readGuest, recordPhase, STATUS_TEXT_LIMIT, wantsRead, type Observed } from "./fleet/model.js"
-import { checkTarget, NoticeQueue, type DroppedNotice } from "./notices.js"
+import { checkTarget, NoticeQueue, type DroppedNotice, type GoneCause } from "./notices.js"
 import type { FleetSnapshot, FleetWatch, Listing, OpContext, WorkEvent, WorkSnapshot } from "./ports.js"
 import { TIMEOUTS } from "./ports.js"
 import { reasonOf } from "./redact.js"
@@ -46,8 +46,8 @@ export interface WatchHandle {
   /** Starts the watcher again when it stopped, and makes it sweep soon when there is something to watch. */
   kick(): void
   health(): { readonly notices: readonly DroppedNotice[]; readonly watcher?: string }
-  /** Notice targets the last sweep found gone, archived or re-parented: their works are orphans (§C.3). */
-  goneTargets(): ReadonlySet<string>
+  /** Why a work is an orphan: its coordinator session is gone, archived or under another session (§3.13, §C.3). */
+  orphaned(workId: string): WorkSnapshot["orphaned"]
 }
 
 const handles = new WeakMap<FleetWatch, WatchHandle>()
@@ -86,7 +86,8 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
   const listeners = new Set<(event: WorkEvent) => void>()
   /** Sequence numbers this process already handed out, so the tail does not hand them out twice. */
   const dispatched = new Set<number>()
-  const goneTargets = new Set<string>()
+  /** Works whose coordinator is gone: written only here, from the sweep, a dropped notice, or `sessionGone`. */
+  const orphans = new Map<string, NonNullable<WorkSnapshot["orphaned"]>>()
   /** The listing that last counted a work's machine as absent. */
   const absentListing = new Map<string, number>()
   const abort = new AbortController()
@@ -107,27 +108,34 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
     mode: () => core.options.notices,
     sessions: core.sessions,
     now,
-    unsubscribe: async (session) => {
-      const ids = [...records.values()].filter((record) => record.state === "open" && record.session?.notify === session).map((record) => record.workId)
-      if (!ids.length) return
-      try {
-        await core.ledger.update(
-          ids,
-          async (current) => ({
-            write: [...current.values()].flatMap((record) => {
-              if (!record || record.session?.notify !== session) return []
-              const { notify: _gone, ...rest } = record.session
-              return [{ ...record, session: rest }]
-            }),
-            value: undefined,
-          }),
-          context(),
-        )
-      } catch (error) {
-        core.report("notices", `A notice target could not be unsubscribed: ${reasonOf(error)}.`)
-      }
-    },
+    unsubscribe: (session, cause) => orphan(session, cause),
   })
+
+  /**
+   * A coordinator session is gone: its open works are marked orphaned (when `cause` says it is gone, rather than that
+   * the host refused a notice), and their `session.notify` is cleared. Never throws.
+   */
+  async function orphan(session: string, cause?: GoneCause): Promise<void> {
+    const ids = [...records.values()].filter((record) => record.state === "open" && record.session?.notify === session).map((record) => record.workId)
+    if (cause) for (const id of ids) if (!orphans.has(id)) orphans.set(id, { why: cause, session, at: now().toISOString() })
+    if (!ids.length) return
+    try {
+      await core.ledger.update(
+        ids,
+        async (current) => ({
+          write: [...current.values()].flatMap((record) => {
+            if (!record || record.session?.notify !== session) return []
+            const { notify: _gone, ...rest } = record.session
+            return [{ ...record, session: rest }]
+          }),
+          value: undefined,
+        }),
+        context(),
+      )
+    } catch (error) {
+      core.report("notices", `A notice target could not be unsubscribed: ${reasonOf(error)}.`)
+    }
+  }
 
   function context(): OpContext {
     return { call: { callId: `watcher-${++calls}`, source: "watcher" }, pool: "background", signal: abort.signal }
@@ -164,12 +172,21 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
     })
   }
 
-  /** Seeds from the whole kept log once, then tails it whenever the file changed. */
+  /**
+   * Seeds once from the ledger's cached phases (the `to` of each work's last event, with no replay of the log) and the
+   * log's newest cursor, then tails the log whenever the file changed.
+   */
   async function sync(op: OpContext): Promise<void> {
     if (!seeded) {
-      const page = await core.ledger.eventsSince(0, op)
-      for (const event of page.events) learn(event)
-      cursor = page.cursor
+      const phases = await core.ledger.phases({}, op)
+      const at = now()
+      for (const [workId, entry] of phases) {
+        if (entry.phase === null) continue
+        // Known from the index, not from a read or an event this process saw: it never blocks a listing.
+        logged.set(workId, { phase: entry.phase, at: new Date(0).toISOString(), seenAt: 0 })
+        if (!observed.has(workId)) observed.set(workId, base(undefined, entry.phase, at))
+      }
+      cursor = (await core.ledger.eventsSince(0, op)).cursor
       seeded = true
       logStamp = stampOf()
       return
@@ -311,12 +328,18 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
   /** The ground truth for orphans (§C.3): each notice target, read locally with no CLI call. */
   async function checkTargets(open: readonly WorkRecord[]): Promise<void> {
     const targets = new Set(open.map((record) => record.session?.notify).filter((target): target is string => typeof target === "string"))
-    for (const target of [...goneTargets]) if (!targets.has(target)) goneTargets.delete(target)
     for (const target of targets) {
       // Only the host's own "not found", an archive or a new parent orphans the works; any other error says nothing.
       const check = await checkTarget(core.sessions, target)
-      if (check.state === "gone") goneTargets.add(target)
-      else if (check.state === "ok") goneTargets.delete(target)
+      if (check.state === "gone") await orphan(target, check.cause)
+    }
+  }
+
+  /** A work subscribed to a live coordinator again (a model-path call) is no longer an orphan. */
+  function clearOrphans(): void {
+    for (const [workId, flag] of orphans) {
+      const record = records.get(workId)
+      if (!record || record.state !== "open" || (record.session?.notify && record.session.notify !== flag.session)) orphans.delete(workId)
     }
   }
 
@@ -329,6 +352,7 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
         const list = await core.ledger.list({}, op)
         for (const id of [...records.keys()]) if (!list.some((record) => record.workId === id)) records.delete(id)
         for (const record of list) records.set(record.workId, record)
+        clearOrphans()
         await sync(op)
         const open = list.filter((record) => record.state === "open")
         if (!(auto && stopped) && wantsSweep(open)) {
@@ -378,7 +402,7 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
       schedule(0)
     },
     health: () => ({ notices: notices.dropped(), ...(problem ? { watcher: problem } : {}) }),
-    goneTargets: () => goneTargets,
+    orphaned: (workId) => orphans.get(workId),
   }
 
   const watch: FleetWatch = {
@@ -405,9 +429,13 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
           ...((phase === "idle" || phase === "ready") && obs?.since ? { idleSince: obs.since } : {}),
           ...(record.touchedAt ? { touchedAt: record.touchedAt } : {}),
           ...(record.session?.notify ? { notify: record.session.notify } : {}),
+          ...(orphans.has(record.workId) ? { orphaned: orphans.get(record.workId)! } : {}),
         })
       }
       return { asOf: listingAt ?? new Date(0).toISOString(), works }
+    },
+    sessionGone(sessionID, why) {
+      void orphan(sessionID, why).catch(() => undefined)
     },
   }
   handles.set(watch, handle)

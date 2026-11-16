@@ -106,7 +106,7 @@ const one = (tool: string, workId: string, extra = "") => `${tool}({ workId: ${J
 const quoted = (ids: readonly string[]) => ids.map((id) => JSON.stringify(id)).join(", ")
 
 /** Why a work needs a decision, worst first, with its code and its one next call; undefined when it needs none. */
-export function attentionOf(row: Row, facts: { readonly now: number; readonly hostVersion: string | null; readonly automation: AutomationState; readonly goneTargets: ReadonlySet<string> }): { why: AttentionReason; error?: Code; next: string } | undefined {
+export function attentionOf(row: Row, facts: { readonly now: number; readonly hostVersion: string | null; readonly automation: AutomationState; readonly orphaned: (workId: string) => unknown }): { why: AttentionReason; error?: Code; next: string } | undefined {
   const { record, phase, observed, saved } = row
   if (record.state !== "open") return undefined
   const id = record.workId
@@ -145,7 +145,7 @@ export function attentionOf(row: Row, facts: { readonly now: number; readonly ho
     if (!Number.isNaN(since) && facts.now - since > STUCK_MS) reasons.push({ why: "stuck", next: one("boxd_ensure", id) })
   }
   const running = phase === "idle" || phase === "ready" || phase === "busy"
-  if (record.session?.notify && facts.goneTargets.has(record.session.notify) && (phase === "idle" || phase === "ready")) {
+  if (facts.orphaned(id) && (phase === "idle" || phase === "ready")) {
     reasons.push({ why: "orphan", next: `${one("boxd_harvest", id)}, then ${one("boxd_sleep", id)}: its coordinator session is gone` })
   }
   if (observed?.guestVersion && facts.hostVersion && observed.guestVersion !== facts.hostVersion && unsaved && phase !== "busy") {
@@ -347,7 +347,7 @@ export async function fleetStatus(services: FleetServices, input: StatusInput, c
   for (const row of rows) counts[row.phase] = (counts[row.phase] ?? 0) + 1
 
   // Attention: worst first, folded by reason and code, at most `limit`.
-  const facts = { now: at, hostVersion: services.hostVersion, automation: costs.automation, goneTargets: handle?.goneTargets() ?? new Set<string>() }
+  const facts = { now: at, hostVersion: services.hostVersion, automation: costs.automation, orphaned: (workId: string) => handle?.orphaned(workId) }
   const visible = (row: Row) => !changed || changed.has(row.record.workId)
   const needs = rows
     .filter(visible)

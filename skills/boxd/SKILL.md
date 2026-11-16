@@ -51,7 +51,9 @@ only what changed. Repeated causes fold into `groups`, such as fifteen works sto
 - Read `cost` and `cleanup` in `boxd_status`, and act on the first `cleanup` action, or say why not.
 - Automation and `access`: with `access` "all" the plugin harvests and hibernates finished works by itself. At
   "ask-changes" and "read-only" it does not, unless the person put `automation: "on"` in the plugin config: that line is
-  their consent. When automation is off, cleaning up is your job: act on `cleanup`.
+  their consent. Consent is per OpenCode process: the ledger is one per laptop, so a process at "all" also cleans up
+  works created from an "ask-changes" project. When automation is off, cleaning up is your job: act on `cleanup`.
+- `cost.today` is boxd's machine cost only; model spend is not measured.
 - `/boxd-cleanup` is for the person. Its confirmations are permission prompts that only a person answers. Do not try to
   answer or work around them.
 

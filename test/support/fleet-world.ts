@@ -167,7 +167,7 @@ export async function startWorld(options: { readonly options?: Record<string, un
     const session = `ses_${workId.replace(/-/g, "_")}`
     const op = context(`seed-${workId}`, "boxd_ensure")
     const change = async <T>(fn: (target: ChangeTarget) => Promise<T>) =>
-      runtime.runner.withMachineLock({ id: machine.id as MachineId }, op, async () => fn(await runtime.boxd.checkOwned("fra", name, machine.id as MachineId, op)))
+      runtime.runner.withMachineLock({ id: machine.id as MachineId }, op, async () => fn((await runtime.boxd.checkOwned("fra", name, machine.id as MachineId, op)).target))
     await change((target) => runtime.guest.setup(target, { directory, opencode: "2.2.6" }, op))
     guest.next(session)
     await change((target) => runtime.guest.prompt(target, { directory, sessionId: null, title: workId, text: "start", delivery: "steer" }, op))
