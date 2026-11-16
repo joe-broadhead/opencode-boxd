@@ -1,0 +1,54 @@
+{
+  "info": {
+    "id": "ses_freshchild",
+    "projectID": "proj_fixture",
+    "cost": 0.01,
+    "tokens": {
+      "input": 10,
+      "output": 20,
+      "reasoning": 0,
+      "cache": {
+        "read": 0,
+        "write": 0
+      }
+    },
+    "time": {
+      "created": 1763200000000,
+      "updated": 1763200003000
+    },
+    "title": "child",
+    "location": {
+      "directory": "/work/projects/api"
+    },
+    "parentID": "ses_freshroot"
+  },
+  "messages": [
+    {
+      "id": "msg_freshchild_000",
+      "type": "user",
+      "sessionID": "ses_freshchild",
+      "time": {
+        "created": 1763200000000
+      },
+      "text": "question 0"
+    },
+    {
+      "id": "msg_freshchild_001",
+      "type": "assistant",
+      "sessionID": "ses_freshchild",
+      "time": {
+        "created": 1763200001000
+      },
+      "text": "answer 1"
+    },
+    {
+      "id": "msg_freshchild_002",
+      "type": "user",
+      "sessionID": "ses_freshchild",
+      "time": {
+        "created": 1763200002000
+      },
+      "text": "question 2"
+    }
+  ]
+}

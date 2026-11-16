@@ -1,8 +1,8 @@
 // Pack, install and load the published shape: the tarball holds exactly the files whitelist, installs with lifecycle
 // scripts disabled, and both entry points load. Then, on each stock OpenCode release, the installed plugin is started
 // by the real binary and its tools, default rules, command and status RPC are checked. No boxd machine is ever started:
-// the plugin is pointed at a fake CLI through the plugin's own snapshot option only for status, and every tool call that
-// would touch a machine is left out here (test/host does those against a fake CLI and a fake guest).
+// every tool call that would touch a machine is left out here (test/host does those against a fake CLI and a fake
+// guest).
 import { afterAll, describe, expect, test } from "bun:test"
 import { spawn, spawnSync } from "node:child_process"
 import { randomUUID } from "node:crypto"
@@ -30,7 +30,9 @@ run("git", ["init", "--quiet", work], root)
 afterAll(() => rmSync(work, { recursive: true, force: true }), { timeout: 120_000 })
 
 const MAX_FILES = 30
-const MAX_PACKED_BYTES = 100 * 1024
+// The v0.1.0 redesign's runner, ledger, import and guest v1, with the machine runs, the fleet view, the watcher and cost
+// (about 169 KB packed with C1, D and E); still catches an accidentally bundled dependency. Re-checked at integration.
+const MAX_PACKED_BYTES = 192 * 1024
 const DIST = ["dist/index.js", "dist/tui.js"]
 const SERVER_HOST_MODULES = [/^node:/, /^@opencode\/plugin(?:\/|$)/]
 const TUI_HOST_MODULES = [/^node:/, /^@opencode\/plugin(?:\/|$)/, /^@opentui\//, /^solid-js(?:\/|$)/]
@@ -114,7 +116,7 @@ describe("package tarball", () => {
     const expected = ["package.json", ...pkg.files.flatMap(whitelisted)].sort()
     expect(paths).toEqual(expected)
     expect(entryCount).toBeLessThan(MAX_FILES)
-    expect(size).toBeLessThanOrEqual(MAX_PACKED_BYTES)
+    if (size > MAX_PACKED_BYTES) throw new Error(`The packed tarball is ${size} bytes, over the ${MAX_PACKED_BYTES}-byte budget.`)
     expect(paths.filter((path) => path.includes("node_modules/") || /\.(?:tsx|jsx)$/.test(path))).toEqual([])
     for (const target of Object.values(pkg.exports)) expect(paths).toContain(target.replace(/^\.\//, ""))
     expect(paths.filter((path) => path.endsWith(".d.ts"))).toEqual([])
@@ -158,7 +160,7 @@ describe("package tarball", () => {
 })
 
 describe.each(TESTED_HOSTS)("installed alone, in stock OpenCode %s", (version) => {
-  test("is active, registers the nine tools, adds the default rules, and answers the status RPC", async () => {
+  test("is active, registers the twelve tools, adds the default rules, and answers the status RPC", async () => {
     const installed = installedPackage(false)
     const host = await serve(version, installed)
     try {
@@ -170,8 +172,8 @@ describe.each(TESTED_HOSTS)("installed alone, in stock OpenCode %s", (version) =
       })
       expect(plugin.state).toEqual({ status: "active" })
 
-      // The status RPC counts the tools OpenCode lists in the `boxd` namespace: nine, none unknown.
-      await host.until("the nine tools are registered", async () => {
+      // The status RPC counts the tools OpenCode lists in the `boxd` namespace: twelve, none unknown.
+      await host.until("the twelve tools are registered", async () => {
         const { output } = await host.api<{ output: { tools: number; unknownCount: number } }>("POST", "/api/rpc/boxd.machines/status", { input: {} })
         return output.tools === TOOLS.length && output.unknownCount === 0
       })
@@ -184,21 +186,19 @@ describe.each(TESTED_HOSTS)("installed alone, in stock OpenCode %s", (version) =
       expect(build).toEqual(defaultRules())
 
       const { output } = await host.api<{ output: Record<string, unknown> }>("POST", "/api/rpc/boxd.machines/status", { input: {} })
+      // An empty ledger: the fleet is read (a stock host has no boxd CLI, so the listing fails and says so), and the
+      // package's posture, hooks and tools are reported.
       expect(output).toMatchObject({
         version: pkg.version,
         state: "connected",
         host: { version, range: SUPPORTED_HOST, tested: true },
-        snapshot: "opencode-golden",
+        image: `oc-golden-${version}-2x8`,
         guestVersion: version,
         openWorks: 0,
         unknownCount: 0,
         unguardedAgents: [],
         problems: [],
-        // The pack test installs no boxd CLI, so status reports it first, with the sign-in as the next step.
-        signedIn: false,
-        nextStep: "Run boxd auth login in a terminal, check that the laptop's boxd CLI is on OpenCode's PATH, then run /boxd-status again.",
       })
-      expect(String(output.signInError)).toStartWith("BOXD_MISSING: ")
       expect(StatusRpc.methods.status.output.required).toContain("nextStep")
 
       const { data: agents } = await host.api<{ data: { id: string }[] }>("GET", "/api/agent")

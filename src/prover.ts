@@ -1,42 +1,31 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
-import { boxdError } from "./errors.js"
-import { run } from "./run.js"
-
-/** What the prover needs from a transfer: the id its transcript is filed under. */
-type Transcript = { readonly info: { readonly id: string } }
-
 /**
- * The laptop's own `opencode session import`, which keeps the transcript's id on every tested release: a second import
- * of the same transcript is a conflict, not a second session.
+ * The replace a harvest makes on the laptop's own OpenCode (design §3.6 step 4, F1), through the laptop port
+ * (`src/exec/laptop.ts`): an import of an id that already exists changes nothing, so each session is deleted first
+ * (which also removes its children), then imported, parents first, and the import must name the transcript's own id.
+ *
+ * It reads the ledger's stored export and never writes it, so a failed import leaves the last good export in place for
+ * the next harvest to retry.
  */
-export function cliProver(bin = "opencode") {
-  return {
-    async importTransfer(transfer: Transcript, directory: string): Promise<{ id: string }> {
-      const dir = await mkdtemp(join(tmpdir(), "opencode-boxd-"))
-      try {
-        const file = join(dir, "export.json")
-        await writeFile(file, JSON.stringify(transfer))
-        // --standalone: the import writes the same store whatever else is running, and never waits on a service.
-        const result = await run(bin, ["session", "import", file, "--directory", directory, "--standalone"], { timeoutMs: 120_000 })
-        const text = `${result.stdout}\n${result.stderr}`
-        // Stock 2.2.x prints this on stderr and exits 0, with no id in the message, because the id already exists.
-        if (result.code === 0 && /Session already exists/i.test(text)) return { id: transfer.info.id }
-        if (result.code !== 0) throw boxdError("NOT_PROVEN", `The laptop's import failed: ${firstLine(text)}.`)
-        // Session ids are `ses_...`; a bare `/ses[a-z]+/` would also match the word "session" in the CLI's own message.
-        const id = /ses_[A-Za-z0-9_-]+/.exec(text)?.[0]
-        if (!id) throw boxdError("NOT_PROVEN", "The laptop's import printed no session id.")
-        return { id }
-      } finally {
-        await rm(dir, { recursive: true, force: true })
-      }
-    },
-  }
+import { boxdError } from "./errors.js"
+import type { LaptopPort, OpContext } from "./ports.js"
+
+/** A transcript to put on the laptop: the stored export and the session id it holds. */
+export interface StoredTranscript {
+  readonly id: string
+  readonly file: string
 }
 
-/** The CLI's own words, one line, for the error's "what happened". */
-function firstLine(text: string): string {
-  const line = text.split("\n").map((item) => item.trim()).filter(Boolean)[0] ?? "no output"
-  return line.slice(0, 200)
+/**
+ * Replaces each session with its stored export, in the order given (parents first): delete, then import, then check.
+ * Stops at the first failure with `IMPORT_FAILED`; the stored files are never changed.
+ */
+export async function replaceOnLaptop(laptop: LaptopPort, transcripts: readonly StoredTranscript[], directory: string, context: OpContext): Promise<readonly string[]> {
+  const ids: string[] = []
+  for (const transcript of transcripts) {
+    await laptop.deleteSession(transcript.id, context)
+    const { id } = await laptop.importSession(transcript.file, directory, context)
+    if (id !== transcript.id) throw boxdError("IMPORT_FAILED", `This laptop's import filed ${transcript.id} as ${id}, not under its own id.`)
+    ids.push(id)
+  }
+  return ids
 }

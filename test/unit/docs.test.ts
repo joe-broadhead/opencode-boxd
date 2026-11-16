@@ -6,8 +6,9 @@ import { existsSync, readFileSync, readdirSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { CODES } from "../../src/errors.js"
 import { COMMAND_STEM, TESTED_HOSTS } from "../../src/constants.js"
-import { TOOLS } from "../../src/tools.js"
+import { CHANGING_TOOLS, TOOLS } from "../../src/tools.js"
 import { defaultRules } from "../../src/permissions.js"
+import { DEFAULT_OPTIONS, parseOptions } from "../../src/options.js"
 
 const root = new URL("../../", import.meta.url)
 const read = (path: string) => readFileSync(new URL(path, root), "utf8")
@@ -16,6 +17,7 @@ const CONFIG = read("docs/configuration.md")
 const SCRIPTING = read("docs/scripting.md")
 
 const codes = Object.keys(CODES)
+
 
 /** Every file under a folder, relative to the repository. */
 function files(folder: string): string[] {
@@ -79,13 +81,13 @@ describe("the README", () => {
   })
 
   test("installs from the GitHub release tag, not from a checkout or the registry", () => {
-    expect(README).toContain("opencode plugin add github:joe-broadhead/opencode-boxd#v0.0.6")
+    expect(README).toContain("opencode plugin add github:joe-broadhead/opencode-boxd#v0.1.0")
     expect(README).not.toMatch(/plugins.*\.\/opencode-boxd/)
     expect(README).not.toMatch(/npm run build/)
   })
 
   test("has one Troubleshooting row for every code, and no code the plugin does not raise", () => {
-    const rows = [...README.matchAll(/^\| `([A-Z_]+)` \|/gm)].map((match) => match[1])
+    const rows = [...README.matchAll(/^\| `([A-Z][A-Z0-9_]*)` \|/gm)].map((match) => match[1])
     expect(rows.sort()).toEqual([...codes].sort())
     for (const code of codes) expect(CONFIG).toContain(`| \`${code}\` |`)
   })
@@ -104,9 +106,7 @@ describe("the README", () => {
   test("says every tool is allowed by default, and names the three ways to restrict", () => {
     expect(README).toContain("**Every tool is allowed by default.**")
     for (const value of ["\"all\"", "\"ask-changes\"", "\"read-only\""]) expect(README).toContain(value)
-    for (const tool of ["boxd_ensure", "boxd_submit", "boxd_harvest", "boxd_sleep", "boxd_resume", "boxd_image", "boxd_drop"]) {
-      expect(README).toContain(tool)
-    }
+    for (const tool of CHANGING_TOOLS) expect(README).toContain(tool)
     expect(README).toContain("a machine that idles hibernates")
   })
 
@@ -149,7 +149,7 @@ describe("the README", () => {
 
 describe("the docs set", () => {
   test("has the shared files, each with a heading", () => {
-    for (const path of ["docs/configuration.md", "docs/architecture.md", "docs/golden-image.md", "docs/jelly.md", "docs/scripting.md", "docs/live-check.md"]) {
+    for (const path of ["docs/configuration.md", "docs/architecture.md", "docs/images.md", "docs/jelly.md", "docs/scripting.md", "docs/live-check.md"]) {
       expect(existsSync(new URL(path, root))).toBe(true)
       expect(read(path)).toMatch(/^# /m)
     }
@@ -216,6 +216,21 @@ describe("the docs set", () => {
     expect(jelly).toContain("Every tool the plugin registers is declared")
     expect(jelly).toContain("Jelly applies the `access` setting itself")
     expect(jelly).not.toContain("a declared `allow` changes nothing in Jelly")
+  })
+
+  test("configuration has one Options row for every option the parser takes, with its default", () => {
+    const section = CONFIG.slice(CONFIG.indexOf("## Options"), CONFIG.indexOf("## Where the ledger lives"))
+    const rows = new Map([...section.matchAll(/^\| `([A-Za-z]+)` \| ([^|]+) \|/gm)].map((match) => [match[1]!, match[2]!.trim()]))
+    // The options with no default: each is accepted, and left out when not given.
+    const optional = { git: { name: "Work", email: "work@example.invalid" }, goldenSetup: "/srv/setup.sh", budget: { daily: 5, action: "warn" } }
+    expect([...rows.keys()].sort()).toEqual([...Object.keys(DEFAULT_OPTIONS), ...Object.keys(optional)].sort())
+    for (const [key, value] of Object.entries(DEFAULT_OPTIONS)) {
+      expect({ key, documented: rows.get(key)!.replace(/[`\s]/g, "") }).toEqual({ key, documented: JSON.stringify(value) })
+    }
+    for (const [key, value] of Object.entries(optional)) {
+      expect({ key, documented: rows.get(key) }).toEqual({ key, documented: "none" })
+      expect(parseOptions({ [key]: value })).toMatchObject({ [key]: value })
+    }
   })
 
   test("the AGENTS file states the rules the checks enforce", () => {

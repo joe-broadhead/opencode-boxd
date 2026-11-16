@@ -691,7 +691,7 @@ describe("the shared copy's own block", () => {
     expect(shapeInput("any", { q: 1 }, { sessionID: "s", agent: "a", action: "x" })).toEqual({ q: 1 })
     expect(shapeResult("any", { text: "t" }, { sessionID: "s", agent: "a", action: "x" })).toEqual({ text: "t" })
     const failure = pluginError(new BoxdError("SESSION_BUSY", "The session is still running."))
-    expect(failure).toEqual({ code: "SESSION_BUSY", what: "The session is still running", next: "Call boxd_job until it reports idle, then make this call again." })
+    expect(failure).toEqual({ code: "SESSION_BUSY", what: "The session is still running", next: 'Wait for the work\'s notice, or pass mode: "interrupt" to boxd_submit, or partial: true to boxd_harvest.' })
     expect(pluginError(new Error("something else"))).toBeUndefined()
   })
 })

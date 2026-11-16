@@ -1,9 +1,9 @@
 # Repository rules
 
 This repository builds `@joe-broadhead/opencode-boxd`, an OpenCode plugin that runs a session on a private boxd machine
-and keeps the transcript on the laptop. It has no MCP server: its nine tools are its own. Read
-[docs/architecture.md](docs/architecture.md) before you change code, and [CONTRIBUTING.md](CONTRIBUTING.md) for the
-checks and the release steps.
+and keeps the transcript on the laptop. It has no MCP server: its twelve tools are its own. Read
+[docs/v1-design.md](docs/v1-design.md) and [docs/architecture.md](docs/architecture.md) before you change code, and
+[CONTRIBUTING.md](CONTRIBUTING.md) for the checks and the release steps.
 
 ## Rules
 
@@ -12,6 +12,18 @@ checks and the release steps.
   `src/constants.ts` is the one list of tested releases, tested on 2.2.3, 2.2.4, 2.2.5, 2.2.6, 2.2.7 and 2.3.0. Inside the range an untested
   release still starts.
 - **Greenfield.** No legacy, migration code, compatibility shim, dual path or deprecated alias, and nothing dead.
+- **One written exception, until v0.2.0: the v0 import.** v0.1.0 imports the v0 ledger once, so the works that ran on
+  v0.0.x are not stranded (docs/v1-design.md §6). The exception is narrow and time-limited:
+  - `src/import-v0.ts` (package B) is the only code that reads the v0 format or touches a v0 guest. It runs the import
+    only until a complete `v1/` ledger exists, and it never changes a v0 file. It only adds the folder
+    `works/README-MOVED-TO-v1/` with a `README.md` in it: a folder, because v0.0.6 reads `works/<entry>/work.json` for
+    every entry and a stray file there would break it after a rollback.
+  - It also holds the two v0 things a running v1 needs: the read of a v0 guest through v0's own `phase` action, and
+    `adopt`, a plain `machine exec` that takes a running v0 guest's password over. Both are behind `ImportV0Port` in
+    `src/ports.ts`. The guest port and `guest/guest.py` know nothing of v0.
+  - The only other v0 traces are the ledger fields `guestHelper`, `importedFrom` and `laptopCopy` in
+    `src/ledger/types.ts`, which say a record was imported.
+  - v0.2.0 removes the module, `ImportV0Port`, those three fields, and this exception with them. Add nothing to it.
 - **No peers, no runtime dependencies, no lifecycle scripts.** `@opencode/plugin`, `@opencode/sdk` and
   `@opencode/client` are devDependencies pinned to exactly `2.2.3`. The host stage installs the other tested SDKs into
   a temp folder.
@@ -22,19 +34,25 @@ checks and the release steps.
   `/home/boxd/work/<work id>`. A laptop path is never sent to the guest.
 - **Files carry three facts.** A moved file is recorded by name, size and sha256, never content. A laptop path must be
   inside the project or `allowedRoots`, must not be a symlink, and must be within 8 MiB a file and 32 MiB a call.
-- **The laptop is the source of truth.** A snapshot is an image. Never copy `opencode.db`. Sleep, image and drop refuse
-  until a harvest has proven the laptop import since the last prompt, and drop refuses a machine the ledger does not
-  record for that work id.
-- **The guest must match the laptop.** `checkGuest` compares `opencode --version` on the machine with the host's own
-  version. Do not hard-code a release there.
+- **The laptop is the source of truth.** Never copy `opencode.db`. Drop refuses until the work is saved (a fresh
+  harvest that the guest's own session marks still match), and every machine change acts on the machine id the ledger
+  records, never on whatever now holds the name. Sleep always works. Nothing automatic ever drops.
+- **Model credentials are never baked into an image.** A golden image is built by the plugin from a recipe, never from
+  a work's machine, and a build refuses a base that holds `~/.local/share/opencode/auth.json`
+  (`GOLDEN_HAS_CREDENTIAL`): an image reaches every work made from it and everyone in the organisation who can boot it,
+  so a key in it could not be scoped or rotated. Works get a model key as a sealed, host-bound `boxd env` secret, a
+  separately named secret per provider, or `opencode auth login` on one work's own machine.
+- **A transcript moves only between matching versions.** A call that moves a transcript compares the guest's OpenCode
+  with the host's own version (`GUEST_VERSION`); reads work across versions. Do not hard-code a release there.
 - **Every write asserts.** Every plugin-owned tool or branch that creates, wakes, runs, exports, saves or destroys calls
   `ctx.permission.assert` before it acts. The host asserts nothing for a plugin tool by itself, so a declaration-only
   write would run unasked. `test/unit/tools.test.ts` is the architecture test: a change tool with no assert fails there.
 - **Default rules, not hooks.** Permissions come from rules inserted through `ctx.agent.transform` directly after each
   agent's base allow. A stricter agent is never weakened, and an agent without a base allow gets no rules.
-- **Allow by default; restrict with `access`.** The generated block allows `boxd_*` and each of the nine tools for
-  `access: "all"` (the default), asks for every machine change for `"ask-changes"`, and denies them for `"read-only"`.
-  A user's later rule wins. The guards that do not depend on a prompt stay: idle hibernate, `boxd_sleep` always
+- **Allow by default; restrict with `access`.** The generated block allows `boxd_*` and each of the twelve tools for
+  `access: "all"` (the default), allows only the read-only tools and asks for every change for `"ask-changes"`, and
+  denies the changes for `"read-only"`. `/boxd-cleanup`'s own action, `boxd_cleanup`, asks at every level. A user's
+  later rule wins. The guards that do not depend on a prompt stay: the idle bounds set at creation, `boxd_sleep` always
   working, drop's data guard, and the create-intent ledger.
 - **Transforms are cheap, synchronous and never throw.** Record failures for status instead.
 - **Errors** read `CODE: What happened. Next step: What to do.`, built through `boxdError` and the one table in

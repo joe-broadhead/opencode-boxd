@@ -1,6 +1,6 @@
 {
   "name": "@joe-broadhead/opencode-boxd",
-  "version": "0.0.6",
+  "version": "0.1.0",
   "private": true,
   "description": "Unofficial OpenCode plugin for boxd: run a session on a private boxd machine and keep the transcript on your laptop",
   "keywords": [
@@ -72,7 +72,7 @@
     "title": "boxd",
     "summary": "Run an OpenCode session on a private boxd machine and keep the transcript on your laptop.",
     "icon": "assets/icon.svg",
-    "cost": "boxd bills your boxd account or organisation for each machine the plugin creates: compute and disk while it runs, disk only while it hibernates, until boxd_drop destroys it. An idle machine hibernates, and boxd_job never wakes one.",
+    "cost": "boxd bills each plugin machine: compute and memory while running, disk while hibernated, until boxd_drop. boxd_golden and boxd_ensure may make a short-lived builder. At access Allowed, finished works are harvested and hibernated after 10 idle minutes by default; else only with automation \"on\".",
     "tools": [
       {
         "name": "boxd.status",
@@ -83,6 +83,12 @@
       {
         "name": "boxd.job",
         "permission": "boxd_job",
+        "effect": "allow",
+        "readOnly": true
+      },
+      {
+        "name": "boxd.read",
+        "permission": "boxd_read",
         "effect": "allow",
         "readOnly": true
       },
@@ -117,8 +123,20 @@
         "readOnly": false
       },
       {
-        "name": "boxd.image",
-        "permission": "boxd_image",
+        "name": "boxd.reassign",
+        "permission": "boxd_reassign",
+        "effect": "allow",
+        "readOnly": false
+      },
+      {
+        "name": "boxd.golden",
+        "permission": "boxd_golden",
+        "effect": "allow",
+        "readOnly": false
+      },
+      {
+        "name": "boxd.exec",
+        "permission": "boxd_exec",
         "effect": "allow",
         "readOnly": false
       },

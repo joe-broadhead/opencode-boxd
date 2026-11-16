@@ -1,0 +1,38 @@
+{
+  "workId": "proven-stale",
+  "machine": "oc-proven-stale",
+  "snapshot": "opencode-golden",
+  "laptopDirectory": "/work/projects/api",
+  "guestDirectory": "/home/boxd/work/proven-stale",
+  "vcpu": 2,
+  "rootSessionId": "ses_staleroot",
+  "lastSubmitAt": "2025-11-14T12:30:00.000Z",
+  "proof": {
+    "harvestedAt": "2025-11-14T12:00:00.000Z",
+    "guestVersion": "2.2.6",
+    "sessions": [
+      {
+        "remoteId": "ses_staleroot",
+        "importedId": "ses_staleroot"
+      }
+    ],
+    "sha256": {
+      "ses_staleroot": "f33ea6ce1818adef67ecef28752b0e0dbe374b81732786c7b5465f5e9b09ee6d"
+    }
+  },
+  "lastOutcome": {
+    "state": "completed",
+    "at": "2025-11-14T12:00:00.000Z"
+  },
+  "git": {
+    "known": true,
+    "remote": "https://github.com/acme/api.git",
+    "branch": "main",
+    "sha": "0123456789abcdef0123456789abcdef01234567",
+    "dirty": false,
+    "patchStored": false,
+    "untracked": [],
+    "ignored": [],
+    "untrackedStored": false
+  }
+}

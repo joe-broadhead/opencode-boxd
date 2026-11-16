@@ -10,7 +10,8 @@ describe("the generated default rules", () => {
     expect(all[0]).toEqual({ action: "boxd_*", resource: "*", effect: "allow" })
     for (const tool of TOOLS) expect(all).toContainEqual({ action: tool.id, resource: "*", effect: "allow" })
     // The pattern is what a tool a later release adds inherits.
-    expect(all).toHaveLength(1 + TOOLS.length)
+    expect(all).toHaveLength(2 + TOOLS.length)
+    expect(all[1]).toEqual({ action: "boxd_cleanup", resource: "*", effect: "ask" })
   })
 
   test("ask-changes asks for every tool that changes something, allows the reads, and asks a tool a later release adds", () => {
@@ -29,7 +30,11 @@ describe("the generated default rules", () => {
 
   test("every access value generates a block", () => {
     expect(ACCESS_VALUES).toEqual(["all", "ask-changes", "read-only"])
-    for (const access of ACCESS_VALUES) expect(defaultRules(access).length).toBe(1 + TOOLS.length)
+    for (const access of ACCESS_VALUES) {
+      expect(defaultRules(access).length).toBe(2 + TOOLS.length)
+      // /boxd-cleanup confirms each action with a prompt at every access level (design §C.5).
+      expect(evaluate([BASE, ...defaultRules(access)], "boxd_cleanup")).toBe("ask")
+    }
   })
 })
 

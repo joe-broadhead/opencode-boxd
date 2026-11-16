@@ -2,42 +2,67 @@
 
 ## Options
 
-All options go in the plugin entry in `opencode.json`:
+All options go in the plugin entry in `opencode.json`, and every one is optional:
 
 ```jsonc
 {
   "plugins": [{
-    "package": "github:joe-broadhead/opencode-boxd#v0.0.6",
-    "options": { "snapshot": "opencode-golden" }
+    "package": "github:joe-broadhead/opencode-boxd#v0.1.0",
+    "options": { "region": "auto", "size": "2x8", "notices": "wake" }
   }]
 }
 ```
 
 | Option | Default | What it does |
 |---|---|---|
-| `snapshot` | `opencode-golden` | The golden snapshot every new machine boots from. A lowercase boxd snapshot name. Build it as [golden-image.md](golden-image.md) describes. |
-| `allowUntestedHost` | `false` | Run on an OpenCode outside `>=2.2.3 <2.4.0`. Status then says the host is untested. |
+| `access` | `"all"` | What the plugin's own tools may do without asking: `"all"` allows everything, `"ask-changes"` allows the reads and asks for every change, `"read-only"` allows the reads and denies every change. A later rule of the user's still wins. |
 | `allowedRoots` | `[]` | Absolute laptop folders a work may read and write besides the project. A path outside both is refused. |
-| `access` | `"all"` | What the plugin's own tools may do without asking: `"all"` allows everything, `"ask-changes"` allows the reads and asks for every machine change, `"read-only"` allows the reads and denies every change. A later rule of the user's still wins. |
+| `allowUntestedHost` | `false` | Run on an OpenCode outside `>=2.2.3 <2.4.0`. Status then says the host is untested. |
+| `region` | `"auto"` | Where a new work goes: `"auto"` picks the region with the most free machines after `keepFree`, preferring one that already has the golden image; or `"fra"` or `"nyc"`. |
+| `keepFree` | `{ "fra": 0, "nyc": 0 }` | Machines `"auto"` leaves free in each region, such as the organisation's CI pool. |
+| `size` | `"2x8"` | A new work's size: `"1x4"`, `"2x8"`, `"4x16"` or `"8x32"` (vCPU x GiB). |
+| `git` | none | `{ "name", "email" }`: the guest's git identity for every new work. Never a token. |
+| `goldenPrefix` | `"oc-golden"` | Golden image names are `<goldenPrefix>-<opencode version>-<size>`, such as `oc-golden-2.2.6-2x8`. |
+| `goldenBase` | `"stock"` | What a golden build starts from: stock boxd, or a snapshot name in the region it lives in. A base that holds model credentials is refused; [images.md](images.md) gives the recipe. |
+| `goldenSetup` | none | An absolute laptop path to a script, inside the project or an allowed root, run on every golden builder before the scrub. |
+| `buildGolden` | `"auto"` | `"auto"` builds a missing golden image when a work needs it; `"never"` answers `GOLDEN_MISSING` instead. |
+| `notices` | `"wake"` | How a work's change reaches its coordinator: `"wake"` posts a notice that starts an idle coordinator's turn, `"queue"` posts one that waits for its next turn, `"off"` posts nothing. At most one notice a minute per coordinator. |
+| `autoHibernateMinutes` | `120` | The platform's idle bound, set on every new work machine at creation (30 to 1440). Auto-suspend is always off: standby bills resident memory too. |
+| `automation` | `"auto"` | Whether the plugin harvests and then hibernates finished and orphaned works by itself: `"auto"` is on at `access: "all"` and off otherwise; `"on"` is your standing consent at every access level; `"off"` is never. It never drops anything. Consent is per OpenCode process, and the ledger is one per laptop: a process at `access: "all"` (or with `automation: "on"`) also harvests and hibernates the finished works another project created at `"ask-changes"`. |
+| `autoSleepMinutes` | `10` | Idle minutes before automation harvests and hibernates a finished work; `0` turns that step off. Setting it is not consent. |
+| `orphanHours` | `12` | A running, not busy work that no plugin call touched for this long is harvested and hibernated, when automation is on. |
+| `leaseDays` | `0` | A `delete-after` timer of this many days on every new work machine, renewed on activity; `0` is off, because boxd deletes the machine whatever it holds, unsaved work included. |
+| `budget` | none | `{ "daily", "action" }`: today's machine cost, in the organisation's billing currency, at which status warns (`"warn"`) or the calls that would make a machine run are refused (`"refuse"`, `BUDGET_REACHED`). Machine cost only: model spend is not measured in this release. |
+| `costContext` | `true` | One short fleet line on the tail of a coordinator's request when the fleet changed, and the works list on a compaction; `false` turns both off. The system prompt is never changed. |
+| `idleCheck` | `true` | The end-of-turn check that speaks only when money burns and automation will not act; `false` turns it off. |
 
-An unknown option, a snapshot name boxd would refuse, or a non-boolean `allowUntestedHost` stops the plugin with
-`OPTIONS_INVALID`; OpenCode's plugin list shows why.
+An unknown option, a value out of its range, or a removed option stops the plugin with `OPTIONS_INVALID`; OpenCode's
+plugin list shows why. The option `snapshot` is gone: a golden image is built by the plugin from stock. Remove
+`snapshot`; set `goldenBase` only to build on a hand-made base without model credentials.
 
-Inside `>=2.2.3 <2.4.0` a release that was not tested, such as 2.2.99, still starts: status marks the version `untested`
+The plugin is tested on 2.2.3, 2.2.4, 2.2.5, 2.2.6, 2.2.7 and 2.3.0. Inside `>=2.2.3 <2.4.0` a release that was not tested, such as 2.2.99, still starts: status marks the version `untested`
 and the next step is the same as on a tested release. Outside the range the plugin does not start unless
 `allowUntestedHost` is `true`.
 
 ## Where the ledger lives
 
-`~/.local/share/opencode-boxd/works/<work id>/`
+`~/.local/share/opencode-boxd/v1/`, a folder of mode 0700 whose files are 0600:
 
-- `work.json` — the machine, the laptop folder and the guest work folder, the root session id, the proof, the git record,
-  and the files moved in and out by name, size and sha256.
-- `exports/<session id>.json` — the transcript, stored before it is imported here.
-- `patch.diff` — the uncommitted diff, when the harvest found one.
-- `untracked.json` — the untracked files' contents, base64, when the harvest could read them.
+- `works/<work id>/work.json`: the record. The region, the machine name and its boxd machine id, the size and image,
+  the laptop folder and the guest folder, the root session and the coordinator its notices go to, the last prompt, what
+  was saved (each session's digest and its last message id and count), the last run, git, and the files moved in and
+  out by name, size and sha256.
+- `works/<work id>/exports/<session id>.json`: each harvested transcript, copied from the guest and verified.
+- `works/<work id>/patch.diff` and `untracked/`: the tracked changes and the untracked files at the last harvest.
+- `events.jsonl`: every phase change, one line each, with a sequence number that is `boxd_status`'s cursor. It keeps at
+  least the last 5 MiB.
+- `index.json`: a cache of each record's state, region, phase and `saved`, refreshed by modification time.
 
-The ledger is the laptop's copy. A boxd snapshot is an image and holds no session you can restore from the laptop.
+Every write is a temp file beside the old one, verified, fsynced and renamed over it; nothing is written in place, so a
+crash leaves the old file. Two OpenCode processes on one laptop share the ledger through a lock per work.
+
+The first start of this release imports the earlier `works/` ledger once into `v1/`, all or nothing, and adds only a
+`works/README-MOVED-TO-v1/` note folder beside the old records.
 
 ## Permission rules
 
@@ -45,22 +70,26 @@ The plugin inserts its block directly after each agent's base `* * allow`. The l
 yours later in the agent, or in the session, still decides.
 
 The block is generated from `defaultRules(access)`, and it is printed here in full for each value, so it can be copied
-into an agent that gets no block of its own.
+into an agent that gets no block of its own. `boxd_cleanup` is `/boxd-cleanup`'s own action: it asks at every level.
 
 `access: "all"` (the default):
 
 ```json
 [
-  {"action":"boxd_*","resource":"*","effect":"allow"},
-  {"action":"boxd_status","resource":"*","effect":"allow"},
-  {"action":"boxd_job","resource":"*","effect":"allow"},
-  {"action":"boxd_ensure","resource":"*","effect":"allow"},
-  {"action":"boxd_submit","resource":"*","effect":"allow"},
-  {"action":"boxd_harvest","resource":"*","effect":"allow"},
-  {"action":"boxd_sleep","resource":"*","effect":"allow"},
-  {"action":"boxd_resume","resource":"*","effect":"allow"},
-  {"action":"boxd_image","resource":"*","effect":"allow"},
-  {"action":"boxd_drop","resource":"*","effect":"allow"}
+  { "action": "boxd_*", "resource": "*", "effect": "allow" },
+  { "action": "boxd_cleanup", "resource": "*", "effect": "ask" },
+  { "action": "boxd_status", "resource": "*", "effect": "allow" },
+  { "action": "boxd_job", "resource": "*", "effect": "allow" },
+  { "action": "boxd_read", "resource": "*", "effect": "allow" },
+  { "action": "boxd_ensure", "resource": "*", "effect": "allow" },
+  { "action": "boxd_submit", "resource": "*", "effect": "allow" },
+  { "action": "boxd_harvest", "resource": "*", "effect": "allow" },
+  { "action": "boxd_sleep", "resource": "*", "effect": "allow" },
+  { "action": "boxd_resume", "resource": "*", "effect": "allow" },
+  { "action": "boxd_reassign", "resource": "*", "effect": "allow" },
+  { "action": "boxd_golden", "resource": "*", "effect": "allow" },
+  { "action": "boxd_exec", "resource": "*", "effect": "allow" },
+  { "action": "boxd_drop", "resource": "*", "effect": "allow" }
 ]
 ```
 
@@ -68,16 +97,20 @@ into an agent that gets no block of its own.
 
 ```json
 [
-  {"action":"boxd_*","resource":"*","effect":"ask"},
-  {"action":"boxd_status","resource":"*","effect":"allow"},
-  {"action":"boxd_job","resource":"*","effect":"allow"},
-  {"action":"boxd_ensure","resource":"*","effect":"ask"},
-  {"action":"boxd_submit","resource":"*","effect":"ask"},
-  {"action":"boxd_harvest","resource":"*","effect":"ask"},
-  {"action":"boxd_sleep","resource":"*","effect":"ask"},
-  {"action":"boxd_resume","resource":"*","effect":"ask"},
-  {"action":"boxd_image","resource":"*","effect":"ask"},
-  {"action":"boxd_drop","resource":"*","effect":"ask"}
+  { "action": "boxd_*", "resource": "*", "effect": "ask" },
+  { "action": "boxd_cleanup", "resource": "*", "effect": "ask" },
+  { "action": "boxd_status", "resource": "*", "effect": "allow" },
+  { "action": "boxd_job", "resource": "*", "effect": "allow" },
+  { "action": "boxd_read", "resource": "*", "effect": "allow" },
+  { "action": "boxd_ensure", "resource": "*", "effect": "ask" },
+  { "action": "boxd_submit", "resource": "*", "effect": "ask" },
+  { "action": "boxd_harvest", "resource": "*", "effect": "ask" },
+  { "action": "boxd_sleep", "resource": "*", "effect": "ask" },
+  { "action": "boxd_resume", "resource": "*", "effect": "ask" },
+  { "action": "boxd_reassign", "resource": "*", "effect": "ask" },
+  { "action": "boxd_golden", "resource": "*", "effect": "ask" },
+  { "action": "boxd_exec", "resource": "*", "effect": "ask" },
+  { "action": "boxd_drop", "resource": "*", "effect": "ask" }
 ]
 ```
 
@@ -85,18 +118,23 @@ into an agent that gets no block of its own.
 
 ```json
 [
-  {"action":"boxd_*","resource":"*","effect":"deny"},
-  {"action":"boxd_status","resource":"*","effect":"allow"},
-  {"action":"boxd_job","resource":"*","effect":"allow"},
-  {"action":"boxd_ensure","resource":"*","effect":"deny"},
-  {"action":"boxd_submit","resource":"*","effect":"deny"},
-  {"action":"boxd_harvest","resource":"*","effect":"deny"},
-  {"action":"boxd_sleep","resource":"*","effect":"deny"},
-  {"action":"boxd_resume","resource":"*","effect":"deny"},
-  {"action":"boxd_image","resource":"*","effect":"deny"},
-  {"action":"boxd_drop","resource":"*","effect":"deny"}
+  { "action": "boxd_*", "resource": "*", "effect": "deny" },
+  { "action": "boxd_cleanup", "resource": "*", "effect": "ask" },
+  { "action": "boxd_status", "resource": "*", "effect": "allow" },
+  { "action": "boxd_job", "resource": "*", "effect": "allow" },
+  { "action": "boxd_read", "resource": "*", "effect": "allow" },
+  { "action": "boxd_ensure", "resource": "*", "effect": "deny" },
+  { "action": "boxd_submit", "resource": "*", "effect": "deny" },
+  { "action": "boxd_harvest", "resource": "*", "effect": "deny" },
+  { "action": "boxd_sleep", "resource": "*", "effect": "deny" },
+  { "action": "boxd_resume", "resource": "*", "effect": "deny" },
+  { "action": "boxd_reassign", "resource": "*", "effect": "deny" },
+  { "action": "boxd_golden", "resource": "*", "effect": "deny" },
+  { "action": "boxd_exec", "resource": "*", "effect": "deny" },
+  { "action": "boxd_drop", "resource": "*", "effect": "deny" }
 ]
 ```
+
 
 Every tool this plugin registers is allowed by default, so an agent can create, run and destroy a billing machine
 without a prompt. The guards that do not depend on a prompt still hold: a machine that idles hibernates, `boxd_sleep`
@@ -106,98 +144,90 @@ An agent without a base allow gets no rules: inserting there would turn a defaul
 each agent that lacks the block, and prints the block for the access value in force to paste first in that agent's own
 permissions, followed by your top-level rules for boxd tools.
 
-## Platform facts
+## What the plugin relies on
 
-- **`opencode session import` keeps the transcript's id**, tested on 2.2.3, 2.2.4, 2.2.5, 2.2.6, 2.2.7 and 2.3.0. A second import of the same
-  transcript answers `Session already exists` on stderr, exits 0, and prints no id; the plugin treats that as the
-  transcript's own id. Tested against each stock release in `test/unit/prover.test.ts`.
-- **The prover runs `opencode session import --standalone`**, so the import writes the same store whether or not a
-  service is running, and never waits on one.
-- **The guest must run the same OpenCode as the laptop.** The plugin reads `opencode --version` on the machine and
-  compares it with the host's own version.
-- **The snapshot is checked before a create.** `boxd_status` reads `boxd snapshots list --json` (cached for 30
-  seconds) and says whether the image is there. `boxd_ensure` and `boxd_resume` read it again before creating a machine
-  and refuse with `SNAPSHOT_MISSING`, so no machine boots from nothing. An unreadable listing is not a refusal: the
-  create reports its own error.
-- **Status reads, never wakes.** `boxd_status` runs one read-only `machine get` per open work and one `machine list`;
-  `/boxd-status`, the `/boxd` dialog and the status RPC read the same. No read wakes a machine, because waking starts
-  billing. The plugin never reads your boxd account or credentials: the `machine list` answer is how status says the
-  boxd CLI is signed in (`cli.signedIn`), and a failed one keeps the CLI's reason, because a network failure fails the
-  same way.
-- **A read never wakes.** `boxd_job` reports `asleep` for a hibernated machine and names `boxd_resume` as the next step.
-  `asleepBy` is `boxd_sleep` (with `sleptAt`) when the plugin hibernated it and has not woken it since, and
-  `idle_or_cli` otherwise: the 30-minute idle bound, or the boxd CLI. boxd does not say when a machine hibernated by
-  itself. Status shows the same per work. The plugin cannot see a wake it did not make: a machine woken outside it,
-  by the boxd CLI or an SSH connection, and put down again by the idle bound still reports `boxd_sleep` with the older
-  `sleptAt`, until the plugin wakes or recreates it.
-- **Hibernating destroys nothing.** `boxd_sleep` needs no proof and works when the guest cannot be harvested; it records
-  a warning that the last prompt is not on the laptop yet, which status shows. `boxd_image` and `boxd_drop` still need a
-  fresh proof.
-- **The guest path is the plugin's.** Every work's guest folder is `/home/boxd/work/<work id>`; the laptop folder is
-  recorded beside it in the ledger. A laptop path is never sent to the guest, and a guest that cannot prepare its own
-  folder fails with `GUEST_WORKSPACE` and the guest's own words.
-- **Files carry name, size and digest.** An upload is copied before the prompt; a harvest copies the requested files
-  back after the transcript. A file is refused outside the project and `allowedRoots`, over 8 MiB, over 32 MiB a call,
-  through a symlink, or over a local edit since the last harvest. A copied-back file is written through a temp file and
-  a rename, 0600, and the ledger records name, size and sha256, never content.
-- **A run's outcome is part of the result.** OpenCode records it on the session (`outcome`) and on its last idle message,
-  with the failure's structured error. `boxd_job` reports it when the guest is idle, `boxd_harvest` records it and adds
-  `GUEST_RUN_FAILED` or `GUEST_AUTH_FAILED` as a warning, and status shows each work's last outcome. The error is `<type>: <first line>`, passed
-  through redaction; a provider's response body is never read. It comes from the guest or the imported transcript, never
-  from a model call.
-- **A job says what the session last did.** On a running machine `boxd_job` adds `lastText` (the newest assistant text,
-  redacted and cut to 300 characters), `lastActivityAt` and `pending` (prompts waiting in the session's inbox). Each is
-  read from the guest's own session with no model call, and left out when the guest does not answer it.
-- **Drop only destroys what the laptop can account for.** It refuses a non-git directory, untracked or ignored paths, and
-  a dirty tree with no stored patch. Tracked changes are stored as `git diff HEAD`; untracked contents are stored beside
-  it when the guest can read them, which is not the same as a faithful copy, so a drop still refuses.
-- **A create is recorded before it runs.** The ledger holds the intent, so a timed-out `machine new` is either adopted
-  when the machine appears, or reported as `CREATE_UNCERTAIN`, and `boxd_status` names an `oc-*` machine no work records.
-- **Every wake arms the awake bound.** `machine config set auto-hibernate.timeout 1800` and `idle.ignore-outbound off`
-  run right after a wake or create; a sleep sets the timeout to 14400.
+- **The laptop is the source of truth.** A harvest copies each session's export from the guest with `machine cp`,
+  checks its size and sha256 against what the guest reported, and only then renames it over the stored copy; it then
+  deletes and re-imports the session on this laptop, parents first, so the laptop holds the newest transcript.
+- **A transcript moves only between matching versions.** A call that moves a transcript compares the guest's OpenCode
+  with this laptop's (`GUEST_VERSION`); reads work across versions.
+- **A read never wakes a machine.** `boxd_status`, `boxd_job`, `boxd_read` and the watcher read a guest only when a
+  listing at most 2 s old shows its machine running, never upload anything, and never write the ledger. `boxd_status`
+  and the watcher never read an idle guest, because a read resets the machine's idle clock.
+- **Every change acts on the machine id.** Before a change, `machine get` resolves `oc-<work id>` in its region and the
+  call refuses `NOT_OURS` unless the id is the recorded one; then it acts on the id.
+- **One runner owns every process.** At most 12 boxd processes at once for tool calls and reads, 4 for `boxd_exec`, and
+  2 laptop imports; each with an explicit timeout, the call's stop signal and an output cap.
+- **Status is bounded.** One `boxd_status` answers for 300 works with at most `limit` items, `more`, and repeated causes
+  folded into `groups`.
+- **Notices carry only the plugin's words:** work ids, phases, outcomes, codes from the table below, and a cursor. Never
+  a guest's text.
 
 ## Errors
 
-Every plugin error reads `CODE: What happened. Next step: What to do.`, with exactly one next step. A tool's result
-for it is `{ "error": "<CODE>", "message": "<what happened>", "next": "<what to do>" }`, so a Code Mode program or a
-script reads the same three parts the model does. Upstream and host
-errors pass through unchanged. No error, log or status line contains a token, a code or a signed URL.
+Every plugin error reads `CODE: What happened. Next step: What to do.`, with exactly one next step. A tool's result for
+it is `{ "state", "error", "message", "next" }`, plus the facts its code carries, so a Code Mode program or a script
+reads the same parts the model does. No error, log or status line contains a token or a signed URL.
 
-| Code | What it means |
-|---|---|
-| `HOST_UNTESTED` | OpenCode is outside `>=2.2.3 <2.4.0` and `allowUntestedHost` is not set. |
-| `OPTIONS_INVALID` | The plugin options are not valid. |
-| `STATUS_UNAVAILABLE` | The status RPC could not read the status. |
-| `SKILLS_INVALID` | The plugin's skill file is missing or malformed. |
-| `NAME_INVALID` | An input is not in the form the plugin accepts. The message names it (`workId`, `model`, `tail`, `vcpu`, `localDirectory`, `files[0].from`, …) and says why, and the result's `field` names it for a program. |
-| `NOT_OURS` | No open work, or the machine is not the one the ledger records for it. |
-| `MACHINE_GONE` | The machine no longer exists. `boxd_resume` rebuilds it. |
-| `MACHINE_STARTING` | The machine or its OpenCode is not up yet. `boxd_ensure` and `boxd_submit` wait up to 30 s for it with `wait: true`; every other call answers at once. |
-| `MACHINE_SHARED` | The machine is shared, which deletes the guest's OpenCode sign-in. |
-| `MACHINE_ISOLATED` | The machine is isolated, so it has no git and no in-VM boxd CLI. |
-| `SESSION_BUSY` | The guest session is still running: harvest, or switch its model with `boxd_submit`, only when it is idle. |
-| `GUEST_VERSION` | The machine's OpenCode differs from this laptop's. |
-| `GUEST_RUN_FAILED` | The guest session's last run failed. The transcript is still imported and proven; the error is the run's own. |
-| `RUN_INTERRUPTED` | The guest's OpenCode stopped during a run, so the run never finished. The transcript is kept. Call `boxd_harvest`, then `boxd_submit` again. |
-| `GUEST_AUTH_FAILED` | The guest session's last run failed on a model credential. The transcript is still imported; fix the guest's sign-in. |
-| `GUEST_FAILED` | The guest helper failed an action. |
-| `GUEST_UNRESPONSIVE` | A guest call timed out, and a probe of the machine found under a tenth of its memory available, or a load over four per CPU. The message gives the free memory, the load and the three largest processes by name and pid. |
-| `GUEST_SERVER_DOWN` | A guest call timed out, and a probe found the machine well but nothing listening on the OpenCode port. The next guest call starts the server again. |
-| `BOXD_FAILED` | The boxd CLI refused a command or returned something unusable. |
-| `BOXD_MISSING` | The boxd CLI is not on the `PATH`, or the one there is the in-VM CLI, which this plugin does not support. |
-| `TIMEOUT` | A boxd command did not answer in time. After a guest call, a probe that found the machine well, server included, adds what it found. |
-| `NOT_PROVEN` | No fresh laptop import. Sleep, image and drop refuse. |
-| `DIRTY` | The guest tree has uncommitted work and no stored patch. |
-| `EXPORT_INVALID` | An export is not in OpenCode's session shape. |
-| `PARENT_MISSING` | A child session was imported before its parent. |
-| `SNAPSHOT_EXISTS` | Snapshot names are immutable. |
-| `SNAPSHOT_MISSING` | The golden snapshot is not in this boxd account, so no machine is created. |
-| `LEDGER_FAILED` | A ledger read or write failed: a file system error, not a boxd one. |
-| `RULES_NOT_ADDED` | The default permission rules could not be inserted into the agents, so a machine change may run without asking. |
-| `UNTRACKED` | The guest tree has untracked or ignored paths, which a stored patch cannot hold. The message names the first ten and counts the rest; the result carries `kind`, `count` and the first 50 `paths`. |
-| `GIT_UNKNOWN` | The guest directory is not a git repository, so nothing about its files can be proven. |
-| `CREATE_UNCERTAIN` | `machine new` timed out and no machine with that name exists yet. |
-| `PATH_REFUSED` | A laptop path is outside the project and `allowedRoots`, or is a symlink. Name its root in the option, and allow it with the `external_directory` rule as well as the path rule. |
-| `FILE_TOO_LARGE` | A file is over 8 MiB, or one call moves over 32 MiB. |
-| `FILE_CONFLICT` | A harvested file was edited on the laptop since the last harvest. |
-| `GUEST_WORKSPACE` | The guest could not create or prepare `/home/boxd/work/<work id>`. |
+| Code | State | What it means | Next step |
+|---|---|---|---|
+| `HOST_UNTESTED` | — | This OpenCode version is outside the supported range. | Use OpenCode >=2.2.3 <2.4.0, or set the plugin option "allowUntestedHost": true to run anyway. |
+| `OPTIONS_INVALID` | — | The plugin options are not valid. | Fix the plugin options in opencode.json, then restart OpenCode. |
+| `STATUS_UNAVAILABLE` | — | boxd's status could not be read. | Restart OpenCode, then run /boxd-status again. |
+| `SKILLS_INVALID` | — | The plugin's skill file is missing or invalid. | Reinstall the plugin so its skill file is present, then restart OpenCode. |
+| `NAME_INVALID` | refused | An input failed its rule; field names it. | Fix the field the message names, as its reason says, then call again. |
+| `PATH_REFUSED` | refused | A laptop path is outside the project and allowedRoots, or is a symlink. | Pass a path inside the project, or add its root to the plugin option "allowedRoots" and allow it with the external_directory rule. |
+| `FILE_TOO_LARGE` | refused | A file is over 8 MiB, or the call is over 32 MiB. | Move a smaller file, or split it: the limit is 8 MiB a file and 32 MiB a call. |
+| `FILE_CONFLICT` | refused | The laptop file changed since the last harvest. | Keep the local edit and leave that path out, or restore the harvested copy and harvest again. |
+| `NOT_OURS` | refused | No open work has this id; or oc-<id> now has another id than the recorded machineId; or the recorded machine lives under another name; or two regions hold oc-<id>; or the machine to adopt is one another open work records (even with adopt: true). Nothing was changed. | For an unknown id, boxd_ensure({ workId }). Otherwise look at the machines the message names with boxd machine get, and rename them back or boxd_reassign. |
+| `NOT_REASSIGNABLE` | refused | from has a session, uploaded files or a dirty tree, or to is an open work. | boxd_drop it after a harvest, or reassign a work with no prompt yet. |
+| `MACHINE_LIMIT` | refused | No region has room for another machine; limit, inUse and free are given per region. | Pass region: "<other region>" when it has room; otherwise free machines with boxd_drop or boxd_reassign, or have the owner raise the limit with boxd manage machine-limit request --max-vms <n>. |
+| `SIZE_UNAVAILABLE` | refused | The organisation's quota does not allow this size. | Pick a smaller size. |
+| `GOLDEN_MISSING` | refused | No golden image for this region, size and OpenCode version, and the option buildGolden is "never". | boxd_golden({ region, size }), then call again. |
+| `GOLDEN_BUILD_FAILED` | failed | A golden image build failed at the step the message names, or its base holds an OpenCode session. | Read the message; fix goldenSetup or the base, then boxd_golden again. |
+| `GOLDEN_HAS_CREDENTIAL` | refused | The base holds ~/.local/share/opencode/auth.json. Model credentials are never baked into an image, because an image reaches every work and everyone in the organisation who can boot it. | Remove auth.json from the base, or build from stock, and give works a model key another way: a sealed, host-bound boxd env secret (boxd env set <KEY> <value> --secret --domains <provider hosts>), a separately named secret per provider, or opencode auth login on one work's own machine after boxd connect. Then boxd_golden again. |
+| `MACHINE_SHARED` | refused | The machine is shared, which deletes the guest's sign-in. | Unshare it with boxd machine unshare, or boxd_drop it and boxd_ensure again. |
+| `MACHINE_ISOLATED` | refused | The machine is isolated: no git integration and no in-VM CLI. | boxd_drop it, then boxd_ensure again. |
+| `MACHINE_STARTING` | starting | The machine is still starting after this call's wait. | The same call again; it waits. |
+| `MACHINE_GONE` | gone | A fresh all-region listing and a get of the recorded machine id found the machine nowhere. | boxd_resume({ workId }) to rebuild it, or boxd_drop({ workId }) to close the work. |
+| `MACHINE_ASLEEP` | asleep | The machine is hibernated, and this call does not wake it. | boxd_resume({ workId }), or pass wake: true to boxd_exec. |
+| `AGENT_UNREACHABLE` | unreachable | boxd's VM agent on the machine does not answer, and the plugin has not rebooted this machine itself. | boxd_ensure({ workId, repair: "reboot" }); a reboot ends a running run. |
+| `SESSION_BUSY` | busy | The session is running, and this call needs it idle. | Wait for the work's notice, or pass mode: "interrupt" to boxd_submit, or partial: true to boxd_harvest. |
+| `SESSION_MISSING` | failed | The guest no longer has the work's session. | boxd_resume({ workId }), which imports the saved transcript. |
+| `RUN_FAILED` | failed | The last run failed; error is its one line. | Read lastText with boxd_job, then boxd_submit again. |
+| `RUN_INTERRUPTED` | failed | The guest's OpenCode stopped mid-run. | boxd_harvest({ workId }), then boxd_submit again. |
+| `GUEST_AUTH_FAILED` | failed | The model provider or a pushed host refused the credential, or the guest has none. | Set or rotate the credential (a sealed, host-bound boxd env secret (boxd env set <KEY> <value> --secret --domains <provider hosts>), a separately named secret per provider, or opencode auth login on one work's own machine after boxd connect), then boxd_submit again. A session never starts an interactive sign-in itself. |
+| `GUEST_VERSION` | refused | The guest's OpenCode differs from this laptop's, and this call moves a transcript. | boxd_ensure({ workId }) upgrades it in place once the session is idle. |
+| `GUEST_UNRESPONSIVE` | unreachable | The guest is short of memory or overloaded; the facts are in the message. | Tell the user which processes the message names, or stop them with boxd_exec. |
+| `GUEST_SERVER_DOWN` | unreachable | Nothing listens on the guest's OpenCode port. | boxd_ensure({ workId }) starts it. |
+| `GUEST_FAILED` | unreachable | The guest helper failed; its words are in the message. | boxd_ensure({ workId }); if it repeats, boxd_read({ workId, log: "server" }). |
+| `GUEST_WORKSPACE` | failed | The guest folder could not be made or cloned. | Read the message (clone auth, disk), fix it, then boxd_ensure({ workId }). |
+| `NOT_SAVED` | refused | The work is not saved: no fresh harvest since the last prompt, or the guest's sessions moved on since the harvest. | boxd_harvest({ workId }), then drop again. |
+| `UNTRACKED` | refused | Untracked or ignored paths were not harvested; paths, count and kind name them. | Harvest them with files, or delete them on the machine, then boxd_harvest again. |
+| `DIRTY` | refused | The guest has uncommitted work and no stored patch. | boxd_harvest({ workId }), then drop again. |
+| `GIT_UNKNOWN` | refused | The guest folder is not a git repository. | Make it one, or boxd_sleep({ workId }) instead. |
+| `EXPORT_INVALID` | failed | A transcript failed its checks: shape, digest, a cycle or a missing parent. | boxd_harvest({ workId }) again from an idle session. |
+| `IMPORT_FAILED` | failed | This laptop's opencode session import failed; the export is kept. | boxd_harvest({ workId }) again; the stored file is retried. |
+| `BOXD_FAILED` | unreachable | The boxd CLI failed in a way the plugin does not know; its words are in the message, redacted. | Read the message, and run boxd_status before trying again. |
+| `BOXD_MISSING` | unreachable | No laptop boxd CLI: it is missing, not signed in, or the in-VM CLI. | Install the laptop boxd CLI on the server's PATH and run boxd auth login, in that server's HOME. |
+| `TIMEOUT` | unreachable | A step did not answer in its bound; the message names the step. | The same call in a later turn. |
+| `CANCELLED` | cancelled | The call was stopped; uncertain is true when a write was in flight. | Read the work with boxd_job({ workId }) before acting again. |
+| `CREATE_UNCERTAIN` | unreachable | A create timed out, and no machine was found yet. | boxd_ensure({ workId }) again: it adopts the machine if one landed. |
+| `LEDGER_FAILED` | failed | The ledger could not be read or written. | Check that the ledger folder is writable, then restart OpenCode. |
+| `LEDGER_LOCKED` | busy | Another OpenCode process holds this work's lock. | The same call again in a few seconds. |
+| `LEDGER_IMPORTING` | busy | The v0 import is not complete yet, here or in another OpenCode process; progress says how far. No tool reads a partial ledger. | The same call again in a few seconds. |
+| `IMPORT_V0_FAILED` | failed | The v0 import could not run (the all-region listing failed, so no v1 ledger was made), or one v0 record could not be read (that work id is blocked; the v0 file is untouched). | Sign the boxd CLI in and call again; for one record, fix or remove that v0 file and restart OpenCode. |
+| `BUDGET_REACHED` | refused | Today's machine cost has reached the budget's daily limit, and budget.action is refuse; today, daily and currency are in the result. A call that would make a machine run is refused. | Lower the cost first: boxd_sleep({ select: "idle" }), then boxd_drop({ select: "saved-finished" }); or raise budget.daily. It resets at local midnight. |
+| `RULES_NOT_ADDED` | — | boxd's default permission rules did not load. | Restart OpenCode, then run /boxd-status; a machine change may run without asking until the rules load. |
+
+
+### Warnings
+
+A warning sits beside a result that succeeded, in `warnings`, `attention` and status; it is never a refusal.
+
+- **`UNHARVESTED_SLEEP`**: The machine was hibernated before its last prompt was harvested. Next step: boxd_resume({ workId }), then boxd_harvest({ workId }).
+- **`BUDGET_WARN`**: Today's machine cost has reached the budget's daily limit. Next step: Lower the cost: boxd_sleep({ select: "idle" }), then boxd_drop({ select: "saved-finished" }); or raise budget.daily.
+- **`BUDGET_UNKNOWN`**: boxd's machine usage is for organisation owners and admins, so this sign-in cannot measure the budget; refuse acts as warn. Next step: Sign the boxd CLI in as an owner or admin to measure the budget, or remove the budget option.
+- **`LEASE_EXPIRING`**: The work's delete-after lease ends within 24 hours, and boxd deletes the machine whatever it holds. Next step: boxd_harvest({ workId }) now; any change call for the work renews the lease.
+- **`AUTOMATION_BLOCKED`**: The plugin's automatic harvest or sleep of this work failed at the step the message names. Next step: Read the code the message names, fix it, then boxd_harvest({ workId }) and boxd_sleep({ workId }).
+- **`NO_MODEL_CREDENTIAL`**: No secret that OpenCode reads as a model provider key is set, so a work's first prompt will answer GUEST_AUTH_FAILED. Next step: Give works a model key: a sealed, host-bound boxd env secret (boxd env set <KEY> <value> --secret --domains <provider hosts>), a separately named secret per provider, or opencode auth login on one work's own machine after boxd connect.

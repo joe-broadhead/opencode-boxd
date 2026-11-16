@@ -41,18 +41,3 @@ export function checkHost(version: string, allowUntestedHost: boolean): HostChec
   }
   return { version: version === "" ? null : version, range: SUPPORTED_HOST, tested: isTestedHost(version) }
 }
-
-/**
- * The guest must run the same OpenCode as the laptop: the export and import formats are the host's, and a session is
- * moved from one to the other. The version comes from `opencode --version` on the machine.
- */
-export function checkGuest(reported: string, hostVersion: string | null): void {
-  const guest = parseVersion(reported)
-  const host = hostVersion === null ? undefined : parseVersion(hostVersion)
-  if (guest === undefined || host === undefined) {
-    throw boxdError("GUEST_VERSION", `The machine reports OpenCode ${reported.trim() || "no version"}, and this laptop reports ${hostVersion ?? "none"}.`)
-  }
-  if (compare(guest, host) !== 0) {
-    throw boxdError("GUEST_VERSION", `The machine runs OpenCode ${reported.trim()}, and this laptop runs ${hostVersion}.`)
-  }
-}

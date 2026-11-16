@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { loadSkills, parseSkill, skillPath } from "../../src/skills.js"
+import { TOOLS } from "../../src/tools.js"
 
 describe("the boxd skill", () => {
   test("is the one skill, with the name, a description and a body", async () => {
@@ -19,12 +20,24 @@ describe("the boxd skill", () => {
   test("states the real tool names and parameters, and no tool the plugin does not have", async () => {
     const { skills } = await loadSkills()
     const text = skills[0]!.content
-    for (const name of ["boxd_ensure", "boxd_submit", "boxd_job", "boxd_harvest", "boxd_sleep", "boxd_resume", "boxd_image", "boxd_drop", "boxd_status"]) {
-      expect(text).toContain(name)
+    for (const tool of TOOLS) expect(text).toContain(tool.id)
+    for (const field of ["workId", "localDirectory", "machine", "select", "since", "works"]) expect(text).toContain(field)
+    // Every boxd_* it names is a tool, and every key a call example passes is in that tool's schema.
+    for (const [, name] of text.matchAll(/\bboxd_([a-z_]+)\b/g)) expect({ name, known: TOOLS.some((tool) => tool.name === name) }).toEqual({ name, known: true })
+    for (const [, name, body] of text.matchAll(/\bboxd_([a-z]+)\(\{([^}]*)\}\)/g)) {
+      const properties = Object.keys((TOOLS.find((tool) => tool.name === name)!.input as { properties: Record<string, unknown> }).properties)
+      for (const [, key] of body!.matchAll(/(\w+)(?=\s*[:,}]|\s*$)/g)) if (!/^".*"$/.test(key!)) expect({ name, key, known: properties.includes(key!) || /^[A-Z]/.test(key!) }).toEqual({ name, key, known: true })
     }
-    for (const field of ["workId", "localDirectory", "machine", "name"]) expect(text).toContain(field)
-    // No tool this plugin does not have, and no invented command.
-    expect(text).not.toMatch(/boxd_(?:create|destroy|list|logs|tail)\b/)
+  })
+
+  test("has the short Cost section, with the lifecycle and the consent rule", async () => {
+    const { skills } = await loadSkills()
+    const text = skills[0]!.content
+    expect(text).toContain("## Cost")
+    expect(text).toContain('boxd_sleep({ select: "finished" })')
+    expect(text).toContain('boxd_drop({ select: "saved-finished" })')
+    expect(text).toContain('`automation: "on"`')
+    expect(text).toContain("/boxd-cleanup")
   })
 
   test("is under 100 lines", async () => {

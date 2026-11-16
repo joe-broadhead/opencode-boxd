@@ -1,0 +1,7 @@
+{
+  "workId": "never-prompted",
+  "machine": "oc-never-prompted",
+  "snapshot": "opencode-golden",
+  "laptopDirectory": "/work/projects/web",
+  "guestDirectory": "/home/boxd/work/never-prompted"
+}
