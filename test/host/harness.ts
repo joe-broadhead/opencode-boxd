@@ -1,12 +1,13 @@
 // An embedded OpenCode host from the public @opencode/sdk, isolated in the temp root from ./isolate.js. The boxd plugin
 // is built with its internal seam: the fake boxd CLI, the fake guest server behind it, and a ledger in the temp root. A probe plugin, loaded after it, lends its context to the tests.
 import { HOST_SDK_DIR, ROOT as root } from "./isolate.js"
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import type { OpenCodeClient } from "@opencode/client"
 import { Model, Plugin, Provider } from "@opencode/plugin"
 import { createBoxdPlugin } from "../../src/plugin.js"
+import { startFakeCli, type FakeCli, type FakeMachine } from "./fake-cli.js"
 import { startFakeGuest, type FakeGuest } from "./fake-guest.js"
 import { startMockModel } from "./mock.js"
 
@@ -29,60 +30,33 @@ export const HOST_VERSION = (JSON.parse(readFileSync(join(SDK, "package.json"), 
 /** Removes the temp root; call once after every host in the file has closed. */
 export const cleanup = () => rmSync(root, { recursive: true, force: true })
 
-const GOLDEN = [{ name: "opencode-golden", storage: "local", status: "ready" }]
-
 export interface FakeBoxd {
   readonly bin: string
   readonly state: string
-  /** Every command the plugin ran, in order. */
+  /** The fake CLI behind it: seed machines, snapshots, limits and faults, and read the spawns. */
+  readonly fake: FakeCli
+  /** Every command the plugin ran but `--help`, in order. */
   calls(): string[]
-  machines(): Record<string, { name: string; status: string; sharing: string; isolated: boolean }>
-  /** Puts a machine in a state before the plugin is asked anything. */
-  seed(name: string, machine: { status: string; sharing?: string; isolated?: boolean }): void
-  /** The account's snapshots; `opencode-golden` is there unless a test removes it. */
-  snapshots(): Array<{ name: string; storage: string; status: string }>
-  setSnapshots(names: readonly string[]): void
-  /** Clears the machine's /tmp, as a reboot or a resize does: the guest helper the plugin copied there is gone. */
-  clearTmp(): void
+  machines(): FakeMachine[]
+  /** Puts a machine in a region before the plugin is asked anything. */
+  seed(name: string, machine: Partial<FakeMachine> & { status: string }): FakeMachine
 }
 
-/** The fake CLI, its state file and a shell shim, all in the temp root. */
-export function startFakeBoxd(guest: FakeGuest, guestDirectory: string, version = HOST_VERSION): FakeBoxd {
+/** The fake CLI in the temp root, on the PATH, with the fake guest server as every machine's OpenCode. */
+export function startFakeBoxd(guest: FakeGuest, version = HOST_VERSION): FakeBoxd {
   const dir = join(root, "fake-boxd")
   mkdirSync(dir, { recursive: true })
-  const state = join(dir, "state.json")
-  const script = fileURLToPath(new URL("./fake-boxd.mjs", import.meta.url))
-  const bin = join(dir, "boxd")
-  writeFileSync(bin, `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(script)} "$@"\n`)
-  chmodSync(bin, 0o755)
-  const write = (machines: Record<string, unknown>, snapshots = GOLDEN) =>
-    writeFileSync(state, JSON.stringify({ machines, snapshots, log: [], version, port: guest.port, guestDirectory }))
-  write({})
-  const read = () =>
-    JSON.parse(readFileSync(state, "utf8")) as {
-      machines: Record<string, { name: string; status: string; sharing: string; isolated: boolean }>
-      snapshots: Array<{ name: string; storage: string; status: string }>
-      log: string[]
-    }
-  const previousPath = process.env.PATH
-  process.env.PATH = `${dir}:${previousPath ?? ""}`
-  process.env.BOXD_FAKE_STATE = state
+  const fake = startFakeCli({ dir, version, guestPort: guest.port })
+  // Every golden image this laptop's OpenCode would pick, in both regions, so a create needs no build.
+  for (const region of ["fra", "nyc"] as const) for (const size of ["1x4", "2x8", "4x16", "8x32"]) fake.snapshot({ region, name: `oc-golden-${version}-${size}`, vcpu: Number(size.split("x")[0]) })
+  process.env.PATH = `${dir}:${process.env.PATH ?? ""}`
   return {
-    bin,
-    state,
-    calls: () => read().log,
-    machines: () => read().machines,
-    seed: (name, machine) => {
-      const current = read()
-      current.machines[name] = { name, status: machine.status, sharing: machine.sharing ?? "private", isolated: machine.isolated ?? false }
-      write(current.machines, current.snapshots)
-    },
-    snapshots: () => read().snapshots,
-    setSnapshots: (names) => {
-      const current = read()
-      write(current.machines, names.map((name) => ({ name, storage: "local", status: "ready" })))
-    },
-    clearTmp: () => rmSync(join(dir, "guest.py"), { force: true }),
+    bin: fake.bin,
+    state: fake.statePath,
+    fake,
+    calls: () => fake.calls(),
+    machines: () => fake.read().machines,
+    seed: (name, machine) => fake.machine({ ...machine, name }),
   }
 }
 
@@ -118,7 +92,7 @@ export async function startHost(input: HostInput = {}) {
   mkdirSync(base, { recursive: true })
   const guest = startFakeGuest()
   const work = workDirectory(`host-${hosts}`)
-  const boxd = startFakeBoxd(guest, work, input.guestVersion ?? HOST_VERSION)
+  const boxd = startFakeBoxd(guest, input.guestVersion ?? HOST_VERSION)
   const model = input.model ? startMockModel() : undefined
   const plugin = createBoxdPlugin({ boxdBin: boxd.bin, ledger: join(base, "ledger") })
   const withOptions = Plugin.define({ id: plugin.id, setup: (ctx) => plugin.setup({ ...ctx, options: input.options ?? {} }) })

@@ -1,0 +1,309 @@
+// The guest port and the v1 helper together: the real guest/guest.py runs through the fake CLI against a folder that
+// stands in for the machine's disk and the loopback fake of the guest's OpenCode server. A change uploads the helper
+// once, to the stable path, and replaces an older copy; a read never uploads, never wakes, and works with the helper
+// already there; every answer is checked and the model's words are redacted.
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
+import { createHash } from "node:crypto"
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
+import { BoxdError } from "../../src/errors.js"
+import { createRuntime, type PluginRuntime as Runtime } from "../../src/exec/runtime.js"
+import { helperFile } from "../../src/guest/helper.js"
+import { GUEST_HELPER_PATH, type ChangeTarget, type MachineId, type OpContext, type ReadTarget } from "../../src/ports.js"
+import { startFakeCli, type FakeCli, type FakeMachine } from "../host/fake-cli.js"
+import { startFakeGuest, type FakeGuest } from "../host/fake-guest.js"
+
+let guestServer: FakeGuest
+let fake: FakeCli
+let runtime: Runtime
+let machine: FakeMachine
+const DIRECTORY = "/home/boxd/work/review-api"
+const context = (callId = "call_guest"): OpContext => ({ call: { callId, source: "boxd_ensure" } })
+const fail = <T>(promise: Promise<T>) => promise.then(() => undefined, (error: unknown) => error as BoxdError)
+
+beforeAll(() => {
+  guestServer = startFakeGuest({ version: "2.2.6" })
+})
+afterAll(async () => {
+  await guestServer.close()
+})
+beforeEach(async () => {
+  await runtime?.dispose()
+  fake?.dispose()
+  guestServer.sessions.clear()
+  guestServer.pending.clear()
+  fake = startFakeCli({ guestPort: guestServer.port })
+  runtime = createRuntime({ boxdBin: fake.bin }, { opencodeBin: fake.opencodeBin })
+  machine = fake.machine({ name: "oc-review-api", region: "fra", labels: { owner: "opencode-boxd" } })
+})
+
+const onDisk = (path: string) => join(fake.disk(machine), path)
+const verbs = () => fake.calls().map((call) => call.split(" ").slice(0, 2).join(" "))
+
+/** A change as the fleet makes it: the by-id check, under the machine's lock. */
+function change<T>(fn: (target: ChangeTarget) => Promise<T>): Promise<T> {
+  return runtime.runner.withMachineLock({ id: machine.id as MachineId }, context(), async () => fn(await runtime.boxd.checkOwned("fra", "oc-review-api", machine.id as MachineId, context())))
+}
+
+async function readTarget(): Promise<ReadTarget> {
+  return { region: "fra", name: "oc-review-api", listing: await runtime.boxd.list({ maxAgeMs: 0 }, context()), machineId: machine.id as MachineId }
+}
+
+/** The helper's serve read of one folder, which also reports that folder's detached clone. */
+async function serveOf(directory: string): Promise<{ server: string; clone?: string }> {
+  const result = await runtime.boxd.exec(await readTarget(), `python3 ${GUEST_HELPER_PATH}`, { timeoutSeconds: 8, json: false, stdin: JSON.stringify({ action: "serve", directory }) }, context())
+  return JSON.parse(result.stdout.trim())
+}
+
+const setup = (input: Partial<Parameters<Runtime["guest"]["setup"]>[1]> = {}) => change((target) => runtime.guest.setup(target, { directory: DIRECTORY, opencode: "2.2.6", ...input }, context()))
+
+describe("the helper on the machine", () => {
+  test("the first change uploads it and it installs itself at the stable path; the next change is one exec", async () => {
+    const first = await setup()
+    expect(first).toEqual({ server: "up", opencode: "2.2.6", workspace: "ready", helperUploaded: true })
+    const helper = await helperFile()
+    expect(createHash("sha256").update(readFileSync(onDisk(GUEST_HELPER_PATH))).digest("hex")).toBe(helper.sha256)
+    expect(existsSync(onDisk("/home/boxd/.opencode-boxd-upload.py"))).toBe(false)
+    expect(existsSync(onDisk(DIRECTORY))).toBe(true)
+    expect(verbs()).toEqual(["machine get", "machine exec", "machine cp", "machine exec"])
+    fake.update((state) => void (state.log = []))
+    expect((await setup()).helperUploaded).toBe(false)
+    expect(verbs()).toEqual(["machine get", "machine exec"])
+  })
+
+  test("another copy of the helper changes nothing and is replaced", async () => {
+    mkdirSync(onDisk("/home/boxd/.opencode-boxd"), { recursive: true })
+    writeFileSync(onDisk(GUEST_HELPER_PATH), readFileSync(new URL("../../guest/guest.py", import.meta.url)).toString().replace("PROTOCOL = 1", "PROTOCOL = 1  # an older build"))
+    expect((await setup()).helperUploaded).toBe(true)
+    expect(verbs().filter((verb) => verb === "machine cp")).toHaveLength(1)
+  })
+
+  test("a read never uploads: a machine without the helper answers GUEST_FAILED with no copy", async () => {
+    const error = await fail(runtime.guest.serve(await readTarget(), context()))
+    expect(error?.code).toBe("GUEST_FAILED")
+    expect(error?.what).toContain("a read never uploads one")
+    expect(verbs()).not.toContain("machine cp")
+  })
+
+  test("a read on a hibernated machine runs nothing and wakes nothing", async () => {
+    await setup()
+    fake.update((state) => void (state.machines[0]!.status = "hibernated"))
+    fake.update((state) => void (state.log = []))
+    expect((await fail(runtime.guest.serve(await readTarget(), context())))?.code).toBe("MACHINE_ASLEEP")
+    expect(verbs()).toEqual(["machine list"])
+    expect(fake.read().wokenByExec ?? []).toEqual([])
+  })
+
+  test("serve reports the server and the release, and starts nothing", async () => {
+    await setup()
+    expect(await runtime.guest.serve(await readTarget(), context())).toEqual({ server: "up", opencode: "2.2.6" })
+  })
+
+  test("two identical reads in flight share one exec", async () => {
+    await setup()
+    fake.update((state) => void (state.log = []))
+    const target = await readTarget()
+    await Promise.all([runtime.guest.health(target, context()), runtime.guest.health(target, context())])
+    expect(verbs().filter((verb) => verb === "machine exec")).toHaveLength(1)
+  })
+})
+
+describe("sessions", () => {
+  test("prompt makes the session, then steers, queues or interrupts a running one", async () => {
+    await setup()
+    guestServer.next("ses_root")
+    const started = await change((target) => runtime.guest.prompt(target, { directory: DIRECTORY, sessionId: null, title: "review-api", text: "Add a health check.", delivery: "steer" }, context()))
+    expect(started).toMatchObject({ sessionId: "ses_root", delivery: "started", interrupted: false, waitingBefore: 0 })
+    const steered = await change((target) => runtime.guest.prompt(target, { directory: DIRECTORY, sessionId: "ses_root", title: "x", text: "Also log it.", delivery: "steer" }, context()))
+    expect(steered).toMatchObject({ delivery: "steer", waitingBefore: 0, inboxId: "msg_inbox_0" })
+    const queued = await change((target) => runtime.guest.prompt(target, { directory: DIRECTORY, sessionId: "ses_root", title: "x", text: "Then docs.", delivery: "queue" }, context()))
+    expect(queued).toMatchObject({ delivery: "queue", waitingBefore: 1 })
+    const phase = await runtime.guest.phase(await readTarget(), { sessionId: "ses_root" }, context())
+    expect(phase).toMatchObject({ phase: "busy", waiting: { steer: 1, queue: 1 }, guestVersion: "2.2.6" })
+    const interrupted = await change((target) => runtime.guest.prompt(target, { directory: DIRECTORY, sessionId: "ses_root", title: "x", text: "Stop and do this.", delivery: "interrupt" }, context()))
+    expect(interrupted).toMatchObject({ interrupted: true, delivery: "started" })
+    expect(guestServer.interrupts).toEqual(["ses_root"])
+  })
+
+  test("a model switch on a running session is SESSION_BUSY unless it interrupts", async () => {
+    await setup()
+    guestServer.next("ses_root")
+    await change((target) => runtime.guest.prompt(target, { directory: DIRECTORY, sessionId: null, title: "t", text: "go", delivery: "steer" }, context()))
+    const refused = await fail(change((target) => runtime.guest.prompt(target, { directory: DIRECTORY, sessionId: "ses_root", title: "t", text: "go", delivery: "steer", model: "anthropic/claude-sonnet-4-5" }, context())))
+    expect(refused?.code).toBe("SESSION_BUSY")
+    const switched = await change((target) => runtime.guest.prompt(target, { directory: DIRECTORY, sessionId: "ses_root", title: "t", text: "go", delivery: "interrupt", model: "anthropic/claude-sonnet-4-5" }, context()))
+    expect(switched.model).toBe("anthropic/claude-sonnet-4-5")
+    expect(guestServer.switches.at(-1)).toEqual({ sessionID: "ses_root", model: { providerID: "anthropic", id: "claude-sonnet-4-5" } })
+  })
+
+  test("a staged file moves into the work tree with the prompt; one outside the staging folder is refused", async () => {
+    await setup()
+    mkdirSync(onDisk("/home/boxd/.opencode-boxd/staging"), { recursive: true })
+    writeFileSync(onDisk("/home/boxd/.opencode-boxd/staging/f1"), "data")
+    guestServer.next("ses_files")
+    await change((target) => runtime.guest.prompt(target, { directory: DIRECTORY, sessionId: null, title: "t", text: "use it", delivery: "steer", files: [{ staged: "/home/boxd/.opencode-boxd/staging/f1", to: "data/input.json" }] }, context()))
+    expect(readFileSync(onDisk(`${DIRECTORY}/data/input.json`), "utf8")).toBe("data")
+    const refused = await fail(change((target) => runtime.guest.prompt(target, { directory: DIRECTORY, sessionId: "ses_files", title: "t", text: "x", delivery: "steer", files: [{ staged: "/home/boxd/elsewhere", to: "x" }] }, context())))
+    expect(refused?.code).toBe("NAME_INVALID")
+  })
+
+  test("phase: the outcome, the failed run's error line, needs-input, and the model's words redacted and cut", async () => {
+    await setup()
+    guestServer.next("ses_done")
+    await change((target) => runtime.guest.prompt(target, { directory: DIRECTORY, sessionId: null, title: "t", text: "go", delivery: "steer" }, context()))
+    guestServer.say("ses_done", `Done. The key is sk-abcdefghijklmnopqrstuvwx. ${"word ".repeat(200)}`, 1_763_200_000_000)
+    guestServer.fail("ses_done", { type: "provider.auth", message: "401 Unauthorized\nbody with token=abc" })
+    guestServer.pending.set("ses_done", "permission")
+    const phase = await runtime.guest.phase(await readTarget(), { sessionId: "ses_done", tail: 2 }, context())
+    expect(phase).toMatchObject({ phase: "idle", outcome: "failed", error: "provider.auth: 401 Unauthorized body with token=[redacted]", needsInput: "permission", lastActivityAt: "2025-11-15T09:46:40.000Z" })
+    expect(phase.lastText).toStartWith("Done. The key is [redacted].")
+    expect(Array.from(phase.lastText!).length).toBeLessThanOrEqual(300)
+    expect(phase.tail).toHaveLength(1)
+    expect(phase.reading?.residentGiB).toBeGreaterThan(0)
+    expect(await runtime.guest.phase(await readTarget(), { sessionId: "ses_none" }, context())).toMatchObject({ phase: "missing", outcome: null })
+  })
+
+  test("export writes each session of the tree on the guest with its marks; the copy back matches its digest", async () => {
+    await setup()
+    guestServer.next("ses_parent")
+    await change((target) => runtime.guest.prompt(target, { directory: DIRECTORY, sessionId: null, title: "t", text: "go", delivery: "steer" }, context()))
+    guestServer.complete("ses_parent")
+    guestServer.sessions.set("ses_child", { id: "ses_child", parentID: "ses_parent", busy: false, directory: DIRECTORY, messages: [{ type: "user", text: "sub" }], inbox: [], updated: 5 })
+    const exported = await change((target) => runtime.guest.export(target, { rootId: "ses_parent" }, context()))
+    expect(exported.sessions.map((session) => [session.id, session.parentId, session.messages, session.lastMessageId])).toEqual([
+      ["ses_parent", null, 2, "msg_1"],
+      ["ses_child", "ses_parent", 1, "msg_0"],
+    ])
+    const local = join(fake.dir, "parent.json")
+    await change((target) => runtime.boxd.copyFrom(target, exported.sessions[0]!.file, local, context()))
+    expect(createHash("sha256").update(readFileSync(local)).digest("hex")).toBe(exported.sessions[0]!.sha256)
+    expect(exported.guestVersion).toBe("2.2.6")
+    expect((await fail(change((target) => runtime.guest.export(target, { rootId: "ses_missing" }, context()))))?.code).toBe("SESSION_MISSING")
+  })
+
+  test("import puts a tree back, parents first, and answers its root", async () => {
+    await setup()
+    mkdirSync(onDisk("/home/boxd/.opencode-boxd/imports"), { recursive: true })
+    writeFileSync(onDisk("/home/boxd/.opencode-boxd/imports/child.json"), JSON.stringify({ info: { id: "ses_kid", parentID: "ses_top" }, messages: [] }))
+    writeFileSync(onDisk("/home/boxd/.opencode-boxd/imports/top.json"), JSON.stringify({ info: { id: "ses_top" }, messages: [] }))
+    const answer = await change((target) =>
+      runtime.guest.import(target, { directory: DIRECTORY, files: ["/home/boxd/.opencode-boxd/imports/child.json", "/home/boxd/.opencode-boxd/imports/top.json"] }, context()),
+    )
+    expect(answer).toEqual({ rootId: "ses_top" })
+    expect(guestServer.imports.map((item) => item.id)).toEqual(["ses_top", "ses_kid"])
+  })
+})
+
+describe("the work tree", () => {
+  const git = (...args: string[]) => Bun.spawnSync(["git", "-C", onDisk(DIRECTORY), ...args])
+
+  test("git: the tree's state, a patch file on the guest, untracked and ignored paths with digests, the remote without userinfo, and the session marks", async () => {
+    await setup()
+    git("init", "--quiet")
+    writeFileSync(onDisk(`${DIRECTORY}/README.md`), "one\n")
+    writeFileSync(onDisk(`${DIRECTORY}/.gitignore`), "build/\n")
+    git("add", ".")
+    git("-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "--quiet", "-m", "init")
+    git("remote", "add", "origin", "https://x-access-token:secret@github.com/o/r")
+    writeFileSync(onDisk(`${DIRECTORY}/README.md`), "two\n")
+    writeFileSync(onDisk(`${DIRECTORY}/notes.txt`), "notes")
+    mkdirSync(onDisk(`${DIRECTORY}/build`))
+    writeFileSync(onDisk(`${DIRECTORY}/build/out.bin`), "1234")
+    guestServer.next("ses_g")
+    await change((target) => runtime.guest.prompt(target, { directory: DIRECTORY, sessionId: null, title: "t", text: "go", delivery: "steer" }, context()))
+    const answer = await change((target) => runtime.guest.git(target, { directory: DIRECTORY, rootId: "ses_g" }, context()))
+    expect(answer).toMatchObject({ known: true, dirty: true, remote: "https://github.com/o/r", branch: expect.any(String) })
+    expect(answer.untracked).toEqual([{ path: "notes.txt", bytes: 5, sha256: createHash("sha256").update("notes").digest("hex") }])
+    expect(answer.ignored).toEqual([{ path: "build/", bytes: 4, sha256: "" }])
+    expect(answer.patch?.file).toBe("/home/boxd/.opencode-boxd/harvest/patch.diff")
+    expect(readFileSync(onDisk(answer.patch!.file), "utf8")).toContain("+two")
+    expect(answer.sessions).toEqual([{ id: "ses_g", parentId: null, lastMessageId: "msg_0", messages: 1, updated: 1 }])
+  })
+
+  test("git on a folder that is not a repository says so", async () => {
+    await setup()
+    expect(await change((target) => runtime.guest.git(target, { directory: DIRECTORY }, context()))).toMatchObject({ known: false, dirty: false, untracked: [], ignored: [] })
+  })
+
+  test("read: a text file, a binary file, the server log, and a symlink out of the tree refused", async () => {
+    await setup()
+    writeFileSync(onDisk(`${DIRECTORY}/a.txt`), "line1\nline2\nline3\n")
+    writeFileSync(onDisk(`${DIRECTORY}/b.bin`), Buffer.from([0xff, 0xfe, 0x00, 0x01]))
+    symlinkSync("/etc/hostname", onDisk(`${DIRECTORY}/out`))
+    const target = await readTarget()
+    expect(await runtime.guest.read(target, { directory: DIRECTORY, path: "a.txt", maxBytes: 100 }, context())).toEqual({ binary: false, path: "a.txt", bytes: 18, truncated: false, text: "line1\nline2\nline3\n" })
+    expect(await runtime.guest.read(target, { directory: DIRECTORY, path: "a.txt", maxBytes: 100, tail: 1 }, context())).toMatchObject({ text: "line3" })
+    expect(await runtime.guest.read(target, { directory: DIRECTORY, path: "a.txt", maxBytes: 4 }, context())).toMatchObject({ text: "line", truncated: true })
+    expect(await runtime.guest.read(target, { directory: DIRECTORY, path: "b.bin", maxBytes: 100 }, context())).toEqual({ binary: true, path: "b.bin", bytes: 4, sha256: createHash("sha256").update(Buffer.from([0xff, 0xfe, 0x00, 0x01])).digest("hex") })
+    expect(await runtime.guest.read(target, { directory: DIRECTORY, log: "server", maxBytes: 100 }, context())).toMatchObject({ binary: false, path: "server.log" })
+    expect((await fail(runtime.guest.read(target, { directory: DIRECTORY, path: "out", maxBytes: 100 }, context())))?.code).toBe("PATH_REFUSED")
+    expect((await fail(runtime.guest.read(target, { directory: DIRECTORY, path: "../x", maxBytes: 100 }, context())))?.code).toBe("NAME_INVALID")
+  })
+
+  test("a clone runs detached: setup answers cloning, serve reports it, and the next setup joins it", async () => {
+    const origin = join(fake.dir, "origin")
+    Bun.spawnSync(["git", "init", "--quiet", origin])
+    writeFileSync(join(origin, "f"), "x")
+    Bun.spawnSync(["git", "-C", origin, "add", "."])
+    Bun.spawnSync(["git", "-C", origin, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "--quiet", "-m", "c"])
+    const first = await setup({ repo: { url: `file://${origin}` }, git: { name: "Work", email: "work@example.invalid" } })
+    expect(first.workspace).toBe("cloning")
+    let clone: string | undefined = "running"
+    for (let tries = 0; tries < 100 && clone === "running"; tries++) {
+      await Bun.sleep(50)
+      clone = (await serveOf(DIRECTORY)).clone
+    }
+    expect(clone).toBe("done")
+    expect(existsSync(onDisk(`${DIRECTORY}/.git`))).toBe(true)
+    expect(readFileSync(onDisk(`${DIRECTORY}/f`), "utf8")).toBe("x")
+    expect((await setup({ repo: { url: `file://${origin}` } })).workspace).toBe("ready")
+  })
+
+  test("a failed clone answers GUEST_WORKSPACE once, and the next setup tries again", async () => {
+    const repo = { url: `file://${join(fake.dir, "no-such-repo")}` }
+    expect((await setup({ repo })).workspace).toBe("cloning")
+    let clone: string | undefined = "running"
+    for (let tries = 0; tries < 100 && clone === "running"; tries++) {
+      await Bun.sleep(50)
+      clone = (await serveOf(DIRECTORY)).clone
+    }
+    expect(clone).toBe("failed")
+    expect((await fail(setup({ repo })))?.code).toBe("GUEST_WORKSPACE")
+    expect((await setup({ repo })).workspace).toBe("cloning")
+  })
+})
+
+describe("machine care", () => {
+  test("health: memory, load and the heaviest processes by name", async () => {
+    await setup()
+    const health = await runtime.guest.health(await readTarget(), context())
+    expect(health.memory.totalMb).toBeGreaterThan(0)
+    expect(health.top.length).toBeGreaterThan(0)
+    // A process is named by its command name, at most 32 characters: never its arguments.
+    expect(health.top.every((item) => Array.from(item.name).length <= 32 && Number.isInteger(item.rssMb))).toBe(true)
+  })
+
+  test("upgrade moves the guest to the laptop's release and restarts its server", async () => {
+    await setup()
+    expect(await change((target) => runtime.guest.upgrade(target, { version: "2.3.0" }, context()))).toEqual({ opencode: "2.3.0" })
+    expect(readFileSync(onDisk("/.opencode-version"), "utf8").trim()).toBe("2.3.0")
+  })
+
+  test("scrub refuses a base with model credentials or a session, and otherwise removes what must not reach an image", async () => {
+    await setup()
+    mkdirSync(onDisk("/home/boxd/.local/share/opencode"), { recursive: true })
+    writeFileSync(onDisk("/home/boxd/.local/share/opencode/auth.json"), "{}")
+    expect(await change((target) => runtime.guest.scrub(target, context()))).toEqual({ removed: [], refused: "has-credential" })
+    rmSync(onDisk("/home/boxd/.local/share/opencode/auth.json"))
+    guestServer.sessions.set("ses_used", { id: "ses_used", busy: false, directory: "", messages: [], inbox: [], updated: 1 })
+    expect(await change((target) => runtime.guest.scrub(target, context()))).toEqual({ removed: [], refused: "has-session" })
+    guestServer.sessions.clear()
+    mkdirSync(onDisk("/etc/profile.d"), { recursive: true })
+    writeFileSync(onDisk("/etc/profile.d/boxd-env.sh"), "export KEY=x")
+    mkdirSync(onDisk("/tmp/opencode-boxd"), { recursive: true })
+    const scrubbed = await change((target) => runtime.guest.scrub(target, context()))
+    expect(scrubbed.removed).toEqual(expect.arrayContaining(["/etc/profile.d/boxd-env.sh", "/home/boxd/.opencode-boxd/password", "/tmp/opencode-boxd", "/home/boxd/work"]))
+    expect(existsSync(onDisk(GUEST_HELPER_PATH))).toBe(true)
+    expect(existsSync(onDisk("/home/boxd/.opencode-boxd/password"))).toBe(false)
+  })
+})

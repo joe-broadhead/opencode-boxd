@@ -1,0 +1,314 @@
+/**
+ * The boxd CLI port, v1 (design §4.1, §3): the laptop CLI 0.3.5 through the runner. Every call passes `--region` (or
+ * `--region all` for a list), every change acts on a machine id that `checkOwned` resolved in this call, a read exec
+ * passes the read rule first, and every failure is read through the one stderr table (`./errors-table.ts`).
+ *
+ * The shared answers: one listing flight at a time for every caller that accepts an age (a caller that needs a fresh
+ * one, the "gone" rule and the v0 import, takes its own), the machine limit cached for 60 s, and the snapshots for
+ * 5 minutes. The CLI flavour check runs once per binary, as one flight (F9).
+ */
+import { BoxdError, boxdError } from "../errors.js"
+import { partialOutput, type PluginRunner } from "../exec/runner.js"
+import {
+  BUILDER_LABELS,
+  TIMEOUTS,
+  WORK_LABELS,
+  type BoxdPort,
+  type ChangeTarget,
+  type Listing,
+  type MachineInfo,
+  type MachineLockKey,
+  type MachineName,
+  type OpContext,
+  type ReadTarget,
+  type Region,
+  type RegionLimit,
+  type Runner,
+  type SnapshotRow,
+  type SpawnResult,
+} from "../ports.js"
+import {
+  copyFromArgs,
+  copyToArgs,
+  createBuilderArgs,
+  createWorkArgs,
+  envListArgs,
+  execArgs,
+  getArgs,
+  hibernateArgs,
+  labelSetArgs,
+  leaseArgs,
+  listArgs,
+  machineLimitArgs,
+  rebootArgs,
+  removeArgs,
+  removeSnapshotArgs,
+  renameArgs,
+  resizeArgs,
+  saveSnapshotArgs,
+  snapshotsArgs,
+  usageArgs,
+  wakeArgs,
+} from "./argv.js"
+import { classify, failure, type Asked } from "./errors-table.js"
+import { assertLaptopCli } from "./flavor.js"
+import { parseCreated, parseJson, parseListing, parseMachine, parseMachineLimit, parseSecrets, parseSnapshots, parseUsage } from "./parse.js"
+
+export interface BoxdCliOptions {
+  /** The laptop boxd binary; `boxd` on the server's PATH by default. */
+  readonly bin?: string
+  readonly runner: Runner
+  readonly now?: () => number
+}
+
+/** A change verb's bound: the CLI answers once boxd has the change; a create and the reboots have their own. */
+const CHANGE_MS = TIMEOUTS.helperChange
+/** `machine usage` and `manage usage` are for owners and admins; a member gets this refusal. */
+const USAGE_REFUSED = /\bowners? and admins? only\b|\bonly (?:org )?(?:owners|admins)\b|\bnot (?:an? )?(?:owner|admin)\b|\bforbidden\b|\b403\b/i
+
+export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
+  const bin = options.bin ?? "boxd"
+  const runner = options.runner
+  const now = options.now ?? Date.now
+  /** The runner's own lock check, when it has one: a change outside its machine's lock is a bug, not a race. */
+  const holds = (runner as Partial<PluginRunner>).holds?.bind(runner)
+
+  let listing: Listing | undefined
+  let limits: { readonly at: number; readonly value: readonly RegionLimit[] } | undefined
+  let snapshots: { readonly at: number; readonly value: readonly SnapshotRow[] } | undefined
+
+  /** One CLI call: the flavour check first, then the child in its pool, then the stderr table on a failure. */
+  async function cli(args: readonly string[], context: OpContext, timeoutMs: number, asked: Asked = {}, stdin?: string): Promise<SpawnResult> {
+    await assertLaptopCli(bin, runner, context)
+    const command = `boxd ${args.filter((arg) => !arg.startsWith("-")).slice(0, 2).join(" ")}`
+    let result: SpawnResult
+    try {
+      result = await runner.spawn({ ...context, bin, args, timeoutMs, ...(stdin !== undefined ? { stdin } : {}) })
+    } catch (error) {
+      // A CLI that is not signed in starts a browser sign-in and waits: the timeout cut it, and its words say why.
+      const partial = partialOutput(error)
+      if (error instanceof BoxdError && error.code === "TIMEOUT" && partial && classify(`${partial.stdout}\n${partial.stderr}`).kind === "auth") {
+        throw boxdError("BOXD_MISSING", "The laptop boxd CLI is not signed in: it asked for a browser sign-in.")
+      }
+      throw error
+    }
+    if (result.code !== 0) throw failure(command, `${result.stderr}\n${result.stdout}`, asked)
+    return result
+  }
+
+  /**
+   * Every change: the target came from `checkOwned` in this call, and the caller holds its machine's lock. `boxd_exec`
+   * (an exec in the `exec` pool) is the one change that takes no machine lock (M4), so a long command never blocks the
+   * work's other calls; it still acts only on a checked target.
+   */
+  function change(target: ChangeTarget, pool?: OpContext["pool"]): void {
+    if (!isChangeTarget(target)) throw new Error("A machine change needs a target from checkOwned, which resolves the name to the recorded id.")
+    if (pool === "exec") return
+    if (holds && !holds({ id: target.machineId })) throw new Error(`A change to ${target.machineId} must run inside runner.withMachineLock({ id }).`)
+  }
+
+  async function takeListing(context: OpContext): Promise<Listing> {
+    const result = await cli(listArgs(), context, TIMEOUTS.cliRead)
+    const machines = parseListing(parseJson(result.stdout, "boxd machine list"))
+    return { takenAt: now(), fresh: true, machines }
+  }
+
+  async function get(region: Region, nameOrId: string, context: OpContext): Promise<MachineInfo> {
+    const result = await cli(getArgs(region, nameOrId), context, TIMEOUTS.cliRead, { machine: nameOrId, region })
+    return parseMachine(parseJson(result.stdout, "boxd machine get"), region, "boxd machine get")
+  }
+
+  async function exec(target: ReadTarget | ChangeTarget, command: string, settings: { readonly timeoutSeconds: number; readonly json: boolean; readonly stdin?: string }, context: OpContext) {
+    if (isChangeTarget(target)) change(target, context.pool)
+    else runner.assertReadable(target)
+    const args = execArgs(target.region, target.name, command, settings.timeoutSeconds, settings.json)
+    await assertLaptopCli(bin, runner, context)
+    // boxd kills the remote command at its timeout; the laptop kills the CLI shortly after, should it not return.
+    const result = await runner.spawn({ ...context, bin, args, timeoutMs: settings.timeoutSeconds * 1000 + TIMEOUTS.killGraceMs, ...(settings.stdin !== undefined ? { stdin: settings.stdin } : {}) })
+    if (settings.json) {
+      if (result.code !== 0) {
+        const classified = classify(`${result.stderr}\n${result.stdout}`, { machine: target.name, region: target.region })
+        if (classified.kind !== "unknown" || !result.stdout.includes("exit_code")) throw failure("boxd machine exec", `${result.stderr}\n${result.stdout}`, { machine: target.name, region: target.region })
+      }
+      const answer = parseJson(result.stdout, "boxd machine exec") as { output?: unknown; exit_code?: unknown }
+      return { code: typeof answer.exit_code === "number" ? answer.exit_code : result.code, stdout: typeof answer.output === "string" ? answer.output : "", stderr: result.stderr, ms: result.ms }
+    }
+    // Without --json the exit code is the remote command's own, so only the CLI's own known failures are raised here.
+    if (result.code !== 0 && classify(result.stderr, { machine: target.name, region: target.region }).kind !== "unknown") {
+      throw failure("boxd machine exec", result.stderr, { machine: target.name, region: target.region })
+    }
+    return result
+  }
+
+  return {
+    assertLaptopCli: (context) => assertLaptopCli(bin, runner, context),
+
+    async list(settings, context) {
+      if (settings.maxAgeMs <= 0) {
+        // The gone rule and the import need a listing taken in this call; it still refreshes the shared one.
+        listing = await takeListing(context)
+        return listing
+      }
+      if (listing && now() - listing.takenAt <= settings.maxAgeMs) return { ...listing, fresh: false }
+      const taken = await runner.singleFlight("boxd:list", () => takeListing(context))
+      listing = taken
+      return { ...taken, fresh: false }
+    },
+
+    get,
+
+    async checkOwned(region, name, machineId, context) {
+      const info = await get(region, name, context)
+      if (info.id !== machineId) {
+        throw boxdError("NOT_OURS", `${name} in ${region} is machine ${info.id}, not the recorded ${machineId}. Nothing was changed.`, { machine: name, region, found: info.id })
+      }
+      // The one place a ChangeTarget is made: the name was resolved to the recorded id in this call.
+      return { region, name: name as MachineName, machineId, checkedAt: now() } as ChangeTarget
+    },
+
+    async create(input, context): Promise<MachineInfo> {
+      const key: MachineLockKey = { create: { region: input.region, name: input.name as MachineName } }
+      if (holds && !holds(key)) throw new Error(`A create of ${input.name} must run inside runner.withMachineLock({ create: { region, name } }).`)
+      const args = input.kind === "work" ? createWorkArgs(input) : createBuilderArgs(input)
+      let result: SpawnResult
+      try {
+        result = await cli(args, context, TIMEOUTS.create, { machine: input.name, region: input.region })
+      } catch (error) {
+        // A create cut off by its bound may still land: say so, and let the next ensure adopt it.
+        if (error instanceof BoxdError && error.code === "TIMEOUT") throw boxdError("CREATE_UNCERTAIN", `boxd machine new ${input.name} in ${input.region} did not answer within ${TIMEOUTS.create / 1000} s.`)
+        throw error
+      }
+      const created = parseCreated(parseJson(result.stdout, "boxd machine new"), "boxd machine new")
+      listing = undefined
+      // `machine new --json` names the machine and its id only. A create never asks for --shared or --isolated, so the
+      // machine is private and not isolated; its labels are the ones set here, merged over the image's.
+      return {
+        id: created.id,
+        name: created.name,
+        region: input.region,
+        status: "starting",
+        size: input.kind === "builder" ? input.size : null,
+        labels: input.kind === "work" ? { ...WORK_LABELS, work: input.workId } : { ...BUILDER_LABELS },
+        sharing: "private",
+        isolated: false,
+      }
+    },
+
+    async wake(target, context) {
+      change(target)
+      await cli(wakeArgs(target), context, CHANGE_MS, { machine: target.machineId, region: target.region })
+      listing = undefined
+    },
+
+    async hibernate(target, context) {
+      change(target)
+      await cli(hibernateArgs(target), context, CHANGE_MS, { machine: target.machineId, region: target.region })
+      listing = undefined
+    },
+
+    async remove(target, context) {
+      change(target)
+      await cli(removeArgs(target), context, CHANGE_MS, { machine: target.machineId, region: target.region })
+      listing = undefined
+    },
+
+    async resize(target, size, context) {
+      change(target)
+      await cli(resizeArgs(target, size), context, TIMEOUTS.resize, { machine: target.machineId, region: target.region })
+      listing = undefined
+    },
+
+    async reboot(target, context) {
+      change(target)
+      await cli(rebootArgs(target), context, TIMEOUTS.reboot, { machine: target.machineId, region: target.region })
+      listing = undefined
+    },
+
+    async rename(target, to, context) {
+      change(target)
+      await cli(renameArgs(target, to), context, TIMEOUTS.reboot, { machine: target.machineId, region: target.region })
+      listing = undefined
+    },
+
+    async setLabels(target, labels, context) {
+      change(target)
+      // One call per label, in key order: `machine label set` takes one key and one value.
+      for (const [key, value] of Object.entries(labels).sort(([a], [b]) => a.localeCompare(b))) {
+        await cli(labelSetArgs(target, key, value), context, CHANGE_MS, { machine: target.machineId, region: target.region })
+      }
+      listing = undefined
+    },
+
+    async renewLease(target, days, context) {
+      change(target)
+      await cli(leaseArgs(target, days), context, CHANGE_MS, { machine: target.machineId, region: target.region })
+    },
+
+    exec,
+
+    async copyTo(target, localPath, guestPath, context) {
+      // A read never uploads: only a target from checkOwned can be copied to.
+      change(target)
+      await cli(copyToArgs(target.region, target.name, localPath, guestPath), context, TIMEOUTS.cp, { machine: target.name, region: target.region })
+    },
+
+    async copyFrom(target, guestPath, localPath, context) {
+      if (isChangeTarget(target)) change(target)
+      else runner.assertReadable(target)
+      await cli(copyFromArgs(target.region, target.name, guestPath, localPath), context, TIMEOUTS.cp, { machine: target.name, region: target.region })
+    },
+
+    async machineLimit(context) {
+      if (limits && now() - limits.at <= TIMEOUTS.machineLimitCacheMs) return limits.value
+      return runner.singleFlight("boxd:machine-limit", async () => {
+        const result = await cli(machineLimitArgs(), context, TIMEOUTS.cliRead)
+        const value = parseMachineLimit(parseJson(result.stdout, "boxd manage machine-limit"))
+        limits = { at: now(), value }
+        return value
+      })
+    },
+
+    async usage(since, context) {
+      try {
+        const result = await cli(usageArgs(since), context, TIMEOUTS.cliRead)
+        return parseUsage(parseJson(result.stdout, "boxd manage usage"), new Date(now()).toISOString())
+      } catch (error) {
+        if (error instanceof BoxdError && error.code === "BOXD_FAILED" && USAGE_REFUSED.test(error.what)) {
+          return { available: false, reason: "boxd's machine usage is for organisation owners and admins." }
+        }
+        throw error
+      }
+    },
+
+    async snapshots(context) {
+      if (snapshots && now() - snapshots.at <= TIMEOUTS.snapshotsCacheMs) return snapshots.value
+      return runner.singleFlight("boxd:snapshots", async () => {
+        const result = await cli(snapshotsArgs(), context, TIMEOUTS.cliRead)
+        const value = parseSnapshots(parseJson(result.stdout, "boxd snapshots list"))
+        snapshots = { at: now(), value }
+        return value
+      })
+    },
+
+    async saveSnapshot(builder, name, context) {
+      change(builder)
+      await cli(saveSnapshotArgs(builder, name), context, TIMEOUTS.goldenStep, { machine: builder.machineId, region: builder.region })
+      snapshots = undefined
+    },
+
+    async removeSnapshot(region, name, context) {
+      await cli(removeSnapshotArgs(region, name), context, CHANGE_MS, { region })
+      snapshots = undefined
+    },
+
+    async secrets(context) {
+      const result = await cli(envListArgs(), context, TIMEOUTS.cliRead)
+      return parseSecrets(parseJson(result.stdout, "boxd env list"))
+    },
+  }
+}
+
+/** Only `checkOwned` makes a target with `checkedAt`: the proof that the name was resolved to the id in this call. */
+export function isChangeTarget(target: ReadTarget | ChangeTarget): target is ChangeTarget {
+  return "checkedAt" in target && typeof (target as ChangeTarget).checkedAt === "number" && "machineId" in target && typeof target.machineId === "string" && !("listing" in target)
+}

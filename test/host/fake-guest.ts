@@ -13,7 +13,7 @@ export interface FakeSession {
   /** The session's last run, as OpenCode records it on the session and its last idle message. */
   outcome?: "succeeded" | "failed" | "interrupted"
   /** Prompts admitted while the session ran: they wait here until a run takes them. */
-  inbox: Array<{ id: string; type: "user"; payload: { text: string } }>
+  inbox: Array<{ id: string; type: "user"; payload: { text: string }; delivery?: "queue" }>
   /** When the session last changed, in epoch milliseconds. */
   updated: number
   /** The model the session runs on, as OpenCode's model reference; unset for the server's default. */
@@ -23,7 +23,7 @@ export interface FakeSession {
 export type FakeMessage = {
   type: string
   text?: string
-  outcome?: "succeeded" | "failed"
+  outcome?: "succeeded" | "failed" | "interrupted"
   error?: { type: string; message: string }
   time?: { created: number }
   content?: Array<{ type: string; text: string }>
@@ -37,9 +37,15 @@ export interface FakeGuest {
   readonly imports: Array<{ id: string; parentID?: string }>
   /** Every model switch, in order: the session and the reference the request carried. */
   readonly switches: Array<{ sessionID: string; model: unknown }>
+  /** Every interrupt, in order. */
+  readonly interrupts: string[]
+  /** Pending asks a person must answer, per session: a permission or a form. */
+  readonly pending: Map<string, "permission" | "form">
   /** Ways this server can misbehave: a test sets one to see a caller cope. */
   readonly quirks: { activeFails: boolean; ignoresTypeFilter: boolean }
-  /** The next created session's id. */
+  /** The OpenCode version /api/info reports. */
+  setVersion(version: string): void
+  /** The next created session's id; the ones after it get `_2`, `_3`… */
   next(id: string): void
   idle(sessionID: string): void
   /** The guest server died mid-run: the session keeps a busy stamp later than its idle stamp, and nothing runs. */
@@ -56,8 +62,11 @@ export interface FakeGuest {
 const json = (value: unknown, status = 200) =>
   new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } })
 
-export function startFakeGuest(): FakeGuest {
+export function startFakeGuest(options: { readonly version?: string } = {}): FakeGuest {
   const sessions = new Map<string, FakeSession>()
+  const interrupts: string[] = []
+  const pending = new Map<string, "permission" | "form">()
+  let version = options.version ?? "2.2.6"
   const prompts: Array<{ sessionID: string; text: string }> = []
   const imports: Array<{ id: string; parentID?: string }> = []
   const switches: Array<{ sessionID: string; model: unknown }> = []
@@ -72,7 +81,7 @@ export function startFakeGuest(): FakeGuest {
       const url = new URL(request.url)
       const path = url.pathname
       const body = request.method === "POST" ? ((await request.json().catch(() => ({}))) as Record<string, unknown>) : {}
-      if (path === "/api/info") return json({ data: { ok: true } })
+      if (path === "/api/info") return json({ data: { ok: true, version } })
       if (path === "/api/session" && request.method === "GET") return json({ data: [...sessions.values()].map(({ id, parentID }) => ({ id, parentID })) })
       if (path === "/api/session" && request.method === "POST") {
         created += 1
@@ -107,6 +116,18 @@ export function startFakeGuest(): FakeGuest {
         const ordered = (url.searchParams.get("order") ?? "desc") === "desc" ? listed.reverse() : listed
         return json({ data: ordered.slice(0, Number(url.searchParams.get("limit") ?? 50)), cursor: {} })
       }
+      const asked = /^\/api\/session\/(ses_[A-Za-z0-9_-]+)\/(permission|form)$/.exec(path)
+      if (asked) return json({ data: pending.get(asked[1]!) === asked[2] ? [{ id: `ask_${asked[2]}` }] : [] })
+      const interrupted = /^\/api\/session\/(ses_[A-Za-z0-9_-]+)\/interrupt$/.exec(path)
+      if (interrupted && request.method === "POST") {
+        const session = sessions.get(interrupted[1]!)
+        if (!session) return json({ error: "not found" }, 404)
+        interrupts.push(session.id)
+        session.busy = false
+        session.outcome = "interrupted"
+        session.messages.push({ type: "idle", outcome: "interrupted" })
+        return new Response(null, { status: 204 })
+      }
       const inbox = /^\/api\/session\/(ses_[A-Za-z0-9_-]+)\/inbox$/.exec(path)
       if (inbox) {
         const session = sessions.get(inbox[1]!)
@@ -131,13 +152,14 @@ export function startFakeGuest(): FakeGuest {
         prompts.push({ sessionID: session.id, text: String(body.text ?? "") })
         // A running session keeps the prompt in its inbox until the run takes it.
         if (session.busy) {
-          session.inbox.push({ id: `msg_inbox_${session.inbox.length}`, type: "user", payload: { text: String(body.text ?? "") } })
-          return json({ data: { admitted: session.id } })
+          const id = `msg_inbox_${session.inbox.length}`
+          session.inbox.push({ id, type: "user", payload: { text: String(body.text ?? "") }, ...(body.delivery === "queue" ? { delivery: "queue" } : {}) })
+          return json({ data: { id, admitted: session.id } })
         }
         session.busy = true
         session.interrupted = false
         session.messages.push({ type: "user", text: String(body.text ?? "") })
-        return json({ data: { admitted: session.id } })
+        return json({ data: { id: `msg_${session.messages.length - 1}`, admitted: session.id } })
       }
       const exported = /^\/api\/experimental\/session\/(ses_[A-Za-z0-9_-]+)\/export$/.exec(path)
       if (exported) {
@@ -145,8 +167,8 @@ export function startFakeGuest(): FakeGuest {
         if (!session) return json({ error: "not found" }, 404)
         return json({
           data: {
-            info: { id: session.id, ...(session.parentID ? { parentID: session.parentID } : {}), title: session.id, location: { directory: session.directory } },
-            messages: session.messages,
+            info: { id: session.id, ...(session.parentID ? { parentID: session.parentID } : {}), title: session.id, location: { directory: session.directory }, time: { created: 1, updated: session.updated } },
+            messages: session.messages.map((message, index) => ({ id: `msg_${index}`, ...message })),
           },
         })
       }
@@ -175,10 +197,16 @@ export function startFakeGuest(): FakeGuest {
     port: Number(server.port),
     quirks,
     sessions,
+    interrupts,
+    pending,
+    setVersion: (next: string) => void (version = next),
     prompts,
     imports,
     switches,
-    next: (id: string) => void (nextId = id),
+    next: (id: string) => {
+      nextId = id
+      created = 0
+    },
     idle: (sessionID: string) => {
       const session = sessions.get(sessionID)
       if (session) session.busy = false
