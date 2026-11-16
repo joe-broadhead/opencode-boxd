@@ -1,26 +1,9 @@
-// The guest session's last run, read from what OpenCode records, and the next step a failed one gets.
+// A failed run's error line, and the code (with its next step) a failed run gets.
 import { describe, expect, test } from "bun:test"
-import { errorLine, isCredentialFailure, mapOutcome, nextStepFor, readRun } from "../../src/outcome.js"
+import { CODES } from "../../src/errors.js"
+import { errorLine, failureCode, isCredentialFailure } from "../../src/outcome.js"
 
-const AUTH_ERROR = {
-  type: "provider.auth",
-  message: "Go Teams covers workspace members, not service accounts. Use a personal API key to call Go models.",
-}
-
-describe("reading a run", () => {
-  test("maps OpenCode's three words, and nothing else", () => {
-    expect(mapOutcome("succeeded")).toBe("completed")
-    expect(mapOutcome("failed")).toBe("failed")
-    expect(mapOutcome("interrupted")).toBe("aborted")
-    expect(mapOutcome("running")).toBeNull()
-    expect(mapOutcome(undefined)).toBeNull()
-  })
-
-  test("the session's own outcome wins, and the last idle message carries the error", () => {
-    const run = readRun({ outcome: "failed" }, [{ type: "idle", outcome: "failed", error: AUTH_ERROR }])
-    expect(run).toEqual({ outcome: "failed", error: "provider.auth: Go Teams covers workspace members, not service accounts. Use a personal API key to call Go models" })
-  })
-
+describe("a failed run", () => {
   test("a failure's line is redacted and cut, and its response body is never read", () => {
     const line = errorLine({ type: "provider.auth", message: "denied for key=sk-live-0123456789abcdef", response: { body: "secret-body" } })
     expect(line).toBe("provider.auth: denied for key=[redacted]")
@@ -32,8 +15,9 @@ describe("reading a run", () => {
   test("a credential failure has its own next step", () => {
     const run = { outcome: "failed" as const, error: "provider.auth: nope" }
     expect(isCredentialFailure(run)).toBe(true)
-    expect(nextStepFor(run)).toContain("host-bound boxd env secret")
-    expect(nextStepFor({ outcome: "failed", error: "tool.timeout: took too long" })).toBe("Read lastText with boxd_job, then boxd_submit again.")
-    expect(nextStepFor({ outcome: "completed" })).toBe("Read lastText with boxd_job, then boxd_submit again.")
+    expect(failureCode(run)).toBe("GUEST_AUTH_FAILED")
+    expect(CODES[failureCode(run)].next).toContain("host-bound boxd env secret")
+    expect(failureCode({ outcome: "failed", error: "tool.timeout: took too long" })).toBe("RUN_FAILED")
+    expect(failureCode({ outcome: "completed" })).toBe("RUN_FAILED")
   })
 })

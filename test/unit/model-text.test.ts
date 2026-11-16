@@ -5,7 +5,6 @@ import { describe, expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { NAMESPACE_DESCRIPTION } from "../../src/constants.js"
 import { buildStatus, formatStatus, type Status } from "../../src/status.js"
 import { TOOLS } from "../../src/tools.js"
 import { statusFacts } from "../support/fleet.js"
@@ -45,7 +44,6 @@ const defaultStatus = (): Status => buildStatus(statusFacts({ tools: [...TOOLS.m
 
 describe("the model-facing text at access all", () => {
   const all = {
-    "the Code Mode namespace": NAMESPACE_DESCRIPTION,
     "the Jelly summary": jellySummary(),
     "the Jelly page": withoutFamilyBlock(read("docs/jelly.md")),
     "the /boxd-status text": formatStatus(defaultStatus()),
@@ -54,12 +52,6 @@ describe("the model-facing text at access all", () => {
 
   test.each(Object.entries(all))("%s claims nothing the default block contradicts", (_file, text) => {
     for (const [claim, pattern] of STALE) expect({ claim, hit: pattern.exec(atAll(text))?.[0] ?? null }).toEqual({ claim, hit: null })
-  })
-
-  test("the namespace says what the default does, and that access restricts it", () => {
-    expect(NAMESPACE_DESCRIPTION).toContain("with all (the default) ensure, submit, harvest, sleep, resume, reassign, golden, exec and drop run without a prompt")
-    expect(NAMESPACE_DESCRIPTION).toContain("with ask-changes they ask")
-    expect(NAMESPACE_DESCRIPTION).toContain("with read-only they are denied")
   })
 
   test("status says every tool is allowed, and that an unknown tool runs too", () => {

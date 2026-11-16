@@ -33,7 +33,6 @@ import type {
   DropResult,
   HarvestResult,
   ListResult,
-  NotImplemented,
   Refusal,
   SleepResult,
   ToolResults,
@@ -126,8 +125,8 @@ export async function stopAll(stops: readonly Dispose[], report: (problem: strin
 
 export type ToolId = keyof ToolResults
 
-/** One tool's run: its success result, a refusal, a list envelope, or the scaffold's answer while it is not built. */
-export type Run<T extends { readonly state: string }> = (input: Record<string, unknown>, call: CallContext) => Promise<T | Refusal | ListResult<T> | NotImplemented>
+/** One tool's run: its success result, a refusal, or a list envelope. */
+export type Run<T extends { readonly state: string }> = (input: Record<string, unknown>, call: CallContext) => Promise<T | Refusal | ListResult<T>>
 
 export type ToolRuns = { readonly [K in ToolId]: Run<ToolResults[K]> }
 
@@ -268,30 +267,5 @@ export function registerCleanupView(rpc: Pick<Plugin.Context["rpc"], "register">
           nextStep: "Restart OpenCode, then run /boxd-cleanup again.",
         }),
       ),
-  })
-}
-
-// ── The scaffold ──────────────────────────────────────────────────────────────────────────────────────────────────
-
-/** A port whose package has not built it yet: any member throws, naming it, except `dispose`, which does nothing. */
-export function notBuilt<T extends object>(name: string): T {
-  return new Proxy({} as T, {
-    get: (_target, member) => {
-      if (member === "then") return undefined
-      if (member === "dispose") return async () => {}
-      return () => {
-        throw new Error(`${name}.${String(member)} is not built yet on this branch.`)
-      }
-    },
-  })
-}
-
-/** A run whose package has not built it yet: a typed answer, never a throw. Goes with the last stub. */
-export function notBuiltRun<T extends { readonly state: string }>(owner: string): Run<T> {
-  return async (): Promise<NotImplemented> => ({
-    state: "failed",
-    error: "NOT_IMPLEMENTED",
-    message: `This tool is not built yet on this branch (package ${owner}).`,
-    next: "Use a released version of the plugin.",
   })
 }

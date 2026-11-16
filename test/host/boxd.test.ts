@@ -1,10 +1,8 @@
-// The plugin on the public @opencode/sdk host, at the v0.1.0 registry skeleton: it loads, registers the twelve tools,
-// inserts the default rules for each access value, asks for every change and never for a read, answers describe and
-// the status RPC, and runs nothing when a prompt is declined or a rule denies. Each tool's own behaviour is its
-// package's host suite (design §7.2): package C1's tools are in `machines.test.ts`; until a package fills a tool, the
-// tool answers NOT_IMPLEMENTED and runs no CLI. Package C2's tools are filled: for a work the ledger does not hold they
-// answer NOT_OURS, and also run no CLI. Package D's reads are built: boxd_status answers the fleet, and boxd_job
-// refuses a work the ledger does not know.
+// The plugin on the public @opencode/sdk host: it loads, registers the twelve tools, inserts the default rules for each
+// access value, asks for every change and never for a read, answers describe and the status RPC, and runs nothing when a
+// prompt is declined or a rule denies. The machine tools (ensure, golden, reassign, resume) are in `machines.test.ts`.
+// For a work the ledger does not hold, the session tools answer NOT_OURS and run no CLI; boxd_status answers the
+// fleet, and boxd_job refuses the work.
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
@@ -22,20 +20,18 @@ afterAll(cleanup)
 
 const rule = (action: string, effect: Rule["effect"]): Rule => ({ action, resource: "*", effect })
 
-const NOT_IMPLEMENTED = { state: "failed", error: "NOT_IMPLEMENTED" }
-/** The tools this file runs: every tool but package C1's, which `machines.test.ts` covers. */
-const UNBUILT = TOOLS.filter((tool) => tool.owner !== "C1")
+/** The tools this file runs: every tool but the machine tools, which `machines.test.ts` covers. */
+const MACHINE_TOOLS = new Set(["boxd_ensure", "boxd_golden", "boxd_reassign", "boxd_resume"])
+const RUN_HERE = TOOLS.filter((tool) => !MACHINE_TOOLS.has(tool.id))
 const NOT_OURS = { state: "refused", error: "NOT_OURS" }
-/** What package D's reads answer for a work this laptop's ledger does not know; they read the fleet, so they list. */
-const BUILT: Readonly<Record<string, object>> = {
+/** What the fleet reads answer for a work this laptop's ledger does not know. */
+const FLEET_READS: Readonly<Record<string, object>> = {
   boxd_status: { state: "ok", counts: {}, attention: [] },
   boxd_job: { state: "refused", error: "NOT_OURS", workId: "review-api" },
 }
 /** What a tool answers here for review-api, a work the ledger does not hold. */
 const unknownWork = (id: string, input: Record<string, unknown>) => {
-  if (BUILT[id]) return BUILT[id]
-  const spec = TOOLS.find((tool) => tool.id === id)!
-  if (spec.owner !== "C2") return NOT_IMPLEMENTED
+  if (FLEET_READS[id]) return FLEET_READS[id]
   // boxd_read checks its input first: it needs a path or the log.
   return id === "boxd_read" && input.path === undefined && input.log === undefined ? { state: "refused", error: "NAME_INVALID" } : NOT_OURS
 }
@@ -96,17 +92,17 @@ describe("the plugin on a stock host", () => {
     }
   })
 
-  test("a read and a change run without asking by default; each answers NOT_IMPLEMENTED (or NOT_OURS when built) and runs no CLI", async () => {
+  test("a read and a change run without asking by default; each answers NOT_OURS for an unknown work and runs no CLI", async () => {
     const host = await startHost()
     try {
       const build = await session(host)
-      for (const tool of UNBUILT) {
+      for (const tool of RUN_HERE) {
         const input =
           tool.name === "status" ? {} : tool.name === "job" ? { workId: "review-api" } : tool.name === "reassign" ? { from: "spare-1", to: "review-api" } : tool.name === "exec" ? { workId: "review-api", command: ["true"] } : { workId: "review-api", text: "Add a health check." }
         const before = host.boxd.calls().length
         const result = await attempt(host, build, "build", tool.id, "reject", input)
         expect({ tool: tool.id, asked: result.asked, output: result.output }).toMatchObject({ tool: tool.id, asked: undefined, output: unknownWork(tool.id, input) })
-        if (!BUILT[tool.id]) expect({ tool: tool.id, calls: host.boxd.calls().slice(before) }).toEqual({ tool: tool.id, calls: [] })
+        if (!FLEET_READS[tool.id]) expect({ tool: tool.id, calls: host.boxd.calls().slice(before) }).toEqual({ tool: tool.id, calls: [] })
       }
     } finally {
       await host.close()

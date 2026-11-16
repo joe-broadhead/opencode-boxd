@@ -414,16 +414,6 @@ export interface BoxdPort {
 /** The v1 helper's stable home on the guest, and the protocol version it answers. */
 export const GUEST_HELPER_PATH = "/home/boxd/.opencode-boxd/guest.py"
 export const GUEST_PROTOCOL = 1
-/** Where a work's guest folder always is. */
-export const GUEST_WORK_ROOT = "/home/boxd/work"
-
-/** The read actions: no machine lock, the read rule, never an upload. Their input and output hold within v0.1.x. */
-export const GUEST_READ_ACTIONS = ["phase", "read", "health", "serve"] as const
-/** The mutating actions: under the machine lock, after the by-id check; a change may upload the helper first. */
-export const GUEST_CHANGE_ACTIONS = ["setup", "prompt", "interrupt", "upgrade", "export", "import", "git", "scrub"] as const
-export type GuestReadAction = (typeof GUEST_READ_ACTIONS)[number]
-export type GuestChangeAction = (typeof GUEST_CHANGE_ACTIONS)[number]
-export type GuestAction = GuestReadAction | GuestChangeAction
 
 export type Delivery = "steer" | "queue" | "interrupt"
 export type RunOutcome = "completed" | "failed" | "aborted"

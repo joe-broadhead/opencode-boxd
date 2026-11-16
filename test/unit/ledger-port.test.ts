@@ -11,7 +11,8 @@ import { Ledger } from "../../src/ledger/store.js"
 import type { WorkRecord } from "../../src/ledger/types.js"
 import { parseOptions } from "../../src/options.js"
 import type { ImportState, ImportV0Port, LedgerPort, OpContext } from "../../src/ports.js"
-import { notBuilt, type HostServices, type Runtime } from "../../src/services.js"
+import type { HostServices, Runtime } from "../../src/services.js"
+import { notBuilt } from "../support/not-built.js"
 import { fakeImportBoxd, removeRoot, tempRoot, v0Root, type FakeImportBoxd } from "../support/ledger-fakes.js"
 
 const roots: string[] = []

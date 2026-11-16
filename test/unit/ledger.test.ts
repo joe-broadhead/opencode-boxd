@@ -8,7 +8,7 @@ import { join } from "node:path"
 import { BoxdError } from "../../src/errors.js"
 import { runImport } from "../../src/import-v0.js"
 import { acquireLock, readOwner } from "../../src/ledger/lock.js"
-import { Ledger, openLedger, savedState, withoutUserinfo } from "../../src/ledger/store.js"
+import { Ledger, savedState, withoutUserinfo } from "../../src/ledger/store.js"
 import type { WorkRecord } from "../../src/ledger/types.js"
 import type { MachineId } from "../../src/ports.js"
 import { fakeImportBoxd, removeRoot, tempRoot } from "../support/ledger-fakes.js"
@@ -72,14 +72,12 @@ describe("saved is computed", () => {
 })
 
 describe("records", () => {
-  test("a ledger without its complete marker is never opened", async () => {
+  test("the import publishes v1 whole, with its complete marker", async () => {
     const root = tempRoot("boxd-ledger-")
     roots.push(root)
-    mkdirSync(join(root, "v1"))
-    await expect(openLedger(root)).rejects.toThrow(/LEDGER_FAILED/)
-    removeRoot(join(root, "v1"))
     await runImport({ root, boxd: fakeImportBoxd() })
-    expect((await openLedger(root)).dir).toBe(join(root, "v1"))
+    expect(existsSync(join(root, "v1", "complete"))).toBe(true)
+    expect(new Ledger(root).dir).toBe(join(root, "v1"))
   })
 
   test("mutate writes a new file each time, 0600 in 0700 folders, and leaves no temp file", async () => {
