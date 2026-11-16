@@ -7,7 +7,7 @@
 // snapshot and C2's actions), behind the host's real session, permission, command and event domains.
 import { HOST_SDK_DIR, ROOT as root } from "./isolate.js"
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test"
-import { mkdirSync, readFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { Model, Plugin, Provider } from "@opencode/plugin"
@@ -17,12 +17,22 @@ import { IDLE_TAG, registerCostHooks } from "../../src/hooks.js"
 import { defaultRules, registerDefaultRules } from "../../src/permissions.js"
 import type { Dispose } from "../../src/services.js"
 import { fakes, work, type Fakes } from "../support/cost-fakes.js"
-import { until } from "./harness.js"
+import { cleanup, until } from "./harness.js"
 
 setDefaultTimeout(120_000)
-afterAll(() => {
-  // The isolate module's temp root is removed by the other host files' cleanup; nothing of ours is left outside it.
-})
+afterAll(cleanup)
+
+/**
+ * The isolated root, as isolate.js made it: another host file's cleanup may have removed it before this file runs in
+ * the same process, so it is made again, a git repository with its home and temp folders.
+ */
+function ensureRoot() {
+  if (!existsSync(join(root, ".git"))) {
+    mkdirSync(root, { recursive: true })
+    Bun.spawnSync(["git", "init", "--quiet", root])
+  }
+  for (const dir of [process.env.HOME, process.env.TMPDIR]) if (dir) mkdirSync(dir, { recursive: true })
+}
 
 const OPENAI_COMPATIBLE = ["@opencode", "ai", "providers", "openai-compatible"].join("/")
 const SDK = HOST_SDK_DIR ? join(HOST_SDK_DIR, "node_modules", "@opencode", "sdk") : fileURLToPath(new URL("../../node_modules/@opencode/sdk", import.meta.url))
@@ -69,6 +79,7 @@ let hosts = 0
 
 /** A host with E's hooks, command and default rules, over the fakes; the probe context is the plugin's own. */
 async function startCostHost(options: Record<string, unknown>) {
+  ensureRoot()
   const base = join(root, `cost-host-${++hosts}`)
   const work = join(base, "work")
   mkdirSync(work, { recursive: true })
