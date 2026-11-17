@@ -5,7 +5,7 @@
 import { MEASURE_DEBUG, MEASURE_MINUTES as MEASURE } from "./measure-env.js"
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { join } from "node:path"
-import { TOOLS_RPC_ID } from "../../src/host/tools-rpc.js"
+import { TOOLS_RPC_ID } from "../../src/tools-rpc.js"
 import { attempt, cleanup, HOST_VERSION, session, startHost, until, type Host } from "./harness.js"
 
 setDefaultTimeout(120_000)

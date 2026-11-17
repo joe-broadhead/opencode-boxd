@@ -1725,8 +1725,8 @@ events and C2's runs, through their Day-0 interfaces), each filling its own
 stubs in the registry → integration on one branch → the live check (L1–L11 here if the owner provides a key, then
 L12–L13 by the owner) → the release-prep PR → `gh workflow run release.yml` → the owner approves.
 
-Kit r4.1 files stay untouched (`scripts/check-copies.mjs`; `src/host/tools-rpc.ts` changes only between its
-`PLUGIN-SPECIFIC` markers). The host range stays `>=2.2.3 <2.4.0`, tested on 2.2.3–2.2.7 and 2.3.0. No runtime
+Kit r4.1 files stay untouched (`scripts/check-copies.mjs` pins them). The tools RPC is the source contract package's
+module, bundled into `dist/index.js`, with boxd's plugin value in `src/tools-rpc.ts`. The host range stays `>=2.2.3 <2.4.0`, tested on 2.2.3–2.2.7 and 2.3.0. No runtime
 dependencies.
 
 ### 9.2 Options in v0.1.0

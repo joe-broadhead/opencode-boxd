@@ -15,7 +15,7 @@
 import type { Plugin } from "@opencode/plugin"
 import { BoxdError, boxdError, errorState } from "./errors.js"
 import { NAMESPACE } from "./constants.js"
-import type { JsonSchema, MethodClass, PluginMethod, ToolCall } from "./host/tools-rpc.js"
+import type { JsonSchema, MethodClass, PluginMethod, ToolCall } from "@we-the-rebel-alliance/source-contract/tools-rpc"
 import { LIST_MAX_ITEMS, REGIONS, SIZES } from "./ports.js"
 import type { Refusal } from "./results.js"
 import type { Selector, SelectorValues, Selectors, ToolRuns } from "./services.js"

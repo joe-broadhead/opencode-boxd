@@ -1,6 +1,6 @@
 {
   "name": "@joe-broadhead/opencode-boxd",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Unofficial OpenCode plugin for boxd: run a session on a private boxd machine and keep the transcript on your laptop",
   "keywords": [
@@ -185,6 +185,41 @@
       ]
     }
   },
+  "sources": {
+    "contractVersion": 1,
+    "rpc": "boxd.machines.tools",
+    "probe": {
+      "action": "boxd_probe"
+    },
+    "items": [
+      {
+        "id": "boxd.works",
+        "kind": "events",
+        "reads": "x-boxd/work",
+        "tool": "events_list",
+        "input": {
+          "source": "works"
+        },
+        "accounts": {
+          "named": false
+        },
+        "permission": {
+          "events": "boxd_events_list",
+          "rules": [
+            {
+              "action": "boxd_events_list",
+              "resource": "*"
+            }
+          ]
+        },
+        "private": true,
+        "cost": {
+          "class": "free"
+        },
+        "maxBytes": 65536
+      }
+    ]
+  },
   "scripts": {
     "check": "node scripts/check.mjs",
     "typecheck": "node scripts/check.mjs typecheck",
@@ -193,7 +228,8 @@
     "test:host": "node scripts/check.mjs host",
     "test:pack": "node scripts/check.mjs pack",
     "lint": "node scripts/check.mjs forbidden",
-    "capture": "node scripts/capture-tools.mjs"
+    "capture": "node scripts/capture-tools.mjs",
+    "conformance": "bun scripts/conformance.ts"
   },
   "devDependencies": {
     "@opencode/client": "2.2.3",
@@ -203,6 +239,7 @@
     "@opentui/solid": "0.8.0",
     "@types/bun": "1.4.4",
     "@types/node": "24.19.2",
+    "@we-the-rebel-alliance/source-contract": "github:we-the-rebel-alliance/source-contract#v0.2.0",
     "esbuild": "0.28.2",
     "solid-js": "1.9.17",
     "typescript": "5.9.3"

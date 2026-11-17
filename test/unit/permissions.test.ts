@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { ACCESS_VALUES, defaultRules, evaluate, hasDefaultRules, insertRules, unguardedAgents, type Access, type Rule } from "../../src/permissions.js"
+import { ACCESS_VALUES, SOURCE_ACTIONS, defaultRules, evaluate, hasDefaultRules, insertRules, unguardedAgents, type Access, type Rule } from "../../src/permissions.js"
 import { TOOLS } from "../../src/tools.js"
 
 const BASE: Rule = { action: "*", resource: "*", effect: "allow" }
@@ -10,7 +10,7 @@ describe("the generated default rules", () => {
     expect(all[0]).toEqual({ action: "boxd_*", resource: "*", effect: "allow" })
     for (const tool of TOOLS) expect(all).toContainEqual({ action: tool.id, resource: "*", effect: "allow" })
     // The pattern is what a tool a later release adds inherits.
-    expect(all).toHaveLength(2 + TOOLS.length)
+    expect(all).toHaveLength(2 + TOOLS.length + SOURCE_ACTIONS.length)
     expect(all[1]).toEqual({ action: "boxd_cleanup", resource: "*", effect: "ask" })
   })
 
@@ -31,9 +31,12 @@ describe("the generated default rules", () => {
   test("every access value generates a block", () => {
     expect(ACCESS_VALUES).toEqual(["all", "ask-changes", "read-only"])
     for (const access of ACCESS_VALUES) {
-      expect(defaultRules(access).length).toBe(2 + TOOLS.length)
+      expect(defaultRules(access).length).toBe(2 + TOOLS.length + SOURCE_ACTIONS.length)
       // /boxd-cleanup confirms each action with a prompt at every access level (design §C.5).
       expect(evaluate([BASE, ...defaultRules(access)], "boxd_cleanup")).toBe("ask")
+      // The boxd.works source's events_list and probe only read the local ledger: a collector runs them at every level.
+      expect(SOURCE_ACTIONS).toEqual(["boxd_events_list", "boxd_probe"])
+      for (const action of SOURCE_ACTIONS) expect(evaluate([BASE, ...defaultRules(access)], action)).toBe("allow")
     }
   })
 })

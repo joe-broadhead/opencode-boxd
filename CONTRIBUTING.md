@@ -32,7 +32,7 @@ Only for development. Install the package into an OpenCode project from the fold
 { "plugins": ["./opencode-boxd"] }
 ```
 
-A published install is `opencode plugin add github:joe-broadhead/opencode-boxd#v0.1.0`.
+A published install is `opencode plugin add github:joe-broadhead/opencode-boxd#v0.1.1`.
 
 ## Rules
 
@@ -55,7 +55,8 @@ a `## [x.y.z] - YYYY-MM-DD` heading below it, newest first, and the npm history 
    `node scripts/changelog.mjs release`: it turns `## [Unreleased]` into `## [<version>] - <today>`, above the earlier
    releases, and refuses a CHANGELOG it cannot shape. Run `npm run check`.
 2. Push that commit to `master`, and wait for CI to pass on it. A pull request's CI runs the Linux runners only; the
-   push to `master` runs every runner, macOS too, and the release stands on that run.
+   push to `master` runs every runner, Apple-silicon macOS (`macos-26`) too, and the release stands on that run. An
+   Intel Mac (`macos-26-intel`) is not required.
 3. Start the release with that commit's full sha:
    `gh workflow run release.yml --ref master -f sha=<full sha>`, or from Actions → release →
    Run workflow, on `master`.
@@ -168,5 +169,5 @@ Each release has its own tag, and a Git install does not update by itself. To mo
 Or add the plugin to `opencode.json` instead, with the same spec:
 
 ```json
-{ "plugins": [{ "package": "github:joe-broadhead/opencode-boxd#v0.1.0" }] }
+{ "plugins": [{ "package": "github:joe-broadhead/opencode-boxd#v0.1.1" }] }
 ```

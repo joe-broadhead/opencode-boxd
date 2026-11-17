@@ -91,14 +91,62 @@ export class EventLog {
    * newer. When `since` is older than the oldest kept event, `cursorExpired` is true and the events start at the oldest
    * kept one. A cursor newer than the log (another ledger's) is expired too: sequence numbers are never reused, so it can
    * only come from somewhere else.
+   *
+   * The two files are read as one consistent pair, with no lock: a rotation that lands between the two reads (a rename,
+   * then a fresh `events.jsonl`) would otherwise leave the moved events in neither, and a cursor inside them would jump
+   * past them unseen. Sequence numbers are contiguous across the two files (a line cut off by a crash gives its number
+   * to the next writer), so the pair is read again when the rotated file's last number is not one before the current
+   * file's first, when the rotated file changed while either file was read, or when `events.jsonl` is missing beside a
+   * rotated file (the moment between the rename and the next append). After `SINCE_TRIES` reads that are not a consistent pair it
+   * throws `LEDGER_LOCKED`: the caller tries again, and its cursor has not moved.
    */
   async since(since: number): Promise<EventsSince> {
-    const kept = [...(await readLines(this.rotated)), ...(await readLines(this.file))]
-    const newest = kept.length ? kept[kept.length - 1]!.seq : 0
-    const oldest = kept.length ? kept[0]!.seq : newest + 1
-    const expired = since > newest || since < oldest - 1
-    const events = expired ? kept : kept.filter((line) => line.seq > since)
-    return { cursor: events.length ? events[events.length - 1]!.seq : expired ? newest : since, events, cursorExpired: expired }
+    for (let attempt = 0; attempt < SINCE_TRIES; attempt++) {
+      if (attempt > 0) await sleep(SINCE_PAUSE_MS * attempt)
+      const kept = await this.consistentPair()
+      if (kept === undefined) continue
+      const newest = kept.length ? kept[kept.length - 1]!.seq : 0
+      const oldest = kept.length ? kept[0]!.seq : newest + 1
+      const expired = since > newest || since < oldest - 1
+      const events = expired ? kept : kept.filter((line) => line.seq > since)
+      return { cursor: events.length ? events[events.length - 1]!.seq : expired ? newest : since, events, cursorExpired: expired }
+    }
+    throw boxdError("LEDGER_LOCKED", "The event log was rotating each time it was read, so no consistent page could be read; nothing was skipped.")
+  }
+
+  /** Both files' lines as one consistent run of sequence numbers, or undefined when a rotation raced the read. */
+  private async consistentPair(): Promise<EventLine[] | undefined> {
+    const before = await identity(this.rotated)
+    const rotated = (await readLines(this.rotated)) ?? []
+    const after = await identity(this.rotated)
+    if (before?.ino !== after?.ino || before?.size !== after?.size) return undefined
+    const current = await readLines(this.file)
+    // A rename after the rotated file was read (the first rotation, when there was none) leaves `events.jsonl` missing
+    // or new: the rotated file is checked once more.
+    const final = await identity(this.rotated)
+    if (after?.ino !== final?.ino || after?.size !== final?.size) return undefined
+    if (current === undefined) return after === undefined ? rotated : undefined
+    const last = rotated[rotated.length - 1]
+    const first = current[0]
+    if (last !== undefined && first !== undefined && last.seq + 1 !== first.seq) return undefined
+    return [...rotated, ...current]
+  }
+}
+
+/** How often `since` reads the two files before it gives up on a consistent pair, and the pause that grows between. */
+const SINCE_TRIES = 5
+const SINCE_PAUSE_MS = 20
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+/** A file's inode and size, or undefined when it does not exist. */
+async function identity(path: string): Promise<{ ino: number; size: number } | undefined> {
+  try {
+    const { ino, size } = await stat(path)
+    return { ino, size }
+  } catch (error) {
+    if (errnoOf(error) === "ENOENT") return undefined
+    throw error
   }
 }
 
@@ -149,28 +197,30 @@ const parseSeq = (text: string): number | undefined => {
   }
 }
 
-/** Every complete, parseable line of one file; a line cut off by a crash is skipped. Streamed, never read whole. */
-async function readLines(path: string): Promise<EventLine[]> {
-  try {
-    await stat(path)
-  } catch (error) {
-    if (errnoOf(error) === "ENOENT") return []
-    throw error
-  }
+/**
+ * Every complete, parseable line of one file, or undefined when it does not exist (also when it is renamed away before
+ * the read opens it); a line cut off by a crash is skipped. Streamed, never read whole.
+ */
+async function readLines(path: string): Promise<EventLine[] | undefined> {
   const lines: EventLine[] = []
   let rest = ""
-  for await (const chunk of createReadStream(path, { encoding: "utf8", highWaterMark: 256 * 1024 })) {
-    const parts = (rest + (chunk as string)).split("\n")
-    rest = parts.pop() ?? ""
-    for (const part of parts) {
-      if (!part) continue
-      try {
-        const parsed = JSON.parse(part) as EventLine
-        if (typeof parsed.seq === "number" && typeof parsed.workId === "string" && typeof parsed.to === "string") lines.push(parsed)
-      } catch {
-        // a line cut off by a crash, fenced by the next writer's newline
+  try {
+    for await (const chunk of createReadStream(path, { encoding: "utf8", highWaterMark: 256 * 1024 })) {
+      const parts = (rest + (chunk as string)).split("\n")
+      rest = parts.pop() ?? ""
+      for (const part of parts) {
+        if (!part) continue
+        try {
+          const parsed = JSON.parse(part) as EventLine
+          if (typeof parsed.seq === "number" && typeof parsed.workId === "string" && typeof parsed.to === "string") lines.push(parsed)
+        } catch {
+          // a line cut off by a crash, fenced by the next writer's newline
+        }
       }
     }
+  } catch (error) {
+    if (errnoOf(error) === "ENOENT") return undefined
+    throw error
   }
   return lines
 }

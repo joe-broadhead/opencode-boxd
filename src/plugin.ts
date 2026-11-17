@@ -26,7 +26,9 @@ import { loadSkills, registerSkills } from "./skills.js"
 import { registerStatusCommand, registerStatusRpc, statusReader } from "./status.js"
 import { ownedMethods, toolTransform, type RegistryDeps } from "./tools.js"
 import { createWatch } from "./watch.js"
-import { registerToolsRpc } from "./host/tools-rpc.js"
+import { registerToolsRpc } from "@we-the-rebel-alliance/source-contract/tools-rpc"
+import { localIdentity, sourceMethods } from "./sources.js"
+import { PLUGIN } from "./tools-rpc.js"
 
 /** Internal seam: the host tests point the plugin at a fake boxd CLI, their own ledger root and their own skills. */
 interface BoxdSeam {
@@ -99,8 +101,15 @@ export function createBoxdPlugin(seam: BoxdSeam = {}) {
         await registerSkills(ctx.skill, skills).then((registration) => registration.dispose),
         await registerStatusCommand(ctx, read).then((registration) => registration.dispose),
         await registerStatusRpc(ctx.rpc, read).then((registration) => registration.dispose),
-        // Every tool as a method with its class: a script calls them with no model, and the rules decide what runs.
-        await registerToolsRpc(ctx, { methods: ownedMethods(registry, ctx.permission.assert) }),
+        // Every tool as a method with its class: a script calls them with no model, and the rules decide what runs. The
+        // boxd.works source's events_list and probe are methods only: they read the local ledger, never a machine.
+        await registerToolsRpc(ctx as never, {
+          plugin: PLUGIN,
+          methods: [
+            ...ownedMethods(registry, ctx.permission.assert),
+            ...sourceMethods({ ledger: core.ledger, importV0, identity: localIdentity, now: () => hostServices.clock.now() }, ctx.permission.assert),
+          ],
+        }),
         await ctx.tool.transform(toolTransform(registry, ctx.permission.assert)).then((registration) => registration.dispose),
         watcher.dispose,
         // Cost and cleanup (design §C): the session hooks and events, the person's /boxd-cleanup, and automation.

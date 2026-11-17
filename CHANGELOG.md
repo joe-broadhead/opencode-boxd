@@ -3,6 +3,35 @@
 All notable changes to this project are documented here. The format is [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-11-17
+
+### Added
+
+- **The `boxd.works` source** under the source contract (`package.json`'s `sources`, contract version 1), for Memory's
+  collector and other scripts. `events_list` lists each phase change of this laptop's works as one event, oldest first,
+  read from the ledger's `events.jsonl` only: no boxd call, no machine woken, no lock taken. An event's title and labels
+  are the plugin's own words (the work id, the phase, how a run ended, its code, who put a machine to sleep), never a
+  prompt, a transcript or guest text, and a title that holds a secret is refused. The cursor is the log's sequence
+  number; one the log no longer keeps answers `gap: { reason: "expired" }`. `probe` names the account (this computer)
+  and its owner (`os-user:<user>@<computer>`). Both are tools RPC methods, `boxd_events_list` and `boxd_probe`, which
+  every `access` value allows. While the v0 import runs, `events_list` answers `UNAVAILABLE`.
+- **`npm run conformance`** runs the source contract's conformance kit over the source and writes
+  `reports/conformance-report.json`, which the release attaches.
+
+### Changed
+
+- The host range is unchanged: `>=2.2.3 <2.4.0`, tested on 2.2.3, 2.2.4, 2.2.5, 2.2.6, 2.2.7 and 2.3.0.
+- The tools RPC is the source contract package's `tools-rpc` module (v0.2.0), bundled into `dist/index.js`, in place of
+  the copied module; boxd's methods, codes and next steps are unchanged.
+- The server bundle, `dist/index.js`, is minified (whitespace and syntax, not names), so the package stays within its
+  size budget with the contract's modules inside. The TUI bundle is not, so OpenCode can resolve its host imports.
+
+### Fixed
+
+- A read of the ledger's event log that raced the log's rotation could skip the events the rotation moved, with no
+  `gap`, or read as an expired cursor. The two files are now read as one consistent pair, read again while a rotation
+  is under way; `boxd_status`'s cursor reads the same way.
+
 ## [0.1.0] - 2026-11-16
 
 ### Breaking

@@ -9,7 +9,7 @@ import { join } from "node:path"
 import { SUPPORTED_HOST } from "../../src/constants.js"
 import { defaultRules, type Rule } from "../../src/permissions.js"
 import { TOOLS, CHANGING_TOOLS, READ_TOOLS } from "../../src/tools.js"
-import { TOOLS_RPC_ID } from "../../src/host/tools-rpc.js"
+import { TOOLS_RPC_ID } from "../../src/tools-rpc.js"
 import { agentRules, attempt, cleanup, effect, HOST_VERSION, session, startHost, statusThroughRpc, until } from "./harness.js"
 
 /** The released version, from package.json: status reports it. */
@@ -129,11 +129,13 @@ describe("the plugin on a stock host", () => {
     try {
       const build = await session(host)
       const listing = (await rpcCall(host, "describe", { sessionID: build })).output as { methods: Array<Record<string, any>>; unclassified: string[] }
-      expect(listing.methods.map((method) => method.name)).toEqual(TOOLS.map((tool) => tool.id))
+      // The twelve tools, then the boxd.works source's two reads.
+      expect(listing.methods.map((method) => method.name)).toEqual([...TOOLS.map((tool) => tool.id), "events_list", "probe"])
       expect(listing.unclassified ?? []).toEqual([])
       for (const method of listing.methods) {
-        const spec = TOOLS.find((tool) => tool.id === method.name)!
-        expect({ name: method.name, kind: method.kind, class: method.class, action: method.action }).toEqual({ name: method.name, kind: "plugin", class: spec.class, action: spec.id })
+        const spec = TOOLS.find((tool) => tool.id === method.name)
+        const want = spec ? { class: spec.class, action: spec.id } : { class: "read", action: `boxd_${method.name}` }
+        expect({ name: method.name, kind: method.kind, class: method.class, action: method.action }).toEqual({ name: method.name, kind: "plugin", ...want })
       }
 
       expect((await rpcCall(host, "boxd_submit", { sessionID: build, input: { workId: "review-api", text: "Add a health check." } })).output).toMatchObject(NOT_OURS)
@@ -149,6 +151,39 @@ describe("the plugin on a stock host", () => {
       expect(host.boxd.calls()).toEqual([])
     } finally {
       await host.close()
+    }
+  })
+})
+
+describe("the boxd.works source on a stock host", () => {
+  test("probe and events_list answer over the tools RPC from the local ledger, with no boxd call, at every access value", async () => {
+    for (const access of ["all", "ask-changes", "read-only"] as const) {
+      const host = await startHost({ options: { access } })
+      try {
+        const build = await session(host)
+        const probed = (await rpcCall(host, "probe", { sessionID: build, input: { source: "works" } })).output as Record<string, any>
+        expect(probed).toMatchObject({ source: "works", trust: "untrusted" })
+        expect(probed.owner.id).toStartWith("os-user:")
+        // The ledger is readable once the start's import check is done; until then the source answers UNAVAILABLE.
+        const page = await until("events_list answers a page", async () => {
+          const answer = await rpcCall(host, "events_list", { sessionID: build, input: { source: "works", since: "2026-01-01T00:00:00Z" } }).then(
+            (result) => result.output as Record<string, any>,
+            (error: { data?: { code?: string } }) => (error?.data?.code === "UNAVAILABLE" ? undefined : Promise.reject(error)),
+          )
+          return answer
+        })
+        expect(page).toMatchObject({ source: "works", account: probed.account, owner: probed.owner, events: [], more: false, trust: "untrusted", plugin: "@joe-broadhead/opencode-boxd" })
+        expect(typeof page.cursor).toBe("string")
+        // Once the ledger is published, the source's reads make no boxd call at all.
+        const before = host.boxd.calls().length
+        const again = (await rpcCall(host, "events_list", { sessionID: build, input: { cursor: page.cursor } })).output as Record<string, any>
+        expect(again).toMatchObject({ events: [], cursor: page.cursor, more: false })
+        await rpcCall(host, "probe", { sessionID: build, input: {} })
+        expect(await refusedCode(rpcCall(host, "events_list", { sessionID: build, input: { account: "another-computer" } }))).toBe("ACCOUNT_MISMATCH")
+        expect(host.boxd.calls().slice(before)).toEqual([])
+      } finally {
+        await host.close()
+      }
     }
   })
 })

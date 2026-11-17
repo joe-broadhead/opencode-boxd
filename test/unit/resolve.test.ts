@@ -7,7 +7,8 @@
 import { describe, expect, test } from "bun:test"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { NEXT_STEPS, registerToolsRpc, type MethodSpec, type ToolCall, type ToolsRpcOptions } from "../../src/host/tools-rpc.js"
+import { registerToolsRpc, type MethodSpec, type ToolCall, type ToolsRpcOptions } from "@we-the-rebel-alliance/source-contract/tools-rpc"
+import { NEXT_STEPS, PLUGIN } from "../../src/tools-rpc.js"
 
 type Effect = "allow" | "deny" | "ask"
 type Rule = { action: string; resource: string; effect: Effect }
@@ -127,7 +128,7 @@ async function setup(input: { agent: readonly Rule[]; session: readonly Rule[]; 
     mcp: { list: async () => ({ data: [{ name: SERVER, status: { status: "connected" } }] }) },
   }
   const serverOptions: ToolsRpcOptions["mcp"] = { server: SERVER, managed: () => true }
-  await registerToolsRpc(ctx as never, { methods, mcp: serverOptions })
+  await registerToolsRpc(ctx as never, { plugin: PLUGIN, methods, mcp: serverOptions })
   return { handlers, executions }
 }
 

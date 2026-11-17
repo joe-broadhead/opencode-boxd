@@ -9,6 +9,7 @@ import { COMMAND_STEM, TESTED_HOSTS } from "../../src/constants.js"
 import { CHANGING_TOOLS, TOOLS } from "../../src/tools.js"
 import { defaultRules } from "../../src/permissions.js"
 import { DEFAULT_OPTIONS, parseOptions } from "../../src/options.js"
+import { sourceMethods } from "../../src/sources.js"
 
 const root = new URL("../../", import.meta.url)
 const read = (path: string) => readFileSync(new URL(path, root), "utf8")
@@ -17,6 +18,8 @@ const CONFIG = read("docs/configuration.md")
 const SCRIPTING = read("docs/scripting.md")
 
 const codes = Object.keys(CODES)
+/** The source's methods, for their names and input schemas only: nothing here calls them. */
+const SOURCE_METHODS = sourceMethods({ ledger: { eventsSince: async () => ({ events: [], cursor: 0, cursorExpired: false }) }, importV0: { state: () => ({ state: "complete", works: 0, blocked: [] }) }, identity: () => ({ account: "local", owner: { id: "os-user:user@local", label: "user on local" } }), now: () => new Date() }, async () => {})
 
 
 /** Every file under a folder, relative to the repository. */
@@ -81,7 +84,7 @@ describe("the README", () => {
   })
 
   test("installs from the GitHub release tag, not from a checkout or the registry", () => {
-    expect(README).toContain("opencode plugin add github:joe-broadhead/opencode-boxd#v0.1.0")
+    expect(README).toContain("opencode plugin add github:joe-broadhead/opencode-boxd#v0.1.1")
     expect(README).not.toMatch(/plugins.*\.\/opencode-boxd/)
     expect(README).not.toMatch(/npm run build/)
   })
@@ -198,7 +201,8 @@ describe("the docs set", () => {
       expect({ method, keys: Object.keys(envelope) }).toEqual({ method, keys: ["input"] })
       expect(typeof envelope.input?.sessionID).toBe("string")
       if (method === "describe") continue
-      const spec = TOOLS.find((tool) => tool.id === method)
+      // A tool, or one of the boxd.works source's two methods.
+      const spec = [...TOOLS.map((tool) => ({ id: tool.id, input: tool.input })), ...SOURCE_METHODS.map((entry) => ({ id: entry.name, input: entry.input }))].find((tool) => tool.id === method)
       expect({ method, known: spec !== undefined }).toEqual({ method, known: true })
       expect({ method, problem: conforms(envelope.input?.input ?? {}, spec!.input as Record<string, unknown>) }).toEqual({ method, problem: undefined })
     }

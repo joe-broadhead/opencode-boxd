@@ -29,7 +29,9 @@ and keeps the transcript on the laptop. It has no MCP server: its twelve tools a
   a temp folder.
 - **Ship prebuilt, one file per entry.** `scripts/build.mjs` bundles `src/index.ts` and `src/tui.ts` into the
   self-contained `dist/index.js` and `dist/tui.js`: no chunks, no relative imports, and only host-provided modules
-  external. `tsc` only typechecks.
+  external. The server bundle's whitespace and syntax are minified, never its names; the TUI bundle is not minified,
+  because OpenCode rewrites its host imports only in the unminified form, and the build fails if it is. `tsc` only
+  typechecks.
 - **Two folders per work.** The laptop folder is the project or an allowed root; the guest folder is always
   `/home/boxd/work/<work id>`. A laptop path is never sent to the guest.
 - **Files carry three facts.** A moved file is recorded by name, size and sha256, never content. A laptop path must be
@@ -62,12 +64,18 @@ and keeps the transcript on the laptop. It has no MCP server: its twelve tools a
   family's shared fields `version`, `host`, `state`, `unguardedAgents` and `nextStep`. Status makes no boxd call beyond a
   machine read, cuts a failure's reason to one line of 160 characters with `src/redact.ts`, and names at most 20 unknown
   tools, plain names only.
-- **The tools RPC (v2).** `src/host/tools-rpc.ts` is a copy of the v2 module shared by several plugins (shared-part
-  hash `57377eb3…`). Change only its block between the `PLUGIN-SPECIFIC` markers; change the rest in the shared copy
-  first, and `npm run check` fails on drift (`check-copies.mjs`). Its methods are every tool in `src/tools.ts`, by exact
-  name and with its class, and the rule is resolved before dispatch: only an `allow` runs.
-- **Stages.** `npm run check` runs `typecheck`, `unit`, `build`, `icons`, `copies`, `host` (every SDK in
-  `TESTED_HOSTS`), `pack` (every `OPENCODE_BIN_*`), `forbidden`, `whitelist` and `actionlint`.
+- **The tools RPC.** The transport is `@we-the-rebel-alliance/source-contract/tools-rpc`, pinned to a tag and bundled
+  into `dist/index.js`; boxd's plugin value is `src/tools-rpc.ts`. Its methods are every tool in `src/tools.ts`, by
+  exact name and with its class, then the `boxd.works` source's `events_list` and `probe`, and the rule is resolved
+  before dispatch: only an `allow` runs.
+- **The source (`boxd.works`).** `src/sources.ts` implements the source contract's `events_list` and `probe` with the
+  package's `events` and `cursor` modules, never copies of them. It reads only the published ledger's `events.jsonl`
+  through `LedgerPort.eventsSince`: no boxd call, no machine woken, no lock, and no start or retry of the v0 import. An
+  event's words are the plugin's own (work id, phase, outcome, code), never a prompt, a transcript or guest text.
+  `npm run conformance` runs the package's conformance kit over it and writes `reports/conformance-report.json`, which a
+  release attaches; it must be `ok`. The descriptor declares no key that a consumer on an older contract refuses.
+- **Stages.** `npm run check` runs `typecheck`, `unit`, `conformance`, `build`, `icons`, `copies`, `host` (every SDK
+  in `TESTED_HOSTS`), `pack` (every `OPENCODE_BIN_*`), `forbidden`, `whitelist` and `actionlint`.
 - **The `jelly` section** declares every tool, the skill, a one-line `summary` and the icon, with only the keys Jelly
   reads. `test/unit/jelly.test.ts` keeps it in step with the tool table and the default rules.
 - **The icon** is boxd's own mark, https://boxd.sh/favicon.svg with only `width` and `height` dropped, centred on a
@@ -98,7 +106,7 @@ and keeps the transcript on the laptop. It has no MCP server: its twelve tools a
 `scripts/check-forbidden.mjs` enforces this list in `src/`, `test/`, `scripts/` and `dist/`: fork-only markers, tool
 `options.mcp` delegation, `Plugin.image`, imported OAuth grants, the V1 plugin API (`@opencode-ai/*` and hooks such as
 `tool.execute.before`), `ctx.generate.text`, `experimental.policies`, an import of `@opencode/ai`, a permission hook
-except the one `permission.hook("evaluate")` the tools RPC module needs, private host source, machine-local home and temp
+except the one `permission.hook("evaluate")` the bundled tools RPC module needs, private host source, machine-local home and temp
 paths, and `.tsx` or `.jsx` in `dist/`. The pack test also rejects anything in `dist/` other than the two bundles, and
 any relative import in them.
 
