@@ -2,7 +2,9 @@
 // src/tui.ts to dist/tui.js (the terminal UI part). Shared code, such as the status model and the RPC contract, is
 // inlined into both. No chunks and no relative imports, because OpenCode reloads a plugin in place and reuses the
 // module records it already holds for unchanged paths: a new entry must never import an older sibling module.
-// Only the modules the host provides stay external. The build fails if an output imports anything else.
+// Only the modules the host provides stay external. The build fails if an output imports anything else. Whitespace and
+// syntax are minified, names are not: the source contract's modules bundled into dist/index.js keep the package within
+// its size budget, and a stack trace still names each function.
 import { build } from "esbuild"
 import { readdirSync, readFileSync, rmSync } from "node:fs"
 import { join } from "node:path"
@@ -35,6 +37,8 @@ const result = await build({
   target: "es2023",
   external: HOST,
   legalComments: "none",
+  minifyWhitespace: true,
+  minifySyntax: true,
   metafile: true,
   logLevel: "warning",
   plugins: [version],

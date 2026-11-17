@@ -77,8 +77,39 @@ opencode api post /api/rpc/boxd.machines.tools/boxd_sleep -H "x-opencode-directo
 | `boxd_golden` | write | the agent or session allows `boxd_golden` |
 | `boxd_exec` | write | the agent or session allows `boxd_exec` |
 | `boxd_drop` | destructive | the agent or session allows `boxd_drop` |
+| `events_list` | read | allowed (its action is `boxd_events_list`) |
+| `probe` | read | allowed (its action is `boxd_probe`) |
 
 A class is the worst thing the method does; it never decides whether a call runs. The rules do.
+
+## The boxd.works source
+
+`events_list` and `probe` are the `boxd.works` source's methods (source contract, `package.json`'s `sources`), for a
+collector such as Memory's. They read this laptop's ledger only: no boxd call, no machine woken, no lock taken.
+
+```sh
+opencode api post /api/rpc/boxd.machines.tools/probe -H "x-opencode-directory:$PWD" -d '{"input":{"sessionID":"<id>","input":{}}}'
+opencode api post /api/rpc/boxd.machines.tools/events_list -H "x-opencode-directory:$PWD" \
+  -d '{"input":{"sessionID":"<id>","input":{"since":"2026-11-01T00:00:00Z","limit":100}}}'
+```
+
+- **The account and owner.** The account is this computer's host name, as a slug, and the owner its OS user,
+  `{ "id": "os-user:<user>@<computer>", "label": "<user> on <computer>" }`. A read that names another account is
+  `ACCOUNT_MISMATCH`.
+- **An event** is one line of the ledger's `events.jsonl`: `external_id` `<work id>:<seq>`, `kind` `x-boxd/work`,
+  `occurred_at` the change's time, `thread` `boxd-work:<work id>`, a `title` in the plugin's own words, such as
+  `Work fix-auth: its run failed (RUN_FAILED)`, and `labels` `phase:<phase>`, `outcome:<outcome>`, `code:<code>`,
+  `asleep-by:<who>` and `needs:<form or permission>` where they apply. It has no `text`, `actors` or `url`. An event
+  whose title holds a secret (a work id shaped like a key) is listed in `refused[]` with reason `secret`, never sent.
+- **The cursor** is the log's sequence number, bound to the plugin, the source and the account. The ledger keeps at
+  least the last 5 MiB of events: a cursor older than the oldest kept event, or one from another ledger, answers the
+  oldest kept events with `gap: { "reason": "expired", "since": <the time the cursor covered> }`, once, and a first
+  read whose `since` is older than the oldest kept event answers the same. Without a cursor or `since`, a read starts
+  24 hours ago.
+- **While the v0 import runs**, or after it failed, there is no ledger to read: `events_list` answers `UNAVAILABLE` with
+  the import's progress, and never starts the import itself. A ledger that cannot be read is `UNAVAILABLE` too.
+- **Refusals** carry the source contract's codes: `INPUT_INVALID`, `SOURCE_UNKNOWN` (any source but `works`),
+  `ACCOUNT_MISMATCH`, `CURSOR_INVALID` and `UNAVAILABLE`, each as `CODE: what happened. Next step: …`.
 
 ## Files in and out
 

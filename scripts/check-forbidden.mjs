@@ -10,8 +10,8 @@ const self = fileURLToPath(import.meta.url)
 const ROOTS = ["src", "test", "scripts", "dist"]
 const MEMBER = String.raw`\s*(?:\?\.|\.)\s*`
 const PERMISSION_HOOK = new RegExp(String.raw`\bpermission${MEMBER}hook\b`)
-/** The copy of the module shared by several plugins, and the bundle that inlines it. */
-const TOOLS_RPC = ["src/host/tools-rpc.ts", "dist/index.js"]
+/** The bundle that inlines the source contract's tools RPC module, the one place its evaluate hook may appear. */
+const TOOLS_RPC = ["dist/index.js"]
 /** The guest's own absolute paths, inside the machine: the only absolute paths this plugin may write down. */
 const GUEST_PATH = /\/(?:home\/boxd|tmp\/opencode-boxd)(?:\/|(?=["'`\s)\],]))/g
 
@@ -46,7 +46,8 @@ for (const top of ROOTS) {
     if (buffer.includes(0)) continue
     const lines = buffer.toString("utf8").split(/\r?\n/)
     if (TOOLS_RPC.includes(path)) {
-      const hooks = lines.filter((text) => PERMISSION_HOOK.test(text)).length
+      // Counted per match, not per line: the bundle is minified, so one line may hold more than one.
+      const hooks = lines.reduce((count, text) => count + (text.match(new RegExp(PERMISSION_HOOK.source, "g"))?.length ?? 0), 0)
       if (hooks !== 1) findings.push({ path, line: 0, id: "permission-hook", why: `the tools RPC must have exactly one permission hook, found ${hooks}` })
     }
     for (const rule of RULES) {

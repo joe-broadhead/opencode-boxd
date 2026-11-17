@@ -121,6 +121,14 @@ when the name now points at another machine.
 
 A work whose machine is gone in every region closes without destroying anything, and says what was not saved.
 
+The plugin also declares one source, `boxd.works`, under the source contract (`package.json`'s `sources`), for
+Memory's collector and other scripts, not for answering questions. `events_list` (`boxd_events_list`) lists each phase
+change of this laptop's works as one event, oldest first, from the ledger's event log only: no boxd call, no machine
+woken, no lock taken. Each event's title is the plugin's own sentence (the work id, its phase, how a run ended, its
+code), never a prompt, a transcript or anything a guest wrote. `probe` (`boxd_probe`) names whose ledger it is: this
+computer and its OS user. Both are tools RPC methods, not model tools, and every `access` value allows them.
+[docs/scripting.md](docs/scripting.md#the-boxdworks-source) describes the calls.
+
 ### What it costs
 
 boxd bills a running machine for its active CPU and its resident memory, a hibernated one for its disk only, and a
@@ -166,6 +174,8 @@ directly after it:
   { "action": "boxd_status", "resource": "*", "effect": "allow" },
   { "action": "boxd_job", "resource": "*", "effect": "allow" },
   { "action": "boxd_read", "resource": "*", "effect": "allow" },
+  { "action": "boxd_events_list", "resource": "*", "effect": "allow" },
+  { "action": "boxd_probe", "resource": "*", "effect": "allow" },
   { "action": "boxd_ensure", "resource": "*", "effect": "allow" },
   { "action": "boxd_submit", "resource": "*", "effect": "allow" },
   { "action": "boxd_harvest", "resource": "*", "effect": "allow" },
@@ -180,7 +190,8 @@ directly after it:
 
 That includes the changes: `boxd_ensure` creates a billing machine, `boxd_submit` starts a model run on it,
 `boxd_harvest` writes this laptop, `boxd_sleep`, `boxd_resume`, `boxd_reassign`, `boxd_golden` and `boxd_exec` change
-or run on machines, and `boxd_drop` destroys one. `boxd_status`, `boxd_job` and `boxd_read` are the reads.
+or run on machines, and `boxd_drop` destroys one. `boxd_status`, `boxd_job` and `boxd_read` are the reads, and so are
+`boxd_events_list` and `boxd_probe`, the `boxd.works` source's methods.
 `boxd_cleanup` is `/boxd-cleanup`'s own action, not a tool: it asks at every level, so each cleanup action is your
 answer to a prompt.
 

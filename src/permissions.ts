@@ -1,4 +1,5 @@
 import type { Plugin } from "@opencode/plugin"
+import { EVENTS_ACTION, PROBE_ACTION } from "./sources.js"
 import { CHANGING_TOOLS, READ_TOOLS } from "./tools.js"
 import { reasonOf } from "./redact.js"
 
@@ -22,14 +23,20 @@ const rule = (action: string, effect: Rule["effect"]): Rule => ({ action, resour
  */
 export const CLEANUP_ACTION = "boxd_cleanup"
 
+/**
+ * The `boxd.works` source's two tools RPC methods (`src/sources.ts`): reads of the local ledger that a collector runs
+ * with no one there, so every access value allows them, as it allows the read-only tools.
+ */
+export const SOURCE_ACTIONS: readonly string[] = [EVENTS_ACTION, PROBE_ACTION]
+
 /** The effect a tool that is not read-only gets under one access value. A read-only tool always allows (OD-29). */
 const changingEffect = (access: Access): Rule["effect"] => (access === "all" ? "allow" : access === "ask-changes" ? "ask" : "deny")
 
 /**
  * The block the plugin inserts after each agent's base allow, generated from the tool table's `readOnly` and the
  * `access` option (OD-29). Every tool this plugin registers is allowed at `all`, the default; `ask-changes` allows only
- * the read-only tools and asks for the rest; `read-only` allows only them and denies the rest. `/boxd-cleanup`'s own
- * action asks at every level (design §C.5). The namespace pattern's effect follows the value,
+ * the read-only tools and the source's two reads, and asks for the rest; `read-only` allows only them and denies the
+ * rest. `/boxd-cleanup`'s own action asks at every level (design §C.5). The namespace pattern's effect follows the value,
  * so a tool a later release adds runs at once under `all`, asks under `ask-changes` and is denied under `read-only`;
  * the known reads are allowed after it. The order is a safety net, not a decision point: the last matching rule wins,
  * and the exact-name rule comes after the pattern.
@@ -40,6 +47,7 @@ export const defaultRules = (access: Access = "all"): Rule[] => {
     rule("boxd_*", changing),
     rule(CLEANUP_ACTION, "ask"),
     ...READ_TOOLS.map((tool) => rule(tool, "allow")),
+    ...SOURCE_ACTIONS.map((action) => rule(action, "allow")),
     ...CHANGING_TOOLS.map((tool) => rule(tool, changing)),
   ]
 }

@@ -154,6 +154,8 @@ describe("package tarball", () => {
 
   test("dist imports only modules the host provides", () => {
     const dist = join(installedPackage(true), "dist")
+    // The scan finds the bundle's real imports, so an empty foreign list means something.
+    expect(specifiers(readFileSync(join(dist, "index.js"), "utf8"))).toContain("@opencode/plugin")
     expect(foreign(join(dist, "index.js"), SERVER_HOST_MODULES)).toEqual([])
     expect(foreign(join(dist, "tui.js"), TUI_HOST_MODULES)).toEqual([])
   }, 300_000)
@@ -312,10 +314,13 @@ function tree(dir: string, base = root): string[] {
     .map((item) => relative(base, join(item.parentPath, item.name)).split(sep).join("/"))
 }
 
-/** Every module specifier a file really imports: a whole statement line, or a call with a literal specifier. */
+/**
+ * Every module specifier a file really imports: a whole statement, at a line's start or after a `;` (the bundles are
+ * minified, so several statements share a line), or a call with a literal specifier.
+ */
 const specifiers = (source: string) => [
-  ...[...source.matchAll(/^[ \t]*(?:import|export)[ \t][^'"`\n]*?from[ \t]*["']([^"']+)["']/gm)].map((match) => match[1]!),
-  ...[...source.matchAll(/^[ \t]*import[ \t]*["']([^"']+)["']/gm)].map((match) => match[1]!),
+  ...[...source.matchAll(/(?:^|;)[ \t]*(?:import|export)\b[^'"`;\n]*?\bfrom[ \t]*["']([^"']+)["']/gm)].map((match) => match[1]!),
+  ...[...source.matchAll(/(?:^|;)[ \t]*import[ \t]*["']([^"']+)["']/gm)].map((match) => match[1]!),
   ...[...source.matchAll(/\b(?:import|require)\s*\(\s*["']([^"']+)["']\s*\)/g)].map((match) => match[1]!),
 ]
 

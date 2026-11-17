@@ -71,6 +71,7 @@ yours later in the agent, or in the session, still decides.
 
 The block is generated from `defaultRules(access)`, and it is printed here in full for each value, so it can be copied
 into an agent that gets no block of its own. `boxd_cleanup` is `/boxd-cleanup`'s own action: it asks at every level.
+`boxd_events_list` and `boxd_probe` are the `boxd.works` source's two reads of the local ledger: every value allows them.
 
 `access: "all"` (the default):
 
@@ -81,6 +82,8 @@ into an agent that gets no block of its own. `boxd_cleanup` is `/boxd-cleanup`'s
   { "action": "boxd_status", "resource": "*", "effect": "allow" },
   { "action": "boxd_job", "resource": "*", "effect": "allow" },
   { "action": "boxd_read", "resource": "*", "effect": "allow" },
+  { "action": "boxd_events_list", "resource": "*", "effect": "allow" },
+  { "action": "boxd_probe", "resource": "*", "effect": "allow" },
   { "action": "boxd_ensure", "resource": "*", "effect": "allow" },
   { "action": "boxd_submit", "resource": "*", "effect": "allow" },
   { "action": "boxd_harvest", "resource": "*", "effect": "allow" },
@@ -102,6 +105,8 @@ into an agent that gets no block of its own. `boxd_cleanup` is `/boxd-cleanup`'s
   { "action": "boxd_status", "resource": "*", "effect": "allow" },
   { "action": "boxd_job", "resource": "*", "effect": "allow" },
   { "action": "boxd_read", "resource": "*", "effect": "allow" },
+  { "action": "boxd_events_list", "resource": "*", "effect": "allow" },
+  { "action": "boxd_probe", "resource": "*", "effect": "allow" },
   { "action": "boxd_ensure", "resource": "*", "effect": "ask" },
   { "action": "boxd_submit", "resource": "*", "effect": "ask" },
   { "action": "boxd_harvest", "resource": "*", "effect": "ask" },
@@ -123,6 +128,8 @@ into an agent that gets no block of its own. `boxd_cleanup` is `/boxd-cleanup`'s
   { "action": "boxd_status", "resource": "*", "effect": "allow" },
   { "action": "boxd_job", "resource": "*", "effect": "allow" },
   { "action": "boxd_read", "resource": "*", "effect": "allow" },
+  { "action": "boxd_events_list", "resource": "*", "effect": "allow" },
+  { "action": "boxd_probe", "resource": "*", "effect": "allow" },
   { "action": "boxd_ensure", "resource": "*", "effect": "deny" },
   { "action": "boxd_submit", "resource": "*", "effect": "deny" },
   { "action": "boxd_harvest", "resource": "*", "effect": "deny" },

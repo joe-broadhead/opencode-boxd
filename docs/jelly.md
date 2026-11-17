@@ -27,6 +27,10 @@ what a Jelly may call.
 command's own action `boxd_cleanup`, which the default rules set to ask at every level; it is a command action, not a
 tool, so it is not in `tools`.
 
+The `boxd.works` source is declared beside it, in `package.json`'s top-level `sources`, not in `jelly`: its
+`events_list` and `probe` are tools RPC methods, not tools, so they are not in `tools`. They read only this laptop's
+ledger, and the plugin's default rules allow them at every access value (`boxd_events_list`, `boxd_probe`).
+
 Every tool the plugin registers is declared: the twelve tools are the plugin's own, and `test/unit/jelly.test.ts` fails
 when a tool in `src/tools.ts` is missing from `jelly.tools`, so a release cannot add an undeclared one.
 

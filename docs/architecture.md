@@ -175,6 +175,13 @@ measure again.
 
 ## The tools RPC
 
-`boxd.machines.tools` is the family's v2 module, copied verbatim outside its plugin block: a script calls each tool with
-no model, as a session and its agent. The rules decide: only a resolved `allow` runs, an `ask` is refused because no one
-can answer it, and every change still asserts inside its own run.
+`boxd.machines.tools` is the source contract package's `tools-rpc` module, bundled into `dist/index.js`, with boxd's
+plugin value in `src/tools-rpc.ts`: a script calls each tool with no model, as a session and its agent. The rules
+decide: only a resolved `allow` runs, an `ask` is refused because no one can answer it, and every change still asserts
+inside its own run.
+
+The same RPC carries the `boxd.works` source's `events_list` and `probe` (`src/sources.ts`), which are methods only,
+not model tools. `events_list` reads `events.jsonl` through `LedgerPort.eventsSince`, the ledger's own sequence number
+as its cursor and `cursorExpired` as the contract's `gap`. It reads only a published ledger: while the v0 import runs it
+answers `UNAVAILABLE` rather than joining the import's gate, which could retry the import's machine listing. Reading the
+log takes no lock, and nothing it does reaches boxd or a machine.
