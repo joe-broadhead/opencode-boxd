@@ -22,8 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The tools RPC is the source contract package's `tools-rpc` module (v0.2.0), bundled into `dist/index.js`, in place of
   the copied module; boxd's methods, codes and next steps are unchanged.
-- The bundles are minified (whitespace and syntax, not names), so the package stays within its size budget with the
-  contract's modules inside.
+- The server bundle, `dist/index.js`, is minified (whitespace and syntax, not names), so the package stays within its
+  size budget with the contract's modules inside. The TUI bundle is not, so OpenCode can resolve its host imports.
+
+### Fixed
+
+- A read of the ledger's event log that raced the log's rotation could skip the events the rotation moved, with no
+  `gap`, or read as an expired cursor. The two files are now read as one consistent pair, read again while a rotation
+  is under way; `boxd_status`'s cursor reads the same way.
 
 ## [0.1.0] - 2026-11-16
 

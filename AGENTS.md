@@ -29,7 +29,9 @@ and keeps the transcript on the laptop. It has no MCP server: its twelve tools a
   a temp folder.
 - **Ship prebuilt, one file per entry.** `scripts/build.mjs` bundles `src/index.ts` and `src/tui.ts` into the
   self-contained `dist/index.js` and `dist/tui.js`: no chunks, no relative imports, and only host-provided modules
-  external. Whitespace and syntax are minified and names are not. `tsc` only typechecks.
+  external. The server bundle's whitespace and syntax are minified, never its names; the TUI bundle is not minified,
+  because OpenCode rewrites its host imports only in the unminified form, and the build fails if it is. `tsc` only
+  typechecks.
 - **Two folders per work.** The laptop folder is the project or an allowed root; the guest folder is always
   `/home/boxd/work/<work id>`. A laptop path is never sent to the guest.
 - **Files carry three facts.** A moved file is recorded by name, size and sha256, never content. A laptop path must be

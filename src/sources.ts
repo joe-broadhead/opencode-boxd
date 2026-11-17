@@ -160,13 +160,19 @@ function notReadable(state: ReturnType<ImportV0Port["state"]>): SourceError | un
   })
 }
 
-/** A ledger refusal as the contract's table names it. */
-function ledgerFailure(error: unknown): unknown {
-  if (!(error instanceof BoxdError)) return error
-  if (error.code === "LEDGER_IMPORTING" || error.code === "IMPORT_V0_FAILED") {
+/**
+ * A ledger failure as the contract's table names it: always `UNAVAILABLE`, with the ledger's code when it has one and
+ * never a path. The cursor is not moved: the same call again reads on from it.
+ */
+function ledgerFailure(error: unknown): SourceError {
+  if (error instanceof BoxdError && (error.code === "LEDGER_IMPORTING" || error.code === "IMPORT_V0_FAILED")) {
     return new SourceError({ code: "UNAVAILABLE", what: `boxd's ledger is not readable yet (${error.code})`, next: "Call events_list again in a minute, with the same cursor." })
   }
-  return new SourceError({ code: "UNAVAILABLE", what: `boxd's event log could not be read (${error.code})`, next: "Run /boxd-status and follow its next step, then call events_list again." })
+  if (error instanceof BoxdError && error.state === "busy") {
+    return new SourceError({ code: "UNAVAILABLE", what: `boxd's event log was busy (${error.code})`, next: "Call events_list again in a few seconds, with the same cursor." })
+  }
+  const code = error instanceof BoxdError ? error.code : "the file system refused the read"
+  return new SourceError({ code: "UNAVAILABLE", what: `boxd's event log could not be read (${code})`, next: "Run /boxd-status and follow its next step, then call events_list again." })
 }
 
 const OUTCOME_WORDS: Readonly<Record<string, string>> = {

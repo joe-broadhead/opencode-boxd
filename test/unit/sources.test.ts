@@ -135,6 +135,18 @@ describe("events_list", () => {
     expect(error.message).toMatch(/^UNAVAILABLE: .*LEDGER_FAILED.*\. Next step: Run \/boxd-status/)
   })
 
+  test("an uncoded file-system error, or a log busy rotating, is UNAVAILABLE, never the ledger's path", async () => {
+    const path = join(fixture.log.file, "..", "events.jsonl")
+    const enoent = Object.assign(new Error(`ENOENT: no such file or directory, open '${path}'`), { code: "ENOENT" })
+    const missing = await refusalOf(listWorks(fixtureDeps(fixture.log, FIXTURE, { ledger: { eventsSince: async () => Promise.reject(enoent) } }), {}))
+    expect(missing.code).toBe("UNAVAILABLE")
+    expect(missing.message).not.toContain(path)
+    expect(missing.message).not.toContain("ENOENT")
+    const busy = await refusalOf(listWorks(fixtureDeps(fixture.log, FIXTURE, { ledger: { eventsSince: async () => Promise.reject(boxdError("LEDGER_LOCKED")) } }), {}))
+    expect(busy.code).toBe("UNAVAILABLE")
+    expect(busy.message).toContain("Next step: Call events_list again in a few seconds, with the same cursor.")
+  })
+
   test("while the v0 import runs, or after it failed, it answers UNAVAILABLE and never reads the ledger or starts the import", async () => {
     let reads = 0
     const counting = { eventsSince: async () => (reads++, { events: [], cursor: 0, cursorExpired: false }) }
