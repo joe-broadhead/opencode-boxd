@@ -180,6 +180,84 @@ describe("events_list", () => {
   })
 })
 
+/**
+ * An event log in memory with `EventLog.since`'s rules: the kept lines after a cursor, and `cursorExpired` for a cursor
+ * older than the oldest kept line or newer than the newest. `drop` lines are lost from the start, as a rotation loses them.
+ */
+function memoryLog(lines: readonly WorkEvent[], drop = 0) {
+  const kept = lines.slice(drop)
+  return {
+    eventsSince: async (since: number) => {
+      const newest = kept.length ? kept[kept.length - 1]!.seq : 0
+      const oldest = kept.length ? kept[0]!.seq : newest + 1
+      const expired = since > newest || since < oldest - 1
+      const events = expired ? kept : kept.filter((line) => line.seq > since)
+      return { events, cursor: events.length ? events[events.length - 1]!.seq : expired ? newest : since, cursorExpired: expired }
+    },
+  }
+}
+
+/** Every page of a read, from its first input, following each cursor until more is false. */
+async function walk(read: (input: Record<string, unknown>) => Promise<EventsListResult>, first: Record<string, unknown>, limit?: number) {
+  const pages: EventsListResult[] = []
+  let page = await read({ ...first, ...(limit ? { limit } : {}) })
+  pages.push(page)
+  for (let guard = 0; page.more && guard < 1_000; guard++) {
+    page = await read({ cursor: page.cursor, ...(limit ? { limit } : {}) })
+    pages.push(page)
+  }
+  return pages
+}
+
+const listed = (pages: readonly EventsListResult[]) => pages.flatMap((page) => [...page.events.map((event) => event.external_id), ...(page.refused ?? []).map((entry) => entry.external_id)])
+
+describe("the three ways a source has gone wrong before", () => {
+  const BURST_AT = "2026-11-17T10:00:00.000Z"
+  /** A 170-work fleet changing at once, three times: 510 lines at the same instant. */
+  const burst: WorkEvent[] = Array.from({ length: 510 }, (_, index) => ({ seq: index + 1, at: BURST_AT, workId: `fleet-${String(index % 170).padStart(3, "0")}`, from: "busy", to: "idle", outcome: "completed" }))
+
+  test("(a) no sliding gap: an expired cursor restarts from the gap line it carries, whatever the clock says", async () => {
+    const lost = "2026-11-16T07:00:00.000Z"
+    const cursor = encodeWorksCursor(account, { q: 3, t: lost })
+    const log = memoryLog(burst.slice(0, 40), 10)
+    const at = (now: string) => (input: Record<string, unknown>) => listWorks(fixtureDeps(fixture.log, FIXTURE, { ledger: log, now: () => new Date(now) }), input) as Promise<EventsListResult>
+    const early = await walk(at("2026-11-17T12:00:00Z"), { cursor }, 7)
+    const late = await walk(at("2026-12-25T12:00:00Z"), { cursor }, 7)
+    for (const pages of [early, late]) {
+      expect(pages[0]!.gap).toEqual({ reason: "expired", since: lost })
+      expect(listed(pages)).toEqual(burst.slice(10, 40).map((line) => `${line.workId}:${line.seq}`))
+    }
+    expect(late.map((page) => page.cursor)).toEqual(early.map((page) => page.cursor))
+  })
+
+  test("(b) no jam: a burst larger than a page drains, page by page, with nothing repeated or skipped, and each page within maxBytes", async () => {
+    const read = (input: Record<string, unknown>) => listWorks(fixtureDeps(fixture.log, FIXTURE, { ledger: memoryLog(burst) }), input) as Promise<EventsListResult>
+    for (const limit of [undefined, 1, 500]) {
+      const pages = await walk(read, { since: "2026-11-17T00:00:00Z" }, limit)
+      expect(listed(pages)).toEqual(burst.map((line) => `${line.workId}:${line.seq}`))
+      for (const page of pages) expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThanOrEqual(65_536)
+      expect(pages.at(-1)!.more).toBe(false)
+    }
+    // A burst of works whose ids are shaped like keys: every page is refusals only, and the cursor still moves.
+    const keyed = burst.map((line, index) => ({ ...line, workId: `sk-proj${String(index).padStart(4, "0")}x7k2m4q8r1t6w` }))
+    const keyedPages = await walk((input) => listWorks(fixtureDeps(fixture.log, FIXTURE, { ledger: memoryLog(keyed) }), input) as Promise<EventsListResult>, { since: "2026-11-17T00:00:00Z" }, 500)
+    expect(keyedPages.length).toBeGreaterThan(1)
+    expect(keyedPages.every((page) => page.events.length === 0 && Buffer.byteLength(JSON.stringify(page)) <= 65_536)).toBe(true)
+    expect(listed(keyedPages)).toEqual(keyed.map((line) => `${line.workId}:${line.seq}`))
+  })
+
+  test("(c) a gap is answered once per read, across many small pages, from an expired cursor or an old window", async () => {
+    const log = memoryLog(burst.slice(0, 30), 12)
+    const read = (input: Record<string, unknown>) => listWorks(fixtureDeps(fixture.log, FIXTURE, { ledger: log }), input) as Promise<EventsListResult>
+    for (const first of [{ cursor: encodeWorksCursor(account, { q: 2, t: "2026-11-16T00:00:00.000Z" }) }, { since: "2026-11-16T00:00:00Z" }]) {
+      const pages = await walk(read, first, 1)
+      expect(pages.length).toBe(18)
+      expect(pages.map((page) => page.gap !== undefined)).toEqual(pages.map((_, index) => index === 0))
+      expect(listed(pages)).toEqual(burst.slice(12, 30).map((line) => `${line.workId}:${line.seq}`))
+    }
+  })
+})
+
 describe("an event", () => {
   test("is the plugin's own words: the work, its phase, how a run ended, its code and who slept it; no text, actors or link", () => {
     const at = "2026-11-17T09:00:00.000Z"

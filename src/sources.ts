@@ -30,7 +30,6 @@ import {
   PROBE,
   SourceError,
   eventsListResult,
-  fitPage,
   makeEvent,
   oldestFirst,
   parseEventsListInput,
@@ -43,6 +42,7 @@ import {
   type EventsListResult,
   type EventsOwner,
   type ProbeResult,
+  type RefusedEvent,
   type SourceEvent,
 } from "@we-the-rebel-alliance/source-contract/events"
 import type { JsonSchema, PluginMethod, ToolCall } from "@we-the-rebel-alliance/source-contract/tools-rpc"
@@ -66,6 +66,8 @@ export const EVENTS_ACTION = `${NAMESPACE}_${EVENTS_LIST}`
 export const PROBE_ACTION = `${NAMESPACE}_${PROBE}`
 /** The most bytes of JSON one page holds: the descriptor's `maxBytes`. */
 export const MAX_BYTES = 65_536
+/** What a page's envelope takes beside its events and refusals: the source, account, owner, cursor, gap and the rest. */
+const PAGE_ENVELOPE_BYTES = 2_048
 
 /** Whose ledger this is: the computer it is on, and the OS user who runs OpenCode there. */
 export interface LocalIdentity {
@@ -282,23 +284,27 @@ export async function listWorks(deps: SourceDeps, input: unknown, call?: Pick<To
     if (page.cursorExpired && oldest !== undefined && Date.parse(oldest.at) > windowStart) gap = { reason: "expired", since: start }
   }
 
-  // The page: at most `limit` lines in log order, as many as fit in MAX_BYTES once screened.
-  const candidates = lines.slice(0, request.limit)
-  const built = candidates.map((line) => ({ line, event: eventOf(line, identity.account) }))
-  const screened = screenEvents(built.map((entry) => entry.event))
-  const refusedIds = new Set(screened.refused.map((entry) => entry.external_id))
-  const refusedBytes = screened.refused.reduce((sum, entry) => sum + Buffer.byteLength(JSON.stringify(entry)) + 1, 0)
-  const fit = fitPage(screened.events, request.limit, MAX_BYTES - refusedBytes)
-  const lastKept = screened.events[fit - 1]
-  // The page covers every line up to the last kept event that fits, or every candidate when none was cut.
-  const cutAt = fit < screened.events.length && lastKept ? built.findIndex((entry) => entry.event.external_id === lastKept.external_id) + 1 : built.length
-  const covered = built.slice(0, cutAt)
-  const events = oldestFirst(covered.filter((entry) => !refusedIds.has(entry.event.external_id)).map((entry) => entry.event))
-  const refused = screened.refused.filter((entry) => covered.some((item) => item.event.external_id === entry.external_id))
-  const last = covered[covered.length - 1]?.line
+  // The page: at most `limit` lines in log order, each an event or a refusal, as many as fit in MAX_BYTES. Every page
+  // that has a line covers at least one, so a burst larger than a page drains, page by page, and the cursor always moves.
+  let bytes = PAGE_ENVELOPE_BYTES
+  const kept: SourceEvent[] = []
+  const refused: RefusedEvent[] = []
+  let last: WorkEvent | undefined
+  let covered = 0
+  for (const line of lines.slice(0, request.limit)) {
+    const screened = screenEvents([eventOf(line, identity.account)])
+    const size = Buffer.byteLength(JSON.stringify(screened.events[0] ?? screened.refused[0])) + 1
+    if (last !== undefined && bytes + size > MAX_BYTES) break
+    bytes += size
+    kept.push(...screened.events)
+    refused.push(...screened.refused)
+    last = line
+    covered++
+  }
+  const events = oldestFirst(kept)
   // With nothing listed, the cursor is the log's newest sequence number: every line before the window is skipped.
   const state: CursorState = last ? { q: last.seq, t: last.at } : { q: page.cursor, t: start }
-  const more = lines.length > covered.length
+  const more = lines.length > covered
   const whose: EventsListIdentity = { source: SOURCE, account: identity.account, owner: identity.owner }
   return eventsListResult(whose, events, encodeWorksCursor(identity.account, state), more, {
     refused,
