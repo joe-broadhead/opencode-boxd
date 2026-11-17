@@ -899,7 +899,10 @@ describe("check-release-shape.mjs: releases move forward from the last published
 })
 
 /** A plugin's source, as the release workflow sees it: a build, TESTED_HOSTS, and, when native, native.yml. */
-/** The four runners every plugin's CI has, and a ci.yml whose matrix runs macOS on a push to master only. */
+/**
+ * Four runners a ci.yml may name, and a ci.yml whose matrix runs macOS on a push to master only. The family's push set is
+ * the first three (both Linux runners and Apple-silicon macOS, kit r4.2); an Intel Mac, when a ci.yml names one, must pass too.
+ */
 const RUNNERS = ["ubuntu-24.04", "ubuntu-24.04-arm", "macos-26", "macos-26-intel"]
 const gatedLine = (key, pr, all) => `        ${key}: \${{ fromJSON(github.event_name == 'pull_request' && '${JSON.stringify(pr)}' || '${JSON.stringify(all)}') }}`
 const ciYml = (matrixLine) => `name: CI\non:\n  pull_request:\n  push:\n    branches: [master]\njobs:\n  check:\n    strategy:\n      matrix:\n${matrixLine}\n    runs-on: \${{ matrix.os }}\n    steps:\n      - run: npm run check\n`
@@ -1105,6 +1108,17 @@ describe("release-github.mjs plan", () => {
     github.state.ciJobs = fullJobs()
     github.state.ciRuns = [ciRun(github.state.ciRuns[0].head_sha, { event: "pull_request", head_branch: "feature" })]
     assert.throws(() => run(), /no ci\.yml run for a push to master/)
+  })
+
+  test("stands on a push run of the family's three runners, with no Intel Mac, and still requires Apple-silicon macOS", () => {
+    const repo = repository({ ...pluginSource("0.0.1"), ".github/workflows/ci.yml": ciYml(gatedLine("os", RUNNERS.slice(0, 2), RUNNERS.slice(0, 3))) })
+    const github = fakeGitHub(repo)
+    github.state.ciRuns = [ciRun(repo.head)]
+    github.state.ciJobs = fullJobs(RUNNERS.slice(0, 3))
+    const run = () => plan({ sha: repo.head, env: ENV(repo), gh: github.gh, cwd: repo.dir })
+    assert.equal(run().ci_run, "501")
+    github.state.ciJobs = [...fullJobs(RUNNERS.slice(0, 2)), ...fullJobs(["macos-26-intel"])]
+    assert.throws(run, /CI run 501 on [0-9a-f]{12} is not a full master push run: no successful job on macos-26$/)
   })
 
   test("refuses a ci.yml whose matrix runs macOS on pull requests, or not on master", () => {
@@ -1964,7 +1978,7 @@ describe("CI: macOS on pushes to master and for releases, never on pull requests
     const matrix = ciMatrix(readFileSync(join(SCRIPTS, "..", ".github", "workflows", "ci.yml"), "utf8"))
     assert.deepEqual(matrix.problems, [])
     assert.equal(matrix.pullRequest.some((runner) => /^macos-/.test(runner)), false)
-    assert.ok(matrix.push.includes("macos-26") && matrix.push.includes("macos-26-intel"), `a push to master runs ${matrix.push.join(", ")}`)
+    assert.ok(matrix.push.includes("macos-26"), `a push to master runs ${matrix.push.join(", ")}`)
   })
 })
 
