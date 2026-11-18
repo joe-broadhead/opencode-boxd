@@ -166,8 +166,11 @@ describe("the docs set", () => {
       // The CHANGELOG's older released sections are history: only the newest released section, and an unreleased one
       // above it, have to name the current list.
       const sections = read(document).split(/\n(?=## \[)/)
-      const newest = sections.findIndex((section, index) => index > 0 && !section.startsWith("## [Unreleased]"))
-      const body = document === "CHANGELOG.md" ? sections.slice(0, newest + 1).join("\n") : read(document)
+      // While a release is prepared, its Unreleased section; otherwise the newest released one. Older released
+      // sections are history and keep their own list.
+      const unreleased = sections.find((section) => section.startsWith("## [Unreleased]"))
+      const newest = sections.find((section) => /^## \[\d+\.\d+\.\d+\]/.test(section))
+      const body = document === "CHANGELOG.md" ? [sections[0], unreleased ?? newest].join("\n") : read(document)
       const text = body.replace(/\s+/g, " ")
       for (const phrase of ["tested on ", "runs on OpenCode ", "tested on OpenCode "]) {
         for (let at = text.indexOf(phrase); at !== -1; at = text.indexOf(phrase, at + 1)) {

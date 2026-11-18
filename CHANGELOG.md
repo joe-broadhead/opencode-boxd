@@ -3,6 +3,16 @@
 All notable changes to this project are documented here. The format is [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Tested on OpenCode 2.3.1 and 2.3.2. The supported range is unchanged (`>=2.2.3 <2.4.0`). `TESTED_HOSTS` is now 2.2.3,
+  2.2.4, 2.2.5, 2.2.6, 2.2.7, 2.3.0, 2.3.1 and 2.3.2, so the host and pack stages, CI and the release's install check
+  run on both; the plugin is tested on 2.2.3, 2.2.4, 2.2.5, 2.2.6, 2.2.7, 2.3.0, 2.3.1 and 2.3.2. They need nothing
+  else from this plugin: between 2.3.0 and 2.3.2 the only API changes are that `experimental.generate` excludes video
+  jobs and a new `codemode` session event kind.
+
 ## [0.1.1] - 2026-11-17
 
 ### Added

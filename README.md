@@ -9,7 +9,7 @@ boxd is a trademark of Azin Tech Operating Company B.V.; this unofficial plugin 
 
 ## Requirements
 
-- OpenCode `>=2.2.3 <2.4.0` (2.2.3 or a later 2.2 or 2.3 release), tested on 2.2.3, 2.2.4, 2.2.5, 2.2.6, 2.2.7 and 2.3.0.
+- OpenCode `>=2.2.3 <2.4.0` (2.2.3 or a later 2.2 or 2.3 release), tested on 2.2.3, 2.2.4, 2.2.5, 2.2.6, 2.2.7, 2.3.0, 2.3.1 and 2.3.2.
 - The laptop [boxd CLI](https://boxd.sh), signed in, on your `PATH`. The CLI that runs inside a boxd machine is refused.
 - A model key the guests can reach: a sealed, host-bound `boxd env` secret is the way
   ([golden images](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/docs/images.md) says how). The plugin

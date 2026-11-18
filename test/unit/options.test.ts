@@ -108,8 +108,8 @@ describe("the host", () => {
     expect(isSupportedHost("2.2.6-dev.1")).toBe(false)
   })
 
-  test("the tested list holds every release the checks run on, 2.2.7 and 2.3.0 included", () => {
-    expect(TESTED_HOSTS).toEqual(["2.2.3", "2.2.4", "2.2.5", "2.2.6", "2.2.7", "2.3.0"])
+  test("the tested list holds every release the checks run on, 2.2.7 through 2.3.2 included", () => {
+    expect(TESTED_HOSTS).toEqual(["2.2.3", "2.2.4", "2.2.5", "2.2.6", "2.2.7", "2.3.0", "2.3.1", "2.3.2"])
     expect(isTestedHost("2.3.0")).toBe(true)
     expect(isTestedHost("2.2.8")).toBe(false)
   })

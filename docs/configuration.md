@@ -40,8 +40,9 @@ An unknown option, a value out of its range, or a removed option stops the plugi
 plugin list shows why. The option `snapshot` is gone: a golden image is built by the plugin from stock. Remove
 `snapshot`; set `goldenBase` only to build on a hand-made base without model credentials.
 
-The plugin is tested on 2.2.3, 2.2.4, 2.2.5, 2.2.6, 2.2.7 and 2.3.0. Inside `>=2.2.3 <2.4.0` a release that was not tested, such as 2.2.99, still starts: status marks the version `untested`
-and the next step is the same as on a tested release. Outside the range the plugin does not start unless
+The plugin is tested on 2.2.3, 2.2.4, 2.2.5, 2.2.6, 2.2.7, 2.3.0, 2.3.1 and 2.3.2. Inside `>=2.2.3 <2.4.0` a
+release that was not tested, such as 2.2.99, still starts: status marks the version `untested` and the next step is
+the same as on a tested release. Outside the range the plugin does not start unless
 `allowUntestedHost` is `true`.
 
 ## Where the ledger lives
