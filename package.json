@@ -217,6 +217,34 @@
           "class": "free"
         },
         "maxBytes": 65536
+      },
+      {
+        "id": "boxd.works.list",
+        "kind": "snapshot",
+        "tool": "boxd_status",
+        "input": {
+          "source": "works",
+          "list": "works"
+        },
+        "output": "list",
+        "accounts": {
+          "named": false
+        },
+        "permission": {
+          "tool": "boxd_status",
+          "rules": [
+            {
+              "action": "boxd_status",
+              "resource": "*"
+            }
+          ]
+        },
+        "private": true,
+        "cost": {
+          "class": "free"
+        },
+        "maxAgeSec": 900,
+        "maxBytes": 65536
       }
     ]
   },

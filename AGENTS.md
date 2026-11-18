@@ -68,7 +68,7 @@ and keeps the transcript on the laptop. It has no MCP server: its twelve tools a
   into `dist/index.js`; boxd's plugin value is `src/tools-rpc.ts`. Its methods are every tool in `src/tools.ts`, by
   exact name and with its class, then the `boxd.works` source's `events_list` and `probe`, and the rule is resolved
   before dispatch: only an `allow` runs.
-- **The source (`boxd.works`).** `src/sources.ts` implements the source contract's `events_list` and `probe` with the
+- **The sources.** `boxd.works` is the events feed. `boxd.works.list` is the current works as a list, read by `boxd_status` with `view: "all"`; that path asserts `boxd_status`, and a normal status call does not. `src/sources.ts` implements the source contract's `events_list` and `probe` with the
   package's `events` and `cursor` modules, never copies of them. It reads only the published ledger's `events.jsonl`
   through `LedgerPort.eventsSince`: no boxd call, no machine woken, no lock, and no start or retry of the v0 import. An
   event's words are the plugin's own (work id, phase, outcome, code), never a prompt, a transcript or guest text.

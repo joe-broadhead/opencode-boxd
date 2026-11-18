@@ -7,7 +7,8 @@
  * (`src/services.ts` names them), wired once in `src/plugin.ts`; no package edits this file. Every tool is allowed by
  * default; `access` decides whether a change asks or is denied.
  *
- * The registry, not a run, decides permission (OD-29): a read-only tool never asserts, and every other tool asserts its
+ * The registry, not a run, decides permission (OD-29): a read-only tool never asserts, except the works list snapshot
+ * (`list: "works"` on status), which asserts `boxd_status` before it reads. Every other tool asserts its
  * own action before its run, whatever its input says. A call that names works asserts with those ids; a `select` call
  * first resolves the match with the tool's selector (a read), then asserts with exactly those ids, and its run acts on
  * exactly `call.matched`. An input that names its works ambiguously is refused before anything runs.
@@ -451,13 +452,24 @@ type Assert = Plugin.Context["permission"]["assert"]
 type Source = Pick<CallContext, "sessionID" | "agent" | "messageID" | "id">
 
 /**
- * Checks the call, decides its permission, then runs it. A read-only tool never asserts. Every other tool asserts its
+ * Checks the call, decides its permission, then runs it. A read-only tool never asserts, except the works list snapshot.
+ * Every other tool asserts its
  * own action, with the call's own source, before its run: with the ids the call names, or, for a `select`, with the
  * ids its selector matched, which the run then acts on. An input key never skips the assert. A refusal from the
  * assert (a declined or denied prompt) propagates, so the host reports it as the call's denial.
  */
 export async function runTool(spec: ToolSpec, deps: RegistryDeps, assert: Assert, input: Record<string, unknown>, call: CallContext): Promise<ToolAnswer> {
   const settle = async (): Promise<unknown> => {
+    // The works list snapshot is a source read of status. A normal status call still does not assert.
+    if (spec.name === "status" && input["list"] === "works") {
+      await assert({
+        sessionID: call.sessionID,
+        agent: call.agent,
+        action: spec.id,
+        resources: ["*"],
+        source: { type: "tool", messageID: call.messageID, id: call.id },
+      })
+    }
     const select = selectionOf(spec, input)
     let matched: readonly string[] | undefined
     if (select !== undefined) {
