@@ -7,7 +7,7 @@ All options go in the plugin entry in `opencode.json`, and every one is optional
 ```jsonc
 {
   "plugins": [{
-    "package": "github:joe-broadhead/opencode-boxd#v0.1.1",
+    "package": "github:joe-broadhead/opencode-boxd#v0.1.2",
     "options": { "region": "auto", "size": "2x8", "notices": "wake" }
   }]
 }
