@@ -3,7 +3,7 @@
  * runner's import pool (cap 2), with the `opencode` binary the plugin resolved once (`HostServices.opencodeBin`). It is
  * the one place the plugin drives the laptop's OpenCode; a harvest replaces sessions through it (`src/prover.ts`).
  *
- * On every tested release (2.2.3 to 2.3.0) a second `session import` of an id that already exists exits 0 with
+ * On every tested release (2.2.3 to 2.3.2) a second `session import` of an id that already exists exits 0 with
  * "Session already exists" and changes nothing, so an import that prints those words fails: the replace did not happen.
  * `delete` of an id the laptop does not have exits 1 with "Session not found: <id>", which is "absent".
  *

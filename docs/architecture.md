@@ -136,8 +136,8 @@ measure again.
 
 **OpenCode**
 
-- `opencode session import --standalone` keeps the transcript's id on 2.2.3–2.2.7 and 2.3.0. A second import of an id
-  already present answers `Session already exists`, exits 0 and changes nothing, so a harvest deletes the session
+- `opencode session import --standalone` keeps the transcript's id on 2.2.3–2.2.7 and 2.3.0–2.3.2. A second import of
+  an id already present answers `Session already exists`, exits 0 and changes nothing, so a harvest deletes the session
   first; `opencode session delete` of an absent id exits 1 with its not-found words, which the plugin reads as absent.
 - `POST /api/session/<id>/prompt` takes `delivery: "steer" | "queue"`; the default is `steer`, which a running session
   takes at its next step boundary. `POST /api/session/<id>/interrupt` stops a run.

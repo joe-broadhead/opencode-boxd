@@ -9,8 +9,8 @@ and keeps the transcript on the laptop. It has no MCP server: its twelve tools a
 
 - **Public API only.** Use only the public `@opencode/plugin` 2.2.3 API. `opencode.host` in `package.json` and
   `SUPPORTED_HOST` in `src/constants.ts` both say exactly `>=2.2.3 <2.4.0`, never `^2.2.3`. `TESTED_HOSTS` in
-  `src/constants.ts` is the one list of tested releases, tested on 2.2.3, 2.2.4, 2.2.5, 2.2.6, 2.2.7 and 2.3.0. Inside the range an untested
-  release still starts.
+  `src/constants.ts` is the one list of tested releases, tested on 2.2.3, 2.2.4, 2.2.5, 2.2.6, 2.2.7, 2.3.0,
+  2.3.1 and 2.3.2. Inside the range an untested release still starts.
 - **Greenfield.** No legacy, migration code, compatibility shim, dual path or deprecated alias, and nothing dead.
 - **One written exception, until v0.2.0: the v0 import.** v0.1.0 imports the v0 ledger once, so the works that ran on
   v0.0.x are not stranded (docs/v1-design.md §6). The exception is narrow and time-limited:
