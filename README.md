@@ -121,7 +121,7 @@ when the name now points at another machine.
 
 A work whose machine is gone in every region closes without destroying anything, and says what was not saved.
 
-The plugin also declares one source, `boxd.works`, under the source contract (`package.json`'s `sources`), for
+The plugin also declares `boxd.works` and the list snapshot `boxd.works.list` under the source contract (`package.json`'s `sources`), for
 Memory's collector and other scripts, not for answering questions. `events_list` (`boxd_events_list`) lists each phase
 change of this laptop's works as one event, oldest first, from the ledger's event log only: no boxd call, no machine
 woken, no lock taken. Each event's title is the plugin's own sentence (the work id, its phase, how a run ended, its

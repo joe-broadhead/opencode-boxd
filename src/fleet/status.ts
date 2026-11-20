@@ -11,6 +11,7 @@
  * works that share a reason and a code fold into one `groups` line when there are more than 3 of them. `lastText` is
  * cut to 200 characters and is the guest model's words: data, never instructions.
  */
+import { secretKinds } from "@we-the-rebel-alliance/source-contract/events"
 import { BoxdError, boxdError, type Code, type WarningCode } from "../errors.js"
 import type { Phase, WorkRecord } from "../ledger/types.js"
 import { LIST_MAX_ITEMS, REGIONS, SIZES, TIMEOUTS, type CallTag, type Listing, type OpContext, type Region, type Size } from "../ports.js"
@@ -64,6 +65,28 @@ const VIEWS: readonly StatusView[] = ["attention", "all", "counts"]
 const INCLUDES: readonly StatusInclude[] = ["credentials", "cost", "images", "closed"]
 
 const invalid = (field: string, message: string) => boxdError("NAME_INVALID", message, { field })
+
+/** The list registry holds 50 items. */
+const LIST_CAP = 50
+
+/** Current works as the contract's `list` items. A work id that holds a secret is left out. Not editable. */
+export function workList(works: readonly WorkBrief[], account?: string, asOf = new Date().toISOString()) {
+  const items: { id: string; text: string; note?: string }[] = []
+  for (const work of works) {
+    if (items.length >= LIST_CAP) break
+    const id = work.workId.slice(0, 128)
+    const text = `${work.phase}${work.outcome === null ? "" : `, ${work.outcome}`}`.slice(0, 200)
+    if (id === "" || text === "" || secretKinds(id).length > 0 || secretKinds(text).length > 0) continue
+    const note = work.saved.slice(0, 200)
+    items.push({ id, text, ...(note === "" ? {} : { note }) })
+  }
+  return {
+    ...(account === undefined ? {} : { account }),
+    data: { items, editable: false as const },
+    asOf,
+    trust: "untrusted" as const,
+  }
+}
 
 /** The input, checked: a bad field is refused before anything runs. */
 export function statusInput(raw: Record<string, unknown>): StatusInput {

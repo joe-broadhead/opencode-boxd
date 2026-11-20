@@ -3,6 +3,12 @@
 All notable changes to this project are documented here. The format is [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **List snapshot** `boxd.works.list` (`output: "list"`). An app can bind it and render current works without knowing boxd. It calls the existing `boxd_status` read with `view: "all"`, and that path asserts `boxd_status`. A normal status call still does not. `boxd.works` stays the events source and is not renamed. No write is declared. The source-contract pin stays v0.2.0. The host range is unchanged, tested on 2.2.3, 2.2.4, 2.2.5, 2.2.6, 2.2.7, 2.3.0, 2.3.1 and 2.3.2.
+
 ## [0.1.2] - 2026-11-18
 
 ### Changed

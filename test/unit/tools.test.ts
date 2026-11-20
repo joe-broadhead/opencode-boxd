@@ -222,6 +222,15 @@ describe("every change asserts inside its own execute", () => {
     }
   })
 
+  test("the works list snapshot asserts boxd_status; a normal status call still does not", async () => {
+    const { calls, assert } = recorder()
+    await runTool(toolSpec("status"), deps, assert, { list: "works", account: "studio-mac" }, context("rpc"))
+    expect(calls).toEqual([{ action: "boxd_status", sessionID: "ses_test", agent: "build", resources: ["*"] }])
+    calls.length = 0
+    await runTool(toolSpec("status"), deps, assert, {}, context("rpc"))
+    expect(calls).toEqual([])
+  })
+
   test("a select call asserts the tool's action with exactly the ids its selector matched, and the run acts on those", async () => {
     const { calls, assert } = recorder()
     const given: CallContext[] = []
