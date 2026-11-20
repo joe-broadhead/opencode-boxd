@@ -68,32 +68,31 @@ const invalid = (field: string, message: string) => boxdError("NAME_INVALID", me
 
 /** The list registry holds 50 items. */
 const LIST_CAP = 50
-/** The most JSON bytes one list answer may take: the declared `maxBytes`, with room for the envelope. */
-const LIST_BUDGET = 60_000
 /** Control characters would escape to six bytes each in JSON and only make a work's text unreadable. */
 const CONTROLS = /[\u0000-\u001f\u007f-\u009f]/g
 
 /**
- * Current works as the contract's `list` items. A work id or its text is screened whole and only then cut, so a secret
- * that straddles the cut cannot pass as a prefix; a repeated work is listed once and items stop before the byte budget.
- * Not editable.
+ * Current works as the contract's `list` items, newest first: by `lastActivityAt` (then by id, so the order is stable),
+ * before the 50-item cap, so a busy recent work is never dropped for an idle one. A work id or its text is screened
+ * whole and only then cut, so a secret that straddles the cut cannot pass as a prefix, and a repeated work is listed
+ * once. Not editable.
  */
 export function workList(works: readonly WorkBrief[], account?: string, asOf = new Date().toISOString()) {
   const items: { id: string; text: string; note?: string }[] = []
   const seen = new Set<string>()
-  let bytes = 0
-  for (const work of works) {
+  const newest = [...works].sort((left, right) => {
+    const at = Date.parse(right.lastActivityAt ?? "") || 0
+    const other = Date.parse(left.lastActivityAt ?? "") || 0
+    return at === other ? left.workId.localeCompare(right.workId) : at - other
+  })
+  for (const work of newest) {
     if (items.length >= LIST_CAP) break
     const id = work.workId.replace(CONTROLS, "").slice(0, 128)
     const full = `${work.phase}${work.outcome === null ? "" : `, ${work.outcome}`}`.replace(CONTROLS, " ").replace(/\s+/g, " ").trim()
     if (id === "" || full === "" || seen.has(id) || secretKinds(id).length > 0 || secretKinds(full).length > 0) continue
     const note = work.saved.replace(CONTROLS, " ").slice(0, 200)
-    const item = { id, text: full.slice(0, 200), ...(note === "" ? {} : { note }) }
-    const size = JSON.stringify(item).length + 1
-    if (bytes + size > LIST_BUDGET) break
-    bytes += size
     seen.add(id)
-    items.push(item)
+    items.push({ id, text: full.slice(0, 200), ...(note === "" ? {} : { note }) })
   }
   return {
     ...(account === undefined ? {} : { account }),

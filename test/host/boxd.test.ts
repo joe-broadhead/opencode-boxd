@@ -197,8 +197,18 @@ describe("the boxd.works.list snapshot on a stock host", () => {
       const build = await session(host)
       const probed = (await rpcCall(host, "probe", { sessionID: build, input: { source: "works" } })).output as Record<string, any>
       expect(probed.account).toBeString()
+      // Two works through boxd_ensure, so the list validates real items on every host, newest first.
+      for (const id of ["alpha", "zulu"]) {
+        const ensured = (await rpcCall(host, "boxd_ensure", { sessionID: build, input: { workId: id, region: "fra", size: "1x4" } })).output as Record<string, any>
+        expect(ensured).toBeDefined()
+      }
       const listed = (await rpcCall(host, "boxd_status", { sessionID: build, input: { list: "works", account: probed.account } })).output as Record<string, any>
-      expect(listed).toMatchObject({ account: probed.account, data: { editable: false, items: expect.any(Array) }, trust: "untrusted" })
+      expect(listed.account).toBe(probed.account)
+      expect(listed.data.editable).toBe(false)
+      expect(listed.trust).toBe("untrusted")
+      // Seeded works are listed, not an empty answer.
+      expect(Array.isArray(listed.data.items)).toBe(true)
+      expect(listed.data.items.length).toBeGreaterThan(0)
       expect(Number.isNaN(Date.parse(String(listed.asOf)))).toBe(false)
       // Another computer's account is refused before anything is read.
       expect(await refusedCode(rpcCall(host, "boxd_status", { sessionID: build, input: { list: "works", account: "another-computer" } }))).toBe("ACCOUNT_MISMATCH")

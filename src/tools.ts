@@ -18,6 +18,10 @@ import { BoxdError, boxdError, errorState } from "./errors.js"
 import { NAMESPACE } from "./constants.js"
 import type { JsonSchema, MethodClass, PluginMethod, ToolCall } from "@we-the-rebel-alliance/source-contract/tools-rpc"
 import { LIST_MAX_ITEMS, REGIONS, SIZES } from "./ports.js"
+import { SourceError } from "@we-the-rebel-alliance/source-contract/events"
+import { localIdentity } from "./sources.js"
+import { workList } from "./fleet/status.js"
+import type { WorkBrief } from "./results.js"
 import type { Refusal } from "./results.js"
 import type { Selector, SelectorValues, Selectors, ToolRuns } from "./services.js"
 
@@ -460,16 +464,6 @@ type Source = Pick<CallContext, "sessionID" | "agent" | "messageID" | "id">
  */
 export async function runTool(spec: ToolSpec, deps: RegistryDeps, assert: Assert, input: Record<string, unknown>, call: CallContext): Promise<ToolAnswer> {
   const settle = async (): Promise<unknown> => {
-    // The works list snapshot is a source read of status. A normal status call still does not assert.
-    if (spec.name === "status" && input["list"] === "works") {
-      await assert({
-        sessionID: call.sessionID,
-        agent: call.agent,
-        action: spec.id,
-        resources: ["*"],
-        source: { type: "tool", messageID: call.messageID, id: call.id },
-      })
-    }
     const select = selectionOf(spec, input)
     let matched: readonly string[] | undefined
     if (select !== undefined) {
@@ -551,7 +545,27 @@ export function ownedMethods(deps: RegistryDeps, assert: Assert): readonly Plugi
     output: { type: "object" } as const,
     run: async (value: unknown, rpc: ToolCall) => {
       const source: Source = { sessionID: rpc.sessionID, agent: rpc.agent, messageID: rpc.messageID, id: rpc.id }
-      return (await runTool(spec, deps, assert, (value ?? {}) as Record<string, unknown>, { ...source, signal: rpc.signal, via: "rpc" })).output
+      const input = (value ?? {}) as Record<string, unknown>
+      // boxd.works.list: the status read as the contract's list output. It asserts boxd_status, as a change would, and
+      // the model's tool never reaches it: the host strips `list`, and the tool's run has no list path.
+      if (spec.id === "boxd_status" && input["list"] === "works") return listWorks(deps, assert, input, { ...source, signal: rpc.signal, via: "rpc" })
+      return (await runTool(spec, deps, assert, input, { ...source, signal: rpc.signal, via: "rpc" })).output
     },
   }))
+}
+
+/**
+ * `boxd.works.list`'s answer, built here rather than in the model's status run: every work, newest first, at most 50,
+ * screened whole before the cut, deduped, in the contract's list envelope. The account is checked against this
+ * computer's, as `probe` names it, before anything is read.
+ */
+async function listWorks(deps: RegistryDeps, assert: Assert, input: Record<string, unknown>, call: CallContext) {
+  await assert({ sessionID: call.sessionID, agent: call.agent, action: "boxd_status", resources: ["*"], source: { type: "tool", messageID: call.messageID, id: call.id } })
+  const account = typeof input["account"] === "string" ? input["account"] : undefined
+  const mine = localIdentity().account
+  if (account !== undefined && account !== mine) {
+    throw new SourceError({ code: "ACCOUNT_MISMATCH", what: "boxd lists only this computer's works, and that account is another computer's.", next: "Call probe, then pass this computer's account." })
+  }
+  const status = (await (deps.runs["boxd_status"] as (value: Record<string, unknown>, context: CallContext) => Promise<unknown>)({ view: "all", limit: 50 }, call)) as { works?: readonly WorkBrief[]; asOf: string }
+  return workList(status.works ?? [], account ?? mine, status.asOf)
 }
