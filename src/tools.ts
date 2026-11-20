@@ -527,6 +527,19 @@ export function toolTransform(deps: RegistryDeps, assert: Assert) {
  * The tools RPC's methods: the same table, schema, run and permission, so a script and the model get one answer. A
  * change still asserts inside `runTool`, so a script's ask is refused rather than left waiting.
  */
+/**
+ * The inputs the tools RPC accepts, which for `status` are wider than the model's tool: a consumer reads
+ * `boxd.works.list` through the same method with `list: "works"` and the account it probed. The model's `boxd_status`
+ * tool keeps its own schema, so no `list` input is ever a model's.
+ */
+const RPC_INPUTS: Readonly<Record<string, JsonSchema>> = {
+  boxd_status: object({
+    ...(TOOLS.find((spec) => spec.id === "boxd_status")!.input.properties as Record<string, JsonSchema>),
+    list: { type: "string", enum: ["works"], description: 'A consumer\'s list snapshot: "works" answers the contract\'s `list` output, the works without their detail.' },
+    account: { type: "string", maxLength: 200, description: "This computer's account, as probe names it; another is refused." },
+  }),
+}
+
 export function ownedMethods(deps: RegistryDeps, assert: Assert): readonly PluginMethod[] {
   return TOOLS.map((spec) => ({
     kind: "plugin",
@@ -534,7 +547,7 @@ export function ownedMethods(deps: RegistryDeps, assert: Assert): readonly Plugi
     name: spec.id,
     action: spec.id,
     description: spec.description,
-    input: spec.input,
+    input: RPC_INPUTS[spec.id] ?? spec.input,
     output: { type: "object" } as const,
     run: async (value: unknown, rpc: ToolCall) => {
       const source: Source = { sessionID: rpc.sessionID, agent: rpc.agent, messageID: rpc.messageID, id: rpc.id }

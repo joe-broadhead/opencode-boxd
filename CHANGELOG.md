@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **List snapshot** `boxd.works.list` (`output: "list"`). An app can bind it and render current works without knowing boxd. It calls the existing `boxd_status` read with `view: "all"`, and that path asserts `boxd_status`. A normal status call still does not. `boxd.works` stays the events source and is not renamed. No write is declared. The source-contract pin stays v0.2.0. The host range is unchanged, tested on 2.2.3, 2.2.4, 2.2.5, 2.2.6, 2.2.7, 2.3.0, 2.3.1 and 2.3.2.
+- **List snapshot** `boxd.works.list` (`output: "list"`). An app can bind it and render current works without knowing boxd. It calls the existing `boxd_status` read with `view: "all"`, and that path asserts `boxd_status`. A normal status call still does not. `boxd.works` stays the events source and is not renamed. No write is declared.
+
+### Fixed
+
+- **The works list is readable through the tools RPC on every tested release**, proven by a host test that reads it on each. It rides `boxd_status`, whose declared output is an object, so the list answer is accepted; the method now declares the `list` and `account` inputs it takes. The model's `boxd_status` tool keeps its own schema, so no `list` input is ever a model's.
+- A work's id and text are screened whole and only then cut, so a secret that straddles the cut cannot pass as a prefix; control characters are dropped, a repeated work is listed once, and the list stops before the answer passes the declared `maxBytes`.
+
+### Changed
+
+- The source-contract devDependency is pinned at v0.3.0, still bundled into `dist/index.js`. boxd declares no fact, hint or routine, so a page reads the same for a consumer still on v0.2.0.
+- The plugin is tested on 2.2.3, 2.2.4, 2.2.5, 2.2.6, 2.2.7, 2.3.0, 2.3.1 and 2.3.2 as before, the supported range unchanged (`>=2.2.3 <2.4.0`).
 
 ## [0.1.2] - 2026-11-18
 
