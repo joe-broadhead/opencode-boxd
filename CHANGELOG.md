@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `sources` gains `boxd.works.list`, so Jelly asks for consent again; `boxd.works` and the `jelly` section are unchanged.
-- The list is ordered newest first by `lastActivityAt` (then by id) before the 50-item cap, so a busy recent work is never dropped for an idle one.
+- The list is ordered newest first by `lastActivityAt` (then by id) before the 50-item cap, so a busy recent work is never dropped for an idle one: the status read it gathers from is asked for its own 300-work bound in that order, so the truncation happens after the sort, not by work id.
 - The list is built by the `boxd_status` RPC method itself, not by the model tool's run, so the registered tool has no list path at all.
 - Every list rule is guarded by a unit test (screen, screen-before-cut, id screen, dedupe, cap, order, byte bound) and by a host test that reads two seeded works, and each assertion fails when its rule is removed.
 - The source-contract devDependency is pinned at v0.3.0, still bundled into `dist/index.js`. boxd declares no fact, hint or routine, so a page reads the same for a consumer still on v0.2.0.

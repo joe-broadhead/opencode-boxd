@@ -42,6 +42,11 @@ export interface StatusInput {
   readonly since?: number
   readonly limit: number
   readonly include: readonly StatusInclude[]
+  /**
+   * The order `view: "all"` lists works in: by id (the model's status), or newest activity first, which the works list
+   * snapshot asks for so its 50-item cap falls after the sort. Never read from a call's input.
+   */
+  readonly order?: "id" | "activity"
 }
 
 /** How a status call reads: `boxd_status` reads busy guests; `/boxd-status` makes no guest read at all. */
@@ -121,6 +126,9 @@ export function statusInput(raw: Record<string, unknown>): StatusInput {
   if (!Array.isArray(include) || include.some((part) => !(INCLUDES as readonly unknown[]).includes(part))) throw invalid("include", `include takes ${INCLUDES.map((part) => `"${part}"`).join(", ")}.`)
   return {
     view: view as StatusView,
+    // Internal only: the tools RPC's works list asks for newest-activity order, so its cap falls after the sort. A
+    // call's input never carries it (the tool's schema has no such key, and nothing reads it from a model call).
+    ...(raw.order === "activity" ? { order: "activity" as const } : {}),
     ...(workIds ? { workIds } : {}),
     ...(raw.region !== undefined ? { region: raw.region as Region } : {}),
     ...(raw.since !== undefined ? { since: raw.since as number } : {}),
@@ -452,7 +460,14 @@ export async function fleetStatus(services: FleetServices, input: StatusInput, c
     attention = single.slice(0, input.limit).map(item)
     more = single.length - attention.length
   } else if (input.view === "all") {
-    const listed = rows.filter(visible).sort((a, b) => a.record.workId.localeCompare(b.record.workId))
+    const byActivity = (a: { readonly lastActivityAt?: string }, b: { readonly lastActivityAt?: string }) => {
+      const at = Date.parse(b.lastActivityAt ?? "") || 0
+      const other = Date.parse(a.lastActivityAt ?? "") || 0
+      return at === other ? 0 : at - other
+    }
+    const listed = rows
+      .filter(visible)
+      .sort((a, b) => (input.order === "activity" ? byActivity(brief(a), brief(b)) || a.record.workId.localeCompare(b.record.workId) : a.record.workId.localeCompare(b.record.workId)))
     works = listed.slice(0, input.limit).map(brief)
     more = listed.length - works.length
   }

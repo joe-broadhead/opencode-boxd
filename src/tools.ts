@@ -566,6 +566,11 @@ async function listWorks(deps: RegistryDeps, assert: Assert, input: Record<strin
   if (account !== undefined && account !== mine) {
     throw new SourceError({ code: "ACCOUNT_MISMATCH", what: "boxd lists only this computer's works, and that account is another computer's.", next: "Call probe, then pass this computer's account." })
   }
-  const status = (await (deps.runs["boxd_status"] as (value: Record<string, unknown>, context: CallContext) => Promise<unknown>)({ view: "all", limit: 50 }, call)) as { works?: readonly WorkBrief[]; asOf: string }
+  // The status read's own bound, ordered by newest activity, so the truncation happens after the sort and the 50-item
+  // cap below falls on the newest works, not the first by id.
+  const status = (await (deps.runs["boxd_status"] as (value: Record<string, unknown>, context: CallContext) => Promise<unknown>)(
+    { view: "all", limit: LIST_MAX_ITEMS, order: "activity" },
+    call,
+  )) as { works?: readonly WorkBrief[]; asOf: string }
   return workList(status.works ?? [], account ?? mine, status.asOf)
 }
