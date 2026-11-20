@@ -14,6 +14,7 @@ import { SOURCES_SCHEMA, type Sources } from "@we-the-rebel-alliance/source-cont
 import type { PluginMethod, ToolCall } from "@we-the-rebel-alliance/source-contract/tools-rpc"
 import { EventLog, type NewEvent } from "../../src/ledger/events.js"
 import type { ImportState, WorkEvent } from "../../src/ports.js"
+import { workList } from "../../src/fleet/status.js"
 import { encodeWorksCursor, identityOf, PACKAGE, SOURCE, sourceMethods, type LocalIdentity, type SourceDeps } from "../../src/sources.js"
 import { TOOLS } from "../../src/tools.js"
 import { TOOLS_RPC_ID } from "../../src/tools-rpc.js"
@@ -140,7 +141,31 @@ export async function conformanceReports(fixture: Fixture = FIXTURE): Promise<Co
           "a page is one read of the local event log, where a line is read whole or not at all (a line cut off by a crash was never an event), so no single event can fail on its own",
       },
     })
-    return [report]
+    const listed = sources.items.find((item) => item.id === "boxd.works.list")
+    if (listed === undefined) throw new Error("package.json must declare boxd.works.list")
+    const snapshot = await sourceConformance({
+      plugin: PACKAGE,
+      source: listed,
+      tools: declaredTools(deps),
+      calls: {
+        snapshot: async (input, context) => {
+          await context.permission.assert({ action: "boxd_status", resources: ["*"] })
+          const account = typeof input["account"] === "string" ? input["account"] : undefined
+          return workList(
+            [{ workId: "fix-auth", region: null, phase: "ready", outcome: null, saved: "fresh" }],
+            account,
+            fixture.now,
+          )
+        },
+        probe: run(probe),
+      },
+      snapshotCases: [{ ...(listed.input ?? {}), account }],
+      cases: [],
+      account,
+      sources: { rpc: sources.rpc, probe: sources.probe },
+      describe: { id: TOOLS_RPC_ID },
+    })
+    return [report, snapshot]
   } finally {
     cleanup()
   }

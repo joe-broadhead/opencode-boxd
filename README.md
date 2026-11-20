@@ -19,7 +19,7 @@ boxd is a trademark of Azin Tech Operating Company B.V.; this unofficial plugin 
 ## Install
 
 ```sh
-opencode plugin add github:joe-broadhead/opencode-boxd#v0.1.2
+opencode plugin add github:joe-broadhead/opencode-boxd#v0.1.3
 ```
 
 Run `opencode reload`, or restart OpenCode, then run `/boxd-status`.
@@ -31,7 +31,7 @@ entry with `opencode plugin remove github:joe-broadhead/opencode-boxd#v0.1.1`, t
 Or add the plugin to `opencode.json` instead, with the same spec:
 
 ```json
-{ "plugins": [{ "package": "github:joe-broadhead/opencode-boxd#v0.1.2" }] }
+{ "plugins": [{ "package": "github:joe-broadhead/opencode-boxd#v0.1.3" }] }
 ```
 
 The install takes the GitHub release tag. Its commit carries the built `dist/`, so the install runs no build.
@@ -61,7 +61,7 @@ The first start imports the earlier ledger, `~/.local/share/opencode-boxd/works/
 
 Going back is safe only before this release's first change (a submit, harvest, drop or reassign): after that, the old
 drop could accept a stale record and destroy unharvested work. To go back, run
-`opencode plugin remove github:joe-broadhead/opencode-boxd#v0.1.2`, then
+`opencode plugin remove github:joe-broadhead/opencode-boxd#v0.1.3`, then
 `opencode plugin add github:joe-broadhead/opencode-boxd#v0.0.6`, and keep only the options it knows (`snapshot`,
 `allowUntestedHost`, `allowedRoots`, `access`). It reads `works/` as it was before the upgrade and sees nothing this
 release did; the machines this release created keep billing until you destroy them. `v1/` stays, and upgrading again
@@ -121,7 +121,7 @@ when the name now points at another machine.
 
 A work whose machine is gone in every region closes without destroying anything, and says what was not saved.
 
-The plugin also declares one source, `boxd.works`, under the source contract (`package.json`'s `sources`), for
+The plugin also declares `boxd.works` and the list snapshot `boxd.works.list` under the source contract (`package.json`'s `sources`), for
 Memory's collector and other scripts, not for answering questions. `events_list` (`boxd_events_list`) lists each phase
 change of this laptop's works as one event, oldest first, from the ledger's event log only: no boxd call, no machine
 woken, no lock taken. Each event's title is the plugin's own sentence (the work id, its phase, how a run ended, its
@@ -225,7 +225,7 @@ The region choice, the CI reserve and the image recipe are the policies worth se
 // /Library/Application Support/opencode/opencode.json on macOS
 {
   "plugins": [{
-    "package": "github:joe-broadhead/opencode-boxd#v0.1.2",
+    "package": "github:joe-broadhead/opencode-boxd#v0.1.3",
     "options": { "region": "auto", "keepFree": { "fra": 20, "nyc": 0 }, "size": "2x8" }
   }]
 }
@@ -360,7 +360,7 @@ and notices, health, tools, agents without the default rules, the OpenCode versi
 ## Uninstall
 
 ```sh
-opencode plugin remove github:joe-broadhead/opencode-boxd#v0.1.2
+opencode plugin remove github:joe-broadhead/opencode-boxd#v0.1.3
 ```
 
 The ledger is yours to keep or delete. Machines are boxd's: `boxd machine remove oc-<work id> -y` destroys one.

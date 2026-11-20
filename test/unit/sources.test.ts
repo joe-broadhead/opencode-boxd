@@ -39,7 +39,10 @@ describe("the declaration", () => {
     const sources = declaredSources()
     expect(sources.rpc).toBe(TOOLS_RPC_ID)
     expect(sources.probe).toEqual({ action: "boxd_probe" })
-    expect(sources.items.map((item) => [item.id, item.kind, item.kind === "events" ? item.reads : undefined, item.input?.["source"]])).toEqual([["boxd.works", "events", "x-boxd/work", "works"]])
+    expect(sources.items.map((item) => [item.id, item.kind, item.kind === "events" ? item.reads : item.output, item.input?.["source"]])).toEqual([
+      ["boxd.works", "events", "x-boxd/work", "works"],
+      ["boxd.works.list", "snapshot", "list", "works"],
+    ])
     const rules = sessionRules(sources.items[0]! as never, { source: "boxd.works", account })
     expect(rules.ok ? rules.value : rules.problems).toEqual([
       { action: "*", resource: "*", effect: "deny" },

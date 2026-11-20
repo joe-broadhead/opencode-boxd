@@ -188,6 +188,41 @@ describe("the boxd.works source on a stock host", () => {
   })
 })
 
+describe("the boxd.works.list snapshot on a stock host", () => {
+  // The host validates a tools-RPC method's answer against the method's declared output; `boxd_status` declares an
+  // object, so a list answer is accepted, and this is the read that proves it on every tested release.
+  test("a consumer reads the works list over the tools RPC, and the model's status keeps its own answer", async () => {
+    const host = await startHost({ options: { access: "all" } })
+    try {
+      const build = await session(host)
+      const probed = (await rpcCall(host, "probe", { sessionID: build, input: { source: "works" } })).output as Record<string, any>
+      expect(probed.account).toBeString()
+      // Two works through boxd_ensure, so the list validates real items on every host, newest first.
+      for (const id of ["alpha", "zulu"]) {
+        const ensured = (await rpcCall(host, "boxd_ensure", { sessionID: build, input: { workId: id, region: "fra", size: "1x4" } })).output as Record<string, any>
+        expect(ensured).toBeDefined()
+      }
+      const listed = (await rpcCall(host, "boxd_status", { sessionID: build, input: { list: "works", account: probed.account } })).output as Record<string, any>
+      expect(listed.account).toBe(probed.account)
+      expect(listed.data.editable).toBe(false)
+      expect(listed.trust).toBe("untrusted")
+      // Seeded works are listed, not an empty answer.
+      expect(Array.isArray(listed.data.items)).toBe(true)
+      expect(listed.data.items.length).toBeGreaterThan(0)
+      expect(Number.isNaN(Date.parse(String(listed.asOf)))).toBe(false)
+      // Another computer's account is refused before anything is read.
+      expect(await refusedCode(rpcCall(host, "boxd_status", { sessionID: build, input: { list: "works", account: "another-computer" } }))).toBe("ACCOUNT_MISMATCH")
+      // The model's own status is unchanged: the status object, not a list.
+      const status = (await rpcCall(host, "boxd_status", { sessionID: build, input: {} })).output as Record<string, any>
+      expect(status).not.toHaveProperty("data")
+      expect(status).toHaveProperty("counts")
+      expect(status.state).toBe("ok")
+    } finally {
+      await host.close()
+    }
+  })
+})
+
 describe("cost and cleanup's surfaces (design §C)", () => {
   test("the session hooks and the session-events subscription register on this host, and /boxd-cleanup changes nothing yet", async () => {
     const host = await startHost()

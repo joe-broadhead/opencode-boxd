@@ -7,7 +7,8 @@
  * (`src/services.ts` names them), wired once in `src/plugin.ts`; no package edits this file. Every tool is allowed by
  * default; `access` decides whether a change asks or is denied.
  *
- * The registry, not a run, decides permission (OD-29): a read-only tool never asserts, and every other tool asserts its
+ * The registry, not a run, decides permission (OD-29): a read-only tool never asserts, except the works list snapshot
+ * (`list: "works"` on status), which asserts `boxd_status` before it reads. Every other tool asserts its
  * own action before its run, whatever its input says. A call that names works asserts with those ids; a `select` call
  * first resolves the match with the tool's selector (a read), then asserts with exactly those ids, and its run acts on
  * exactly `call.matched`. An input that names its works ambiguously is refused before anything runs.
@@ -17,6 +18,10 @@ import { BoxdError, boxdError, errorState } from "./errors.js"
 import { NAMESPACE } from "./constants.js"
 import type { JsonSchema, MethodClass, PluginMethod, ToolCall } from "@we-the-rebel-alliance/source-contract/tools-rpc"
 import { LIST_MAX_ITEMS, REGIONS, SIZES } from "./ports.js"
+import { SourceError } from "@we-the-rebel-alliance/source-contract/events"
+import { localIdentity } from "./sources.js"
+import { workList } from "./fleet/status.js"
+import type { WorkBrief } from "./results.js"
 import type { Refusal } from "./results.js"
 import type { Selector, SelectorValues, Selectors, ToolRuns } from "./services.js"
 
@@ -451,7 +456,8 @@ type Assert = Plugin.Context["permission"]["assert"]
 type Source = Pick<CallContext, "sessionID" | "agent" | "messageID" | "id">
 
 /**
- * Checks the call, decides its permission, then runs it. A read-only tool never asserts. Every other tool asserts its
+ * Checks the call, decides its permission, then runs it. A read-only tool never asserts, except the works list snapshot.
+ * Every other tool asserts its
  * own action, with the call's own source, before its run: with the ids the call names, or, for a `select`, with the
  * ids its selector matched, which the run then acts on. An input key never skips the assert. A refusal from the
  * assert (a declined or denied prompt) propagates, so the host reports it as the call's denial.
@@ -515,6 +521,19 @@ export function toolTransform(deps: RegistryDeps, assert: Assert) {
  * The tools RPC's methods: the same table, schema, run and permission, so a script and the model get one answer. A
  * change still asserts inside `runTool`, so a script's ask is refused rather than left waiting.
  */
+/**
+ * The inputs the tools RPC accepts, which for `status` are wider than the model's tool: a consumer reads
+ * `boxd.works.list` through the same method with `list: "works"` and the account it probed. The model's `boxd_status`
+ * tool keeps its own schema, so no `list` input is ever a model's.
+ */
+const RPC_INPUTS: Readonly<Record<string, JsonSchema>> = {
+  boxd_status: object({
+    ...(TOOLS.find((spec) => spec.id === "boxd_status")!.input.properties as Record<string, JsonSchema>),
+    list: { type: "string", enum: ["works"], description: 'A consumer\'s list snapshot: "works" answers the contract\'s `list` output, the works without their detail.' },
+    account: { type: "string", maxLength: 200, description: "This computer's account, as probe names it; another is refused." },
+  }),
+}
+
 export function ownedMethods(deps: RegistryDeps, assert: Assert): readonly PluginMethod[] {
   return TOOLS.map((spec) => ({
     kind: "plugin",
@@ -522,11 +541,36 @@ export function ownedMethods(deps: RegistryDeps, assert: Assert): readonly Plugi
     name: spec.id,
     action: spec.id,
     description: spec.description,
-    input: spec.input,
+    input: RPC_INPUTS[spec.id] ?? spec.input,
     output: { type: "object" } as const,
     run: async (value: unknown, rpc: ToolCall) => {
       const source: Source = { sessionID: rpc.sessionID, agent: rpc.agent, messageID: rpc.messageID, id: rpc.id }
-      return (await runTool(spec, deps, assert, (value ?? {}) as Record<string, unknown>, { ...source, signal: rpc.signal, via: "rpc" })).output
+      const input = (value ?? {}) as Record<string, unknown>
+      // boxd.works.list: the status read as the contract's list output. It asserts boxd_status, as a change would, and
+      // the model's tool never reaches it: the host strips `list`, and the tool's run has no list path.
+      if (spec.id === "boxd_status" && input["list"] === "works") return listWorks(deps, assert, input, { ...source, signal: rpc.signal, via: "rpc" })
+      return (await runTool(spec, deps, assert, input, { ...source, signal: rpc.signal, via: "rpc" })).output
     },
   }))
+}
+
+/**
+ * `boxd.works.list`'s answer, built here rather than in the model's status run: every work, newest first, at most 50,
+ * screened whole before the cut, deduped, in the contract's list envelope. The account is checked against this
+ * computer's, as `probe` names it, before anything is read.
+ */
+async function listWorks(deps: RegistryDeps, assert: Assert, input: Record<string, unknown>, call: CallContext) {
+  await assert({ sessionID: call.sessionID, agent: call.agent, action: "boxd_status", resources: ["*"], source: { type: "tool", messageID: call.messageID, id: call.id } })
+  const account = typeof input["account"] === "string" ? input["account"] : undefined
+  const mine = localIdentity().account
+  if (account !== undefined && account !== mine) {
+    throw new SourceError({ code: "ACCOUNT_MISMATCH", what: "boxd lists only this computer's works, and that account is another computer's.", next: "Call probe, then pass this computer's account." })
+  }
+  // The status read's own bound, ordered by newest activity, so the truncation happens after the sort and the 50-item
+  // cap below falls on the newest works, not the first by id.
+  const status = (await (deps.runs["boxd_status"] as (value: Record<string, unknown>, context: CallContext) => Promise<unknown>)(
+    { view: "all", limit: LIST_MAX_ITEMS, order: "activity" },
+    call,
+  )) as { works?: readonly WorkBrief[]; asOf: string }
+  return workList(status.works ?? [], account ?? mine, status.asOf)
 }

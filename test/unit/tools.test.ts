@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test"
 import type { Plugin } from "@opencode/plugin"
 import { BoxdError, boxdError, CODES } from "../../src/errors.js"
 import type { Run, Selectors, ToolRuns } from "../../src/services.js"
+import { localIdentity } from "../../src/sources.js"
 import { CHANGING_TOOLS, READ_TOOLS, TOOLS, ownedMethods, refusal, resourcesOf, runTool, selectionOf, toolTransform, type CallContext, type RegistryDeps, type ToolName, type ToolSpec } from "../../src/tools.js"
 import { defaultRules } from "../../src/permissions.js"
 
@@ -220,6 +221,21 @@ describe("every change asserts inside its own execute", () => {
       if (tool.readOnly) expect({ name: tool.name, asked: calls }).toEqual({ name: tool.name, asked: [] })
       else expect({ name: tool.name, asked: calls }).toEqual({ name: tool.name, asked: [{ action: tool.id, sessionID: "ses_test", agent: "build", resources: resourcesOf(inputFor(tool.name)) }] })
     }
+  })
+
+  test("the works list snapshot asserts boxd_status through its own RPC method; a normal status call still does not", async () => {
+    const { calls, assert } = recorder()
+    const method = ownedMethods(deps, assert).find((entry) => entry.name === "boxd_status")!
+    // This machine's own account, as probe names it, so the read is not refused.
+    const mine = localIdentity().account
+    await method.run({ list: "works", account: mine }, { sessionID: "ses_test", agent: "build", messageID: "msg_test", id: "call_test", signal: new AbortController().signal } as never)
+    expect(calls).toEqual([{ action: "boxd_status", sessionID: "ses_test", agent: "build", resources: ["*"] }])
+    calls.length = 0
+    await runTool(toolSpec("status"), deps, assert, {}, context("rpc"))
+    expect(calls).toEqual([])
+    // The model's own run has no list path: the same input through runTool answers the status object.
+    const answer = await runTool(toolSpec("status"), deps, assert, { list: "works" }, context("model"))
+    expect(answer.output).not.toHaveProperty("data")
   })
 
   test("a select call asserts the tool's action with exactly the ids its selector matched, and the run acts on those", async () => {

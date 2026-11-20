@@ -8,6 +8,8 @@ import { fleetStatus, statusInput } from "./status.js"
 
 export function viewRuns(services: FleetServices): Pick<ToolRuns, "boxd_status" | "boxd_job"> {
   return {
+    // The model's status, and the tools RPC's without `list`. The works list snapshot is built by the RPC method itself
+    // (src/tools.ts, ownedMethods), so this function has no list path at all.
     boxd_status: async (input, call) => fleetStatus(services, statusInput(input), { tag: { callId: call.id, source: "boxd_status" }, signal: call.signal, guestReads: true }),
     boxd_job: async (input, call) => jobRun(services, input, { tag: { callId: call.id, source: "boxd_job" }, signal: call.signal }),
   }

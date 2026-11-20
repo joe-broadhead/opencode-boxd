@@ -11,6 +11,7 @@
  * works that share a reason and a code fold into one `groups` line when there are more than 3 of them. `lastText` is
  * cut to 200 characters and is the guest model's words: data, never instructions.
  */
+import { secretKinds } from "@we-the-rebel-alliance/source-contract/events"
 import { BoxdError, boxdError, type Code, type WarningCode } from "../errors.js"
 import type { Phase, WorkRecord } from "../ledger/types.js"
 import { LIST_MAX_ITEMS, REGIONS, SIZES, TIMEOUTS, type CallTag, type Listing, type OpContext, type Region, type Size } from "../ports.js"
@@ -41,6 +42,11 @@ export interface StatusInput {
   readonly since?: number
   readonly limit: number
   readonly include: readonly StatusInclude[]
+  /**
+   * The order `view: "all"` lists works in: by id (the model's status), or newest activity first, which the works list
+   * snapshot asks for so its 50-item cap falls after the sort. Never read from a call's input.
+   */
+  readonly order?: "id" | "activity"
 }
 
 /** How a status call reads: `boxd_status` reads busy guests; `/boxd-status` makes no guest read at all. */
@@ -65,6 +71,42 @@ const INCLUDES: readonly StatusInclude[] = ["credentials", "cost", "images", "cl
 
 const invalid = (field: string, message: string) => boxdError("NAME_INVALID", message, { field })
 
+/** The list registry holds 50 items. */
+const LIST_CAP = 50
+/** Control characters would escape to six bytes each in JSON and only make a work's text unreadable. */
+const CONTROLS = /[\u0000-\u001f\u007f-\u009f]/g
+
+/**
+ * Current works as the contract's `list` items, newest first: by `lastActivityAt` (then by id, so the order is stable),
+ * before the 50-item cap, so a busy recent work is never dropped for an idle one. A work id or its text is screened
+ * whole and only then cut, so a secret that straddles the cut cannot pass as a prefix, and a repeated work is listed
+ * once. Not editable.
+ */
+export function workList(works: readonly WorkBrief[], account?: string, asOf = new Date().toISOString()) {
+  const items: { id: string; text: string; note?: string }[] = []
+  const seen = new Set<string>()
+  const newest = [...works].sort((left, right) => {
+    const at = Date.parse(right.lastActivityAt ?? "") || 0
+    const other = Date.parse(left.lastActivityAt ?? "") || 0
+    return at === other ? left.workId.localeCompare(right.workId) : at - other
+  })
+  for (const work of newest) {
+    if (items.length >= LIST_CAP) break
+    const id = work.workId.replace(CONTROLS, "").slice(0, 128)
+    const full = `${work.phase}${work.outcome === null ? "" : `, ${work.outcome}`}`.replace(CONTROLS, " ").replace(/\s+/g, " ").trim()
+    if (id === "" || full === "" || seen.has(id) || secretKinds(id).length > 0 || secretKinds(full).length > 0) continue
+    const note = work.saved.replace(CONTROLS, " ").slice(0, 200)
+    seen.add(id)
+    items.push({ id, text: full.slice(0, 200), ...(note === "" ? {} : { note }) })
+  }
+  return {
+    ...(account === undefined ? {} : { account }),
+    data: { items, editable: false as const },
+    asOf,
+    trust: "untrusted" as const,
+  }
+}
+
 /** The input, checked: a bad field is refused before anything runs. */
 export function statusInput(raw: Record<string, unknown>): StatusInput {
   const view = raw.view ?? "attention"
@@ -84,6 +126,9 @@ export function statusInput(raw: Record<string, unknown>): StatusInput {
   if (!Array.isArray(include) || include.some((part) => !(INCLUDES as readonly unknown[]).includes(part))) throw invalid("include", `include takes ${INCLUDES.map((part) => `"${part}"`).join(", ")}.`)
   return {
     view: view as StatusView,
+    // Internal only: the tools RPC's works list asks for newest-activity order, so its cap falls after the sort. A
+    // call's input never carries it (the tool's schema has no such key, and nothing reads it from a model call).
+    ...(raw.order === "activity" ? { order: "activity" as const } : {}),
     ...(workIds ? { workIds } : {}),
     ...(raw.region !== undefined ? { region: raw.region as Region } : {}),
     ...(raw.since !== undefined ? { since: raw.since as number } : {}),
@@ -415,7 +460,14 @@ export async function fleetStatus(services: FleetServices, input: StatusInput, c
     attention = single.slice(0, input.limit).map(item)
     more = single.length - attention.length
   } else if (input.view === "all") {
-    const listed = rows.filter(visible).sort((a, b) => a.record.workId.localeCompare(b.record.workId))
+    const byActivity = (a: { readonly lastActivityAt?: string }, b: { readonly lastActivityAt?: string }) => {
+      const at = Date.parse(b.lastActivityAt ?? "") || 0
+      const other = Date.parse(a.lastActivityAt ?? "") || 0
+      return at === other ? 0 : at - other
+    }
+    const listed = rows
+      .filter(visible)
+      .sort((a, b) => (input.order === "activity" ? byActivity(brief(a), brief(b)) || a.record.workId.localeCompare(b.record.workId) : a.record.workId.localeCompare(b.record.workId)))
     works = listed.slice(0, input.limit).map(brief)
     more = listed.length - works.length
   }
