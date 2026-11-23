@@ -19,30 +19,31 @@ boxd is a trademark of Azin Tech Operating Company B.V.; this unofficial plugin 
 ## Install
 
 ```sh
-opencode plugin add github:joe-broadhead/opencode-boxd#v0.1.3
+opencode plugin add github:joe-broadhead/opencode-boxd#v0.1.4
 ```
 
 Run `opencode reload`, or restart OpenCode, then run `/boxd-status`.
 
-Each release has its own tag, and a Git install does not update by itself. To move to a newer release, remove the old
-entry with `opencode plugin remove github:joe-broadhead/opencode-boxd#v0.1.1`, then add the new tag with
-`opencode plugin add github:joe-broadhead/opencode-boxd#v<version>`.
+Each release has its own tag, and a Git install does not update by itself. To move to a newer release, remove the entry
+with the exact tag you installed, `opencode plugin remove github:joe-broadhead/opencode-boxd#v<installed version>`, then
+add the new tag with `opencode plugin add github:joe-broadhead/opencode-boxd#v<version>`.
 
 Or add the plugin to `opencode.json` instead, with the same spec:
 
 ```json
-{ "plugins": [{ "package": "github:joe-broadhead/opencode-boxd#v0.1.3" }] }
+{ "plugins": [{ "package": "github:joe-broadhead/opencode-boxd#v0.1.4" }] }
 ```
 
 The install takes the GitHub release tag. Its commit carries the built `dist/`, so the install runs no build.
 
-**Upgrading from an earlier release.** This release breaks compatibility: tools, results, options and the ledger
-change. The tool `boxd_image` is gone (`boxd_golden` builds images, and never saves a work's machine); `boxd_read`,
-`boxd_exec` and `boxd_reassign` are new. Remove `snapshot` (images are now built from stock); set `goldenBase` only to
-build on a hand-made base without model credentials. Do it before you upgrade: a left-over `snapshot` stops the plugin
-with `OPTIONS_INVALID`. Keep the boxd CLI signed in for the first start.
+**Upgrading from the v0.0 line.** The first v1 release broke compatibility: tools, results, options and the ledger
+changed, and this release does not change them again. That release removed `boxd_image` (`boxd_golden` builds images,
+and never saves a work's machine) and added `boxd_read`, `boxd_exec` and `boxd_reassign`. Remove `snapshot` (images are
+built from stock); set `goldenBase` only to build on a hand-made base without model credentials. Do it before you
+upgrade: a left-over `snapshot` stops the plugin with `OPTIONS_INVALID`. Keep the boxd CLI signed in for the first v1
+start.
 
-The first start imports the earlier ledger, `~/.local/share/opencode-boxd/works/`, once into
+The first v1 start imports the earlier ledger, `~/.local/share/opencode-boxd/works/`, once into
 `~/.local/share/opencode-boxd/v1/`:
 
 - Until the import is complete, every tool answers `LEDGER_IMPORTING` with `progress`; the same call again in a few
@@ -59,13 +60,13 @@ The first start imports the earlier ledger, `~/.local/share/opencode-boxd/works/
   an imported work (`NOT_SAVED`), `select: "saved-finished"` skips it, and `/boxd-cleanup` offers it under "Harvest
   imported works first" instead of the drop.
 
-Going back is safe only before this release's first change (a submit, harvest, drop or reassign): after that, the old
-drop could accept a stale record and destroy unharvested work. To go back, run
-`opencode plugin remove github:joe-broadhead/opencode-boxd#v0.1.3`, then
+Going back is safe only before the first mutation (a submit, harvest, drop or reassign) made by a release in the 0.1
+line or later: after that, the old drop could accept a stale record and destroy unharvested work. To go back, remove the
+exact tag you installed, `opencode plugin remove github:joe-broadhead/opencode-boxd#v<installed version>`, then
 `opencode plugin add github:joe-broadhead/opencode-boxd#v0.0.6`, and keep only the options it knows (`snapshot`,
-`allowUntestedHost`, `allowedRoots`, `access`). It reads `works/` as it was before the upgrade and sees nothing this
-release did; the machines this release created keep billing until you destroy them. `v1/` stays, and upgrading again
-uses it as it is, without importing again. The
+`allowUntestedHost`, `allowedRoots`, `access`). It reads `works/` as it was before the v1 upgrade and sees nothing v1
+did; the machines v1 created keep billing until you destroy them. `v1/` stays, and upgrading again uses it as it is,
+without importing again. The
 [CHANGELOG](https://github.com/joe-broadhead/opencode-boxd/blob/HEAD/CHANGELOG.md) lists every breaking change.
 
 ## Sign in
@@ -225,7 +226,7 @@ The region choice, the CI reserve and the image recipe are the policies worth se
 // /Library/Application Support/opencode/opencode.json on macOS
 {
   "plugins": [{
-    "package": "github:joe-broadhead/opencode-boxd#v0.1.3",
+    "package": "github:joe-broadhead/opencode-boxd#v0.1.4",
     "options": { "region": "auto", "keepFree": { "fra": 20, "nyc": 0 }, "size": "2x8" }
   }]
 }
@@ -360,7 +361,7 @@ and notices, health, tools, agents without the default rules, the OpenCode versi
 ## Uninstall
 
 ```sh
-opencode plugin remove github:joe-broadhead/opencode-boxd#v0.1.3
+opencode plugin remove github:joe-broadhead/opencode-boxd#v0.1.4
 ```
 
 The ledger is yours to keep or delete. Machines are boxd's: `boxd machine remove oc-<work id> -y` destroys one.
