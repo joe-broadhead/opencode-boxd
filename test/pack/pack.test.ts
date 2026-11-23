@@ -125,6 +125,14 @@ describe("package tarball", () => {
     expect(paths).toContain("skills/boxd/SKILL.md")
   }, 120_000)
 
+  test("ships the NOTICE for the bundled source contract", () => {
+    const notice = run("tar", ["-xzOf", join(work, pack().filename), "package/NOTICE"], root)
+    expect(notice).toContain("@we-the-rebel-alliance/source-contract 0.3.0")
+    expect(notice).toContain("tools RPC transport, events and cursor modules")
+    expect(notice).toContain("Copyright (c) 2026 Joe Broadhead")
+    expect(notice).toContain("MIT License")
+  })
+
   test("installs with scripts disabled and loads both entry points under Bun", () => {
     const consumer = install(true)
     const probe = join(consumer, "probe.mjs")

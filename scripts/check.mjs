@@ -19,6 +19,7 @@ const FILES = [
   "assets/icon.svg",
   "assets/icon-128.png",
   "assets/icon-256.png",
+  "NOTICE",
   "README.md",
   "LICENSE",
   "CHANGELOG.md",
