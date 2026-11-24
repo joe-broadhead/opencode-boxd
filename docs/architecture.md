@@ -33,7 +33,7 @@ cost, the runs, then automation, the hooks and `/boxd-cleanup`. `src/ports.ts` a
 - **Cost and cleanup** (`src/cost/*`, `src/automation.ts`, `src/hooks.ts`, `src/cleanup.ts`): rates and estimates, the
   budget, automatic harvest and sleep, the session hooks, and `/boxd-cleanup`.
 - **The registry** (`src/tools.ts`): one table of thirteen tools, with their schemas, classes, descriptions and the one
-  place that asserts before a change. The tools RPC, the transform, the default rules, Jelly's declaration and status
+  place that asserts before a change. The tools RPC, the transform, the default rules, the legacy declaration and status
   derive from it.
 - **Status** (`src/status.ts`, `src/tui.ts`): one model for `/boxd-status`, the `/boxd` dialog and the status RPC.
 
@@ -148,7 +148,7 @@ measure again.
 - `opencode auth login` needs a login shell: `boxd machine exec --tty` exits silently, `boxd connect` then
   `opencode auth login` works.
 
-**The boxd CLI** (0.2.29 and 0.3.3; the host CLI 0.3.5 for the verbs the design names)
+**The boxd CLI** (0.2.29 and 0.3.3 for the older error words; the host CLI 0.3.8 for the verbs the design names, recorded in `test/fixtures/boxd-cli-help.json`)
 
 - `machine get --json` prints the id, status, size, labels, `sharing`, `isolated` (the string `"yes"` or `"no"`), the
   idle bounds and `delete_after`. `machine list --json` lists every machine with its status, size and labels, but no
@@ -179,8 +179,8 @@ plugin value in `src/tools-rpc.ts`: a script calls each tool with no model, as a
 decide: only a resolved `allow` runs, an `ask` is refused because no one can answer it, and every change still asserts
 inside its own run.
 
-The same RPC carries the `boxd.works` source's `events_list` and `probe` (`src/sources.ts`), which are methods only,
-not model tools. `events_list` reads `events.jsonl` through `LedgerPort.eventsSince`, the ledger's own sequence number
+The same RPC carries the `boxd.works` source's `events_list` and `probe` (`src/sources.ts`); `events_list` is also the
+`boxd_events_list` model tool, and `probe` is a method only. `events_list` reads `events.jsonl` through `LedgerPort.eventsSince`, the ledger's own sequence number
 as its cursor and `cursorExpired` as the contract's `gap`. It reads only a published ledger: while the v0 import runs it
 answers `UNAVAILABLE` rather than joining the import's gate, which could retry the import's machine listing. Reading the
 log takes no lock, and nothing it does reaches boxd or a machine.

@@ -947,9 +947,39 @@ def own_repository(directory):
     return True
 
 
+def unpushed_commits(git):
+    """(count, the first commits, known) for local refs and HEAD against every remote ref.
+
+    An empty repository has nothing to lose and is a known 0. A repository whose refs cannot be walked (a ref to a
+    missing object, a corrupt object) is unknown: the caller must refuse a destructive action, not guess."""
+    head = git("rev-parse", "--verify", "--quiet", "HEAD")
+    if head.returncode != 0:
+        # No commit at HEAD: either an empty repository or an unborn branch with commits elsewhere.
+        counted = git("rev-list", "--count", "--all", "--not", "--remotes")
+        text = counted.stdout.strip()
+        if counted.returncode != 0 or not text.isdigit():
+            return -1, [], False
+        count = int(text)
+        if count == 0:
+            return 0, [], True
+        named = git("log", "--all", "--not", "--remotes", "--format=%h %s", "-n", "20")
+        commits = [line.strip()[:200] for line in named.stdout.splitlines() if line.strip()] if named.returncode == 0 else []
+        return count, commits, True
+    counted = git("rev-list", "--count", "--all", "HEAD", "--not", "--remotes")
+    text = counted.stdout.strip()
+    if counted.returncode != 0 or not text.isdigit():
+        return -1, [], False
+    count = int(text)
+    if count == 0:
+        return 0, [], True
+    named = git("log", "--all", "HEAD", "--not", "--remotes", "--format=%h %s", "-n", "20")
+    commits = [line.strip()[:200] for line in named.stdout.splitlines() if line.strip()] if named.returncode == 0 else []
+    return count, commits, True
+
+
 def action_git(request):
     directory = work_directory(request.get("directory"))
-    answer = {"known": False, "remote": None, "branch": None, "sha": None, "dirty": False, "untracked": [], "ignored": [], "unpushed": [], "unpushedCount": 0}
+    answer = {"known": False, "remote": None, "branch": None, "sha": None, "dirty": False, "untracked": [], "ignored": [], "unpushed": [], "unpushedCount": 0, "unpushedKnown": True}
 
     def git(*args, text=True):
         return pinned_git(directory, *args, text=text)
@@ -979,15 +1009,10 @@ def action_git(request):
         sha = git("rev-parse", "HEAD")
         remote = git("remote", "get-url", "origin")
         branch = git("branch", "--show-current")
-        # Commits a local branch holds that no remote ref contains (#39): with no remote, every commit is local, so
-        # dropping the machine would lose them. An empty repository has no branch and nothing to lose.
-        counted = git("rev-list", "--count", "--branches", "--not", "--remotes")
-        unpushed_count = int(counted.stdout.strip()) if counted.returncode == 0 and counted.stdout.strip().isdigit() else 0
-        unpushed = []
-        if unpushed_count:
-            named = git("log", "--branches", "--not", "--remotes", "--format=%h %s", "-n", "20")
-            if named.returncode == 0:
-                unpushed = [line.strip()[:200] for line in named.stdout.splitlines() if line.strip()]
+        # Commits a local branch, tag, stash or detached HEAD holds that no remote ref contains (#39): with no remote,
+        # every commit is local, so dropping the machine would lose them. The check must fail closed: a count that cannot
+        # be read is unknown, never 0, because dropping is destructive.
+        unpushed_count, unpushed, unpushed_known = unpushed_commits(git)
         answer.update(
             known=True,
             remote=strip_userinfo(remote.stdout.strip()) or None,
@@ -998,6 +1023,7 @@ def action_git(request):
             ignored=[entry(directory, name) for name in ignored[:LIST_LIMIT]],
             unpushed=unpushed,
             unpushedCount=unpushed_count,
+            unpushedKnown=unpushed_known,
         )
         if dirty:
             # Tracked changes, staged and unstaged together: `git diff` alone misses a staged file.

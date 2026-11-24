@@ -86,7 +86,7 @@ A class is the worst thing the method does; it never decides whether a call runs
 ## The boxd.works source
 
 `events_list` and `probe` are the `boxd.works` source's methods (source contract, `package.json`'s `sources`), for a
-collector such as Memory's. They read this machine's ledger only: no boxd call, no machine woken, no lock taken.
+collector. They read this machine's ledger only: no boxd call, no machine woken, no lock taken.
 
 ```sh
 opencode api post /api/rpc/boxd.machines.tools/probe -H "x-opencode-directory:$PWD" -d '{"input":{"sessionID":"<id>","input":{}}}'

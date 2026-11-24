@@ -1,7 +1,8 @@
 /**
- * Argv for the laptop boxd CLI (0.3.5), one builder per verb: never a shell string, `--region` on every machine,
+ * Argv for the laptop boxd CLI (0.3.8), one builder per verb: never a shell string, `--region` on every machine,
  * snapshot and list verb, a machine id wherever the CLI takes "machine name or ID", and never `--shared` or
- * `--isolated`. Pure, so `test/unit/boxd-argv.test.ts` pins each one.
+ * `--isolated`. Its recorded `--help` is `test/fixtures/boxd-cli-help.json`. Pure, so `test/unit/boxd-argv.test.ts`
+ * pins each one.
  */
 import { boxdError } from "../errors.js"
 import type { ChangeTarget, CreateBuilder, CreateWork, MachineId, MachineName, Region, Size } from "../ports.js"

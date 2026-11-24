@@ -85,8 +85,11 @@ describe("the README", () => {
     expect(README).toContain("Linux or macOS")
   })
 
-  test("installs from the GitHub release tag, not from a checkout or the registry", () => {
-    expect(README).toContain("opencode plugin add github:we-the-rebel-alliance/boxd-plugin#v0.0.0")
+  test("installs from a release tag only, never from master, an untagged repository or a checkout", () => {
+    expect(README).toContain(
+      "Install from a release: `opencode plugin add github:we-the-rebel-alliance/boxd-plugin#v<version>`. The first release on\nplugin-contract is v0.0.0 (phase 4b).",
+    )
+    expect(README).not.toMatch(/opencode plugin add [^\n]*#v\d/)
     expect(README).not.toMatch(/plugins.*\.\/boxd-plugin/)
     expect(README).not.toMatch(/npm run build/)
   })
@@ -147,8 +150,8 @@ describe("the README", () => {
       expect(text).not.toMatch(/not published yet|private until|provisional|not yet checked|TODO|FIXME/i)
       expect(text).not.toMatch(/\b\d+ tests?\b/i)
     }
-    // The install spec names the release tag, the one place the README names the plugin's version.
-    expect(README.replace(/boxd-plugin#v\d+\.\d+\.\d+/g, "")).not.toMatch(/\b0\.\d+\.\d+/)
+    // The only version the README names is the first release's, in the install sentence; no install line pins one.
+    expect(README.replace(/v0\.0\.0 \(phase 4b\)/g, "")).not.toMatch(/\bv?0\.\d+\.\d+/)
   })
 })
 

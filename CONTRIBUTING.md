@@ -33,7 +33,8 @@ Only for development. Install the package into an OpenCode project from the fold
 { "plugins": ["./boxd-plugin"] }
 ```
 
-A published install is `opencode plugin add github:we-the-rebel-alliance/boxd-plugin#v0.0.0`.
+A published install is a release tag: `opencode plugin add github:we-the-rebel-alliance/boxd-plugin#v<version>`. The first
+release on plugin-contract is v0.0.0 (phase 4b).
 
 ## Rules
 
@@ -75,7 +76,7 @@ The declaration is checked against what the provider serves. `npm run capture` (
 through the signed-in OpenCode, never by CI) writes `test/fixtures/live-tools.json` and `test/fixtures/provenance.json`,
 with the signed-in account's own values that some servers write into descriptions (Slack's "Your user_id: …") replaced
 by placeholders such as `U00CURRENTUSER`; the drift check fails a committed capture that still holds one.
-`scripts/check-drift.mjs` checks `jelly.tools`, `test/fixtures/tool-registry.json`, the skills and the docs against them,
+`scripts/check-drift.mjs` checks the legacy declaration's tools, `test/fixtures/tool-registry.json`, the skills and the docs against them,
 offline, in the kit tests of `npm run check`. The release build runs it with `--release`, which also refuses a capture
 more than 14 days old, unless `provenance.json` holds the owner's written waiver for exactly that capture:
 `"waiver": { "listedAt": "<the capture's date>", "reason": "…", "approvedBy": "…" }` (a new capture drops it). A plugin
@@ -149,7 +150,7 @@ tag, and restores the ruleset exactly as it was.
 
 **Known limit: a `v*` tag pushed by hand.** No ruleset limits who creates a `v*` tag, so anyone with write access can
 push one by hand, pointing at any commit. Such a tag has no published Release, the forward-only check ignores it, and
-Jelly installs only a published Release whose `SHA256SUMS` it verifies. But a user who installs
+An app installs only a published Release whose `SHA256SUMS` it verifies. But a user who installs
 `github:we-the-rebel-alliance/boxd-plugin#v<x>` directly gets whatever that tag points at. Only the release workflow makes
 release tags; never push one by hand.
 
@@ -167,5 +168,5 @@ Each release has its own tag, and a Git install does not update by itself. To mo
 Or add the plugin to `opencode.json` instead, with the same spec:
 
 ```json
-{ "plugins": [{ "package": "github:we-the-rebel-alliance/boxd-plugin#v0.0.0" }] }
+{ "plugins": [{ "package": "github:we-the-rebel-alliance/boxd-plugin#v<version>" }] }
 ```

@@ -315,8 +315,8 @@ describe("the access option (OD-29)", () => {
     }
   })
 
-  test("a removed option stops the plugin with OPTIONS_INVALID", async () => {
-    await expect(startHost({ options: { snapshot: "opencode-golden" } })).rejects.toThrow(/OPTIONS_INVALID/)
+  test("an unknown option stops the plugin with OPTIONS_INVALID", async () => {
+    await expect(startHost({ options: { regionn: "fra" } })).rejects.toThrow(/OPTIONS_INVALID/)
   })
 })
 

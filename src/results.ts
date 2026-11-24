@@ -16,8 +16,10 @@ export interface ErrorFacts {
   readonly paths?: readonly string[]
   readonly count?: number
   readonly kind?: "untracked" | "ignored"
-  /** Commits a local branch holds that no remote ref contains (`UNPUSHED`), at most the first 20. */
+  /** Commits a local ref or HEAD holds that no remote ref contains (`UNPUSHED`), at most the first 20. */
   readonly commits?: readonly string[]
+  /** `UNPUSHED_UNKNOWN`: the guest could not tell, and a drop must refuse. */
+  readonly unknown?: boolean
   /** Per region (`MACHINE_LIMIT`). */
   readonly limit?: ReadonlyArray<{ readonly region: Region; readonly limit: number; readonly inUse: number; readonly free: number }>
   /** How far the v0 import is (`LEDGER_IMPORTING`). */
@@ -257,7 +259,8 @@ export interface HarvestResult extends Next {
   readonly workId: string
   readonly outcome: RunOutcome | null
   readonly sessions: ReadonlyArray<{ readonly id: string; readonly bytes: number }>
-  readonly git: { readonly known: boolean; readonly dirty: boolean; readonly patchStored: boolean; readonly untracked: number; readonly ignored: number; readonly unpushed: number }
+  /** `unpushed` is null when the guest could not tell: never shown as 0. */
+  readonly git: { readonly known: boolean; readonly dirty: boolean; readonly patchStored: boolean; readonly untracked: number; readonly ignored: number; readonly unpushed: number | null }
   readonly files?: ReadonlyArray<{ readonly path: string; readonly bytes: number; readonly sha256: string; readonly laptopPath: string }>
 }
 

@@ -31,14 +31,14 @@ const atAll = (text: string) =>
     .filter((sentence) => !/(?:ask-changes|read-only)/.test(sentence))
     .join(" ")
 
-const jellySummary = () => (JSON.parse(read("package.json")) as { jelly?: { summary?: string } }).jelly?.summary ?? ""
+const legacySummary = () => (JSON.parse(read("package.json")) as { jelly?: { summary?: string } }).jelly?.summary ?? ""
 
 /** The status a person reads with the default option and the block in place, and one tool this version does not know. */
 const defaultStatus = (): Status => buildStatus(statusFacts({ tools: [...TOOLS.map((tool) => tool.id), "shiny_new_tool"] }))
 
 describe("the model-facing text at access all", () => {
   const all = {
-    "the Jelly summary": jellySummary(),
+    "the legacy declaration's summary": legacySummary(),
     "the /boxd-status text": formatStatus(defaultStatus()),
     "the boxd-sessions skill": read("skills/boxd-sessions/SKILL.md"),
   }

@@ -3,7 +3,8 @@
  * guard runs per work whatever asked (a tool call, a `select`, or `/boxd-cleanup`), and nothing automatic calls it.
  *
  * The guard: `saved: fresh` here, and for a v0-imported work a copy a v1 harvest verified; then, in one `git` exec on
- * the guest, a known git tree, no commit on a local branch that no remote ref contains (`UNPUSHED`, #39), every
+ * the guest, a known git tree, no commit on a local ref or HEAD that no remote ref contains (`UNPUSHED`, #39), and a
+ * count that must be known (`UNPUSHED_UNKNOWN`) rather than guessed, every
  * untracked or ignored path harvested at the digest the guest still has, tracked changes stored as the same patch, and
  * the guest's own session marks (last message id and message count per session, and no new session under the root)
  * equal to what the harvest stored (M3, L-d). Then `machine remove <id>`, after `oc-<id>` was resolved to the recorded
@@ -111,12 +112,13 @@ async function guard(services: Services, record: WorkRecord, target: ChangeTarge
   if (rootId) sessionsMatch(record, git)
   if (!git.known) throw boxdError("GIT_UNKNOWN", "The guest folder is not a git repository, so its files cannot be accounted for.")
   // #39: a commit on a local branch that no remote ref has exists only on this machine, and a harvest stores no commits.
+  if (!git.unpushedKnown) throw boxdError("UNPUSHED_UNKNOWN", undefined, { unknown: true })
   if (git.unpushedCount > 0) {
     const named = git.unpushed.slice(0, 3).map((commit) => commit.slice(0, 60)).join("; ")
     const more = git.unpushedCount > 3 ? ` and ${git.unpushedCount - 3} more` : ""
     throw boxdError(
       "UNPUSHED",
-      `The guest has ${git.unpushedCount} commit${git.unpushedCount === 1 ? "" : "s"} on a local branch that no remote ref contains${named ? `: ${named}${more}` : ""}. Dropping ${record.machine} would lose ${git.unpushedCount === 1 ? "it" : "them"}.`,
+      `The guest has ${git.unpushedCount} commit${git.unpushedCount === 1 ? "" : "s"} on a local branch, tag, stash or detached HEAD that no remote ref contains${named ? `: ${named}${more}` : ""}. Dropping ${record.machine} would lose ${git.unpushedCount === 1 ? "it" : "them"}.`,
       { count: git.unpushedCount, commits: git.unpushed.slice(0, LISTED_PATHS) },
     )
   }

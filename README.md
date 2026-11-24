@@ -20,16 +20,15 @@ boxd is a trademark of Azin Tech Operating Company B.V.; this unofficial plugin 
 
 ## Install
 
-```sh
-opencode plugin add github:we-the-rebel-alliance/boxd-plugin#v0.0.0
-```
+Install from a release: `opencode plugin add github:we-the-rebel-alliance/boxd-plugin#v<version>`. The first release on
+plugin-contract is v0.0.0 (phase 4b).
 
 Run `opencode reload`, or restart OpenCode, then run `/boxd-status`.
 
-Or add the plugin to `opencode.json` with the same spec:
+Or add the plugin to `opencode.json` with the same release tag:
 
 ```json
-{ "plugins": [{ "package": "github:we-the-rebel-alliance/boxd-plugin#v0.0.0" }] }
+{ "plugins": [{ "package": "github:we-the-rebel-alliance/boxd-plugin#v<version>" }] }
 ```
 
 Each release has its own tag, and a Git install does not update by itself: remove the exact tag you installed and add
@@ -77,9 +76,10 @@ available over the tools RPC.
 prompt came later, `none` otherwise.
 
 `boxd_drop` destroys nothing this machine cannot account for. It refuses when the work is not saved or the guest's
-sessions moved on (`NOT_SAVED`), the folder is not a git repository (`GIT_UNKNOWN`), a local branch holds a commit no
-remote ref contains (`UNPUSHED`), untracked or ignored paths were not harvested (`UNTRACKED`), or the tree has
-uncommitted work and no stored patch (`DIRTY`).
+sessions moved on (`NOT_SAVED`), the folder is not a git repository (`GIT_UNKNOWN`), a local branch, tag, stash or
+detached HEAD holds a commit no remote ref contains (`UNPUSHED`), it cannot tell whether that is so
+(`UNPUSHED_UNKNOWN`), untracked or ignored paths were not harvested (`UNTRACKED`), or the tree has uncommitted work and
+no stored patch (`DIRTY`).
 
 ### What it costs
 
@@ -148,7 +148,7 @@ A tool that fails returns `state`, `error` (the code), `message` (what happened)
 | Code | What to do |
 |---|---|
 | `HOST_UNTESTED` | Use OpenCode `>=2.4.1 <2.5.0`, or set `"allowUntestedHost": true` to run anyway. |
-| `OPTIONS_INVALID` | Fix the plugin options in `opencode.json`, then restart OpenCode. A removed option, such as `snapshot`, says what to do instead. |
+| `OPTIONS_INVALID` | Fix the plugin options in `opencode.json`, then restart OpenCode. An unknown option or a value outside its rule is named in the message. |
 | `STATUS_UNAVAILABLE` | Restart OpenCode, then run `/boxd-status` again. |
 | `SKILLS_INVALID` | Reinstall the plugin so its skill file is present, then restart OpenCode. |
 | `NAME_INVALID` | An input failed its rule; `field` names it. Fix that input, then call again. |
@@ -178,7 +178,8 @@ A tool that fails returns `state`, `error` (the code), `message` (what happened)
 | `GUEST_SERVER_DOWN` | Nothing listens on the guest's OpenCode port. `boxd_ensure` starts it. |
 | `GUEST_FAILED` | The guest helper failed; its words are in the message. `boxd_ensure`; if it repeats, `boxd_read({ workId, log: "server" })`. |
 | `GUEST_WORKSPACE` | The guest folder could not be made or cloned. Fix the clone's access or the disk, then `boxd_ensure`. |
-| `UNPUSHED` | A local branch has commits that no remote ref contains, so `boxd_drop` refused: `count` and `commits` name them. Push them from the machine with `boxd_exec({ workId, command: ["git", "push", "--all", "origin"] })`, then drop again. |
+| `UNPUSHED` | A local branch, tag, stash or detached HEAD has commits that no remote ref contains, so `boxd_drop` refused: `count` and `commits` name them. Push every branch and tag from the machine with `boxd_exec({ workId, command: ["sh", "-c", "git push --all origin && git push --tags origin"] })` (a detached HEAD by name), then drop again. |
+| `UNPUSHED_UNKNOWN` | The guest could not tell whether every commit is on a remote ref, so `boxd_drop` refused rather than risk losing one. Run the check with `boxd_exec({ workId, command: ["git", "rev-list", "--count", "--all", "HEAD", "--not", "--remotes"] })`, push whatever it counts, then drop again. |
 | `NOT_SAVED` | The work is not saved, or the guest's sessions moved on since the harvest. `boxd_harvest`, then drop again. |
 | `UNTRACKED` | Untracked or ignored paths were not harvested; `paths`, `count` and `kind` name them. Harvest them with `files`, or delete them on the machine, then harvest again. |
 | `DIRTY` | The guest has uncommitted work and no stored patch. `boxd_harvest`, then drop again. |
@@ -227,8 +228,8 @@ and notices, health, tools, agents without the default rules, the OpenCode versi
 - **The boxd CLI here only.** The CLI inside a boxd machine acts in one region and has no organisation usage, so every
   tool answers `BOXD_MISSING` on it.
 - **Prompts that bypass the plugin** make drop refuse: it compares the guest's own session marks with the harvest's.
-- **A commit on no remote ref stops drop.** A harvest stores no commits, so `boxd_drop` answers `UNPUSHED` until the
-  branch is pushed from the machine.
+- **A commit on no remote ref stops drop.** A harvest stores no commits, so `boxd_drop` answers `UNPUSHED` until every
+  ref is pushed from the machine, and `UNPUSHED_UNKNOWN` when the guest cannot walk its refs.
 - **Steer waits for the current step.** OpenCode cannot inject text into a step that is running: a step blocked in a
   long tool call takes a steered prompt when that call returns, and only `mode: "interrupt"` reaches it sooner.
 - **Model credentials stay out of images.** A guest gets its key from a sealed, host-bound `boxd env` secret, or from a
@@ -239,7 +240,7 @@ and notices, health, tools, agents without the default rules, the OpenCode versi
 ## Uninstall
 
 ```sh
-opencode plugin remove github:we-the-rebel-alliance/boxd-plugin#v0.0.0
+opencode plugin remove github:we-the-rebel-alliance/boxd-plugin#v<version>
 ```
 
 The ledger is yours to keep or delete. Machines are boxd's: `boxd machine remove oc-<work id> -y` destroys one.

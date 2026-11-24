@@ -19,7 +19,7 @@ const rule = (action: string, effect: Rule["effect"]): Rule => ({ action, resour
 /**
  * The `/boxd-cleanup` command's own action (design §C.5): at `access: "all"`, where the tools' actions run unasked, the
  * command asserts this one per cleanup action, so a person confirms each. It asks at every access level; a person who
- * wants cleanup without a prompt adds a later rule. A command action, not a tool, so it is not in `jelly.tools`.
+ * wants cleanup without a prompt adds a later rule. A command action, not a tool, so the legacy declaration omits it.
  */
 export const CLEANUP_ACTION = "boxd_cleanup"
 

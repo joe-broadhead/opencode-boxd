@@ -490,13 +490,41 @@ describe("boxd_drop", () => {
     git(tree, "commit", "--quiet", "-m", "local work")
     const refused = await errorOf(runs.boxd_drop({ workId: "unpushed" }, call()))
     expect(refused.code).toBe("UNPUSHED")
-    expect(refused.what).toContain("1 commit on a local branch that no remote ref contains")
+    expect(refused.what).toContain("1 commit on a local branch, tag, stash or detached HEAD that no remote ref contains")
     expect(refused.what).toContain("Dropping oc-unpushed would lose it")
     expect(refused.details).toMatchObject({ count: 1, commits: [expect.stringContaining("local work")] })
-    expect(refused.next).toContain('["git", "push", "--all", "origin"]')
+    expect(refused.next).toContain('git push --all origin && git push --tags origin')
     // Pushed, the same work drops: what the guard wanted was the commit on a remote ref.
     git(tree, "push", "--quiet", "origin", "HEAD")
     expect(await runs.boxd_drop({ workId: "unpushed" }, call())).toMatchObject({ state: "dropped" })
+  })
+
+  test("refuses UNPUSHED_UNKNOWN when the guest cannot count unpushed commits (a broken ref), and removes nothing", async () => {
+    const machine = await savedWork("brokenref")
+    const tree = treeOf(machine, "brokenref")
+    // git status still answers from the current branch; walking every ref fails on the missing object.
+    writeFileSync(join(tree, ".git", "refs", "heads", "broken"), "0123456789012345678901234567890123456789\n")
+    const refused = await errorOf(runs.boxd_drop({ workId: "brokenref" }, call()))
+    expect(refused.code).toBe("UNPUSHED_UNKNOWN")
+    expect(refused.what).toContain("could not tell whether every commit is on a remote ref")
+    expect(refused.next).toContain('["git", "rev-list", "--count", "--all", "HEAD", "--not", "--remotes"]')
+    expect(refused.details).toMatchObject({ unknown: true })
+    expect(machineState(machine).status).toBe("running")
+  })
+
+  test("refuses a commit on a detached HEAD that no branch or remote ref holds", async () => {
+    const machine = await savedWork("detached")
+    const tree = treeOf(machine, "detached")
+    git(tree, "checkout", "--quiet", "--detach", "HEAD")
+    writeFileSync(join(tree, "DETACHED.md"), "detached\n")
+    git(tree, "add", ".")
+    git(tree, "commit", "--quiet", "-m", "detached work")
+    const refused = await errorOf(runs.boxd_drop({ workId: "detached" }, call()))
+    expect(refused.code).toBe("UNPUSHED")
+    expect(refused.details).toMatchObject({ count: 1, commits: [expect.stringContaining("detached work")] })
+    // The same commit under a remote ref: drop accepts.
+    git(tree, "push", "--quiet", "origin", "HEAD:refs/heads/detached")
+    expect(await runs.boxd_drop({ workId: "detached" }, call())).toMatchObject({ state: "dropped" })
   })
 
   test("refuses a v0-imported work whose laptop copy is unverified, with next boxd_harvest; a harvest verifies it, and drop then removes it (F1)", async () => {

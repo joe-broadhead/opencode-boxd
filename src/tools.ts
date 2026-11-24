@@ -57,7 +57,7 @@ export interface ToolSpec {
   /** The tool's id, its permission action and its method name in the tools RPC: `boxd_<name>`. */
   readonly id: `boxd_${ToolName}`
   readonly class: ToolClass
-  /** True only for a tool that changes nothing anywhere: Jelly's `readOnly`, and what `ask-changes` lets run. */
+  /** True only for a tool that changes nothing anywhere: the legacy declaration's `readOnly`, and what `ask-changes` lets run. */
   readonly readOnly: boolean
   /** Whether the tool takes `works: [...]` (1 to 300 items) beside the single form (§4.2). */
   readonly list: boolean
@@ -381,7 +381,7 @@ export const TOOLS: readonly ToolSpec[] = [
     list: true,
     selects: ["saved-finished"],
     description:
-      "Destroy the work's machine, by its recorded machine id, and close the work. Refuses unless the work is saved (a fresh harvest that the guest's own sessions still match), its git tree is known, and every untracked or ignored path was harvested. A work whose machine is gone everywhere closes without destroying anything; with no recorded machine id it needs confirmGone. select: \"saved-finished\" drops every saved, completed work that passes the guard; the plugin never drops anything by itself.",
+      "Destroy the work's machine, by its recorded machine id, and close the work. Refuses unless the work is saved (a fresh harvest that the guest's own sessions still match), its git tree is known, every untracked or ignored path was harvested, and no commit on a local branch, tag, stash or detached HEAD is missing from every remote ref (UNPUSHED, or UNPUSHED_UNKNOWN when the guest cannot tell). A work whose machine is gone everywhere closes without destroying anything; with no recorded machine id it needs confirmGone. select: \"saved-finished\" drops every saved, completed work that passes the guard; the plugin never drops anything by itself.",
     input: listable(
       { ...WORK_ITEM, confirmGone: boolean("Close a work with no recorded machine id as gone.") },
       ["workId"],

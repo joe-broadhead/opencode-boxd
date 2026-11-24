@@ -48,7 +48,9 @@ only what changed. Repeated causes fold into `groups`, such as fifteen works sto
   the session, and the next `boxd_submit` wakes it. The plugin also does this by itself after `autoSleepMinutes`,
   unless automation is off.
 - Drop only finished, saved work, and only when nobody needs the machine again: `boxd_drop({ select: "saved-finished" })`.
-  Drop refuses anything not saved, so harvest first: `boxd_harvest({ select: "unsaved-finished" })`.
+  Drop refuses anything not saved, so harvest first: `boxd_harvest({ select: "unsaved-finished" })`. It also refuses with
+  `UNPUSHED` while a commit on a local branch, tag, stash or detached HEAD is on no remote ref, and with
+  `UNPUSHED_UNKNOWN` when the guest cannot tell: push first, then drop.
 - Read `cost` and `cleanup` in `boxd_status`, and act on the first `cleanup` action, or say why not.
 - Automation and `access`: with `access` "all" the plugin harvests and hibernates finished works by itself. At
   "ask-changes" and "read-only" it does not, unless the person put `automation: "on"` in the plugin config: that line is
@@ -95,5 +97,5 @@ so a person runs `boxd connect` and `opencode auth login` on that machine.
 
 A failed call returns `state`, `error`, `message` and `next`; `next` is the one call to make. Read `message` first: for
 `NAME_INVALID` it names the input (also in `field`). `LEDGER_IMPORTING` and `LEDGER_LOCKED` mean the same call again in
-a few seconds. `NOT_SAVED` means harvest, then drop. `MACHINE_LIMIT` names each region's `limit`, `inUse` and `free`.
+a few seconds. `NOT_SAVED` means harvest, then drop; `UNPUSHED` means push, then drop. `MACHINE_LIMIT` names each region's `limit`, `inUse` and `free`.
 `/boxd-status` shows the fleet, the cost and one next step for the person.

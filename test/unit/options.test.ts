@@ -88,9 +88,6 @@ describe("plugin options", () => {
     for (const raw of bad) expect(() => parseOptions(raw)).toThrow(/^OPTIONS_INVALID: .*Next step: /)
   })
 
-  test("the removed snapshot option names its replacement", () => {
-    expect(() => parseOptions({ snapshot: "opencode-golden" })).toThrow(/"snapshot" is removed: golden images are now built from stock\. Remove it; set "goldenBase" only/)
-  })
 })
 
 describe("the host", () => {

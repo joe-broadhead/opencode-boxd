@@ -20,5 +20,5 @@ plugin-contract v0.
   never destroyed with commits that were never pushed. The harvest reports the count and the next step.
 - Text that meant the machine running OpenCode says "here" rather than "the laptop", since OpenCode may run on a boxd
   machine.
-- The old design and Jelly docs are gone; the README and `AGENTS.md` describe the current direction. The full docs set,
-  the `capabilities` manifest and plugin-contract v0 arrive in the next phase.
+- The old design and legacy-declaration docs are gone; the README and `AGENTS.md` describe the current direction. The full
+  docs set, the `capabilities` manifest and plugin-contract v0 arrive in the next phase.

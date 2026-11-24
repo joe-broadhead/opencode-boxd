@@ -1,5 +1,5 @@
 /**
- * The boxd CLI port, v1 (design §4.1, §3): the laptop CLI 0.3.5 through the runner. Every call passes `--region` (or
+ * The boxd CLI port, v1 (design §4.1, §3): the laptop CLI 0.3.8 through the runner. Every call passes `--region` (or
  * `--region all` for a list), every change acts on a machine id that `checkOwned` resolved in this call, a read exec
  * passes the read rule first, and every failure is read through the one stderr table (`./errors-table.ts`).
  *

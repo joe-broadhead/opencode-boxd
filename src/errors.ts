@@ -157,8 +157,13 @@ export const CODES = {
   },
   UNPUSHED: {
     state: "refused",
-    message: "A local branch has commits that no remote ref contains; count and commits name them.",
-    next: 'Push them from the machine with boxd_exec({ workId, command: ["git", "push", "--all", "origin"] }), then drop again.',
+    message: "A local branch, tag, stash or detached HEAD has commits that no remote ref contains; count and commits name them.",
+    next: 'Push every local branch and tag from the machine with boxd_exec({ workId, command: ["sh", "-c", "git push --all origin && git push --tags origin"] }); push a detached HEAD by name. Then drop again.',
+  },
+  UNPUSHED_UNKNOWN: {
+    state: "refused",
+    message: "The guest could not tell whether every commit is on a remote ref, so dropping would risk losing one.",
+    next: 'Run the check with boxd_exec({ workId, command: ["git", "rev-list", "--count", "--all", "HEAD", "--not", "--remotes"] }); push whatever it counts, then drop again.',
   },
   DIRTY: { state: "refused", message: "The guest has uncommitted work and no stored patch.", next: "boxd_harvest({ workId }), then drop again." },
   GIT_UNKNOWN: { state: "refused", message: "The guest folder is not a git repository.", next: "Make it one, or boxd_sleep({ workId }) instead." },

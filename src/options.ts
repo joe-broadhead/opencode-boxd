@@ -106,12 +106,7 @@ const ACCEPTED = {
   idleCheck: "true (the default) or false",
 } as const satisfies Record<keyof Options, string>
 
-/** Options that a release removed, with what replaced them. */
-const REMOVED: Readonly<Record<string, string>> = {
-  snapshot: 'The option "snapshot" is removed: golden images are now built from stock. Remove it; set "goldenBase" only to build on a hand-made base without model credentials',
-}
-
-const EXAMPLE = `"plugins": [{ "package": "github:we-the-rebel-alliance/boxd-plugin#<tag>", "options": { "region": "auto", "size": "2x8" } }]`
+const EXAMPLE = `"plugins": [{ "package": "github:we-the-rebel-alliance/boxd-plugin#v<version>", "options": { "region": "auto", "size": "2x8" } }]`
 
 const invalid = (problem: string) => boxdError("OPTIONS_INVALID", `${problem}. Fix the plugin options, for example ${EXAMPLE}`)
 
@@ -137,7 +132,6 @@ export function parseOptions(raw: unknown): Options {
   if (raw === undefined || raw === null) return DEFAULT_OPTIONS
   if (!isObject(raw)) throw invalid(`The plugin options must be an object, found ${describe(raw)}`)
   for (const key of Object.keys(raw)) {
-    if (Object.hasOwn(REMOVED, key)) throw invalid(REMOVED[key]!)
     if (!Object.hasOwn(ACCEPTED, key)) throw invalid(`Unknown option "${key}". Accepted options: ${quoted(Object.keys(ACCEPTED))}`)
   }
   const input = { ...DEFAULT_OPTIONS, ...raw } as Record<keyof Options, unknown>

@@ -5,7 +5,7 @@ plugin relies on boxd's behaviour, and the fake CLI in the tests could hide a ga
 
 ## Where it runs
 
-Steps L1 to L11 run on a boxd machine with the **host** boxd CLI (0.3.5 or later) installed in an isolated `HOME`,
+Steps L1 to L11 run on a boxd machine with the **host** boxd CLI (0.3.8 or later) installed in an isolated `HOME`,
 signed in with a short-lived key that the owner mints for it:
 
 ```sh

@@ -237,8 +237,9 @@ export function readGit(answer: Json): GitAnswer {
     const line = shortReason(value.trim()) ?? value.trim()
     return line.slice(0, 160)
   }
-  const unpushed = Array.isArray(answer.unpushed) ? answer.unpushed.flatMap((value) => (commit(value) ? [commit(value)!] : [])) : []
-  if (answer.unpushedCount !== undefined && !count(answer.unpushedCount)) throw shape("git")
+  const named = Array.isArray(answer.unpushed) ? answer.unpushed.flatMap((value) => (commit(value) ? [commit(value)!] : [])) : []
+  // A destructive guard: an answer that does not say the count is known is unknown, never 0.
+  const known = answer.unpushedKnown === true && count(answer.unpushedCount)
   return {
     known: answer.known,
     remote: remote ? withoutUserinfo(remote) : null,
@@ -248,8 +249,9 @@ export function readGit(answer: Json): GitAnswer {
     ...(patch ? { patch: { file: guestFile("git", patch.file), bytes: patch.bytes as number, sha256: patch.sha256 as string } } : {}),
     untracked: files("git", answer.untracked),
     ignored: files("git", answer.ignored),
-    unpushed: unpushed.slice(0, 20),
-    unpushedCount: count(answer.unpushedCount) ? (answer.unpushedCount as number) : unpushed.length,
+    unpushed: known ? named.slice(0, 20) : [],
+    unpushedCount: known ? (answer.unpushedCount as number) : -1,
+    unpushedKnown: known,
     ...(answer.sessions !== undefined ? { sessions: (Array.isArray(answer.sessions) ? answer.sessions : [null]).map((item) => marks("git", item)) } : {}),
   }
 }

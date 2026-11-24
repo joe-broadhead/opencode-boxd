@@ -7,7 +7,7 @@ and [CONTRIBUTING.md](CONTRIBUTING.md) before you change code.
 
 This is a greenfield rebuild on OpenCode 2.4.1 towards plugin-contract v0 (tracking issue #40). Phase 4b replaces the
 tools RPC transport with `contract.register`, adds the `capabilities` manifest and removes the `sources`, `jelly` and
-`opencode` package keys and the `scripts/` kit. Until then, keep them working.
+`opencode` package keys, the legacy declaration and the `scripts/` kit. Until then, keep them working.
 
 ## Rules
 
@@ -81,9 +81,9 @@ tools RPC transport with `contract.register`, adds the `capabilities` manifest a
   SDK in `TESTED_HOSTS`), `pack` (every `OPENCODE_BIN_*`), `forbidden`, `whitelist` and `actionlint`.
 - **The fixed context.** The namespace line is at most 400 characters and each skill description at most 300; boxd's
   main skill is `boxd-sessions`, because the boxd machine ships its own `boxd` skill.
-- **The `jelly` section** declares every tool, the skill, a one-line `summary` and the icon, with only the keys Jelly
-  reads. `test/unit/jelly.test.ts` keeps it in step with the tool table and the default rules. 4b removes it with the
-  `capabilities` manifest.
+- **The legacy declaration** (the `jelly` key) declares every tool, the skill, a one-line `summary` and the icon, with
+  only the keys its schema reads. `test/unit/legacy-declaration.test.ts` keeps it in step with the tool table and the
+  default rules. 4b removes it with the `capabilities` manifest.
 - **The icon** is boxd's own mark, https://boxd.sh/favicon.svg with only `width` and `height` dropped, centred on a
   rounded holding tile in boxd.sh's own page colour (`--color-page`, #0a0c12) so it stays visible on light backgrounds,
   and the PNGs rendered from it. `opencode.vendor.mark` is `true`, so the README carries the trademark line. Do not

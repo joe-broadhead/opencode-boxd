@@ -12,6 +12,8 @@ const MEMBER = String.raw`\s*(?:\?\.|\.)\s*`
 const PERMISSION_HOOK = new RegExp(String.raw`\bpermission${MEMBER}hook\b`)
 /** The bundle that inlines the source contract's tools RPC module, the one place its evaluate hook may appear. */
 const TOOLS_RPC = ["dist/index.js"]
+/** Recorded vendor output, verbatim by design: its own examples of machine-internal paths are not this repository's. */
+const RECORDED = new Set(["test/fixtures/boxd-cli-help.json"])
 /** The guest's own absolute paths, inside the machine: the only absolute paths this plugin may write down. */
 const GUEST_PATH = /\/(?:home\/boxd|tmp\/opencode-boxd)(?:\/|(?=["'`\s)\],]))/g
 
@@ -30,7 +32,7 @@ const RULES = [
   { id: "permission-hook", pattern: PERMISSION_HOOK, why: "no escalating permission hook; default rules go through ctx.agent.transform", except: TOOLS_RPC },
   { id: "host-source", pattern: /packages\/(?:core|plugin|schema)\/src\b|opencode-[\w-]*-host\b|\bconsumer-host\b/, why: "never reference or import private host source or host checkouts" },
   // A shipped doc or comment states behaviour, not who decided it. Lane names always contain "lane".
-  { id: "internal-wording", pattern: /owner'?s? (?:decision|ruling)|\bthe lead'?s?\b|hey-jelly #|\blanes?\b/i, why: "internal wording (an owner decision, a lead, a lane) does not belong in a shipped doc or comment" },
+  { id: "internal-wording", pattern: /owner'?s? (?:decision|ruling)|\bthe lead'?s?\b|\blanes?\b/i, why: "internal wording (an owner decision, a lead, a lane) does not belong in a shipped doc or comment" },
   { id: "absolute-path", pattern: /\/Users\/[^/\s"'`]+\/|\/home\/[^/\s"'`]+\/|\/(?:private\/)?var\/folders\/|(?<![\w.:/-])\/tmp\/|[A-Za-z]:\\\\?Users\\/, why: "machine-local home and temp paths do not belong in the repository; make temp folders with mkdtemp under realpathSync(\"/tmp\"), or use a relative path" },
 ]
 
@@ -52,6 +54,7 @@ for (const top of ROOTS) {
     }
     for (const rule of RULES) {
       if (rule.except?.includes(path)) continue
+      if (rule.id === "absolute-path" && RECORDED.has(path)) continue
       lines.forEach((text, index) => {
         // A guest path is absolute by design: it names a path inside the boxd machine, not on this laptop.
         const subject = rule.id === "absolute-path" ? text.replace(GUEST_PATH, "/guest/") : text

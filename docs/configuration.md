@@ -7,7 +7,7 @@ All options go in the plugin entry in `opencode.json`, and every one is optional
 ```jsonc
 {
   "plugins": [{
-    "package": "github:we-the-rebel-alliance/boxd-plugin#v0.0.0",
+    "package": "github:we-the-rebel-alliance/boxd-plugin#v<version>",
     "options": { "region": "auto", "size": "2x8", "notices": "wake" }
   }]
 }
@@ -35,9 +35,7 @@ All options go in the plugin entry in `opencode.json`, and every one is optional
 | `budget` | none | `{ "daily", "action" }`: today's machine cost, in the organisation's billing currency, at which status warns (`"warn"`) or the calls that would make a machine run are refused (`"refuse"`, `BUDGET_REACHED`). Machine cost only: model spend is not measured in this release. |
 | `idleCheck` | `true` | The end-of-turn check that speaks only when money burns and automation will not act; `false` turns it off. |
 
-An unknown option, a value out of its range, or a removed option stops the plugin with `OPTIONS_INVALID`; OpenCode's
-plugin list shows why. The option `snapshot` is gone: a golden image is built by the plugin from stock. Remove
-`snapshot`; set `goldenBase` only to build on a hand-made base without model credentials.
+An unknown option or a value out of its range stops the plugin with `OPTIONS_INVALID`; OpenCode's plugin list shows why.
 
 The plugin is tested on 2.4.1. Inside `>=2.4.1 <2.5.0` a release that was not tested, such as 2.4.2, still starts:
 status marks the version `untested` and the next step is the same as on a tested release. Outside the range the plugin
@@ -401,7 +399,8 @@ reads the same parts the model does. No error, log or status line contains a tok
 | `GUEST_FAILED` | unreachable | The guest helper failed; its words are in the message. | boxd_ensure({ workId }); if it repeats, boxd_read({ workId, log: "server" }). |
 | `GUEST_WORKSPACE` | failed | The guest folder could not be made or cloned. | Read the message (clone auth, disk), fix it, then boxd_ensure({ workId }). |
 | `NOT_SAVED` | refused | The work is not saved: no fresh harvest since the last prompt, or the guest's sessions moved on since the harvest. | boxd_harvest({ workId }), then drop again. |
-| `UNPUSHED` | refused | A local branch has commits that no remote ref contains; count and commits name them, and a harvest stores no commits. | Push them from the machine with boxd_exec({ workId, command: ["git", "push", "--all", "origin"] }), then drop again. |
+| `UNPUSHED` | refused | A local branch, tag, stash or detached HEAD has commits that no remote ref contains; count and commits name them, and a harvest stores no commits. | Push every branch and tag from the machine with boxd_exec({ workId, command: ["sh", "-c", "git push --all origin && git push --tags origin"] }), or a detached HEAD by name, then drop again. |
+| `UNPUSHED_UNKNOWN` | refused | The guest could not walk its refs, so it cannot say whether every commit is on a remote ref; dropping would risk losing one. | Run the check with boxd_exec({ workId, command: ["git", "rev-list", "--count", "--all", "HEAD", "--not", "--remotes"] }), push whatever it counts, then drop again. |
 | `UNTRACKED` | refused | Untracked or ignored paths were not harvested; paths, count and kind name them. | Harvest them with files, or delete them on the machine, then boxd_harvest again. |
 | `DIRTY` | refused | The guest has uncommitted work and no stored patch. | boxd_harvest({ workId }), then drop again. |
 | `GIT_UNKNOWN` | refused | The guest folder is not a git repository. | Make it one, or boxd_sleep({ workId }) instead. |
