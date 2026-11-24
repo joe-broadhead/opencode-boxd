@@ -6,16 +6,23 @@
  *   last drove it. It is checked again just before posting: a session that is gone, archived, or now has a parent gets
  *   no notice; its works' subscriptions are cleared, and status's health records it. A wake the host refuses is posted
  *   once more as queue only, and then dropped the same way.
+ * - **Once per subscriber:** each target session has a durable cursor, the highest event sequence a delivered notice
+ *   covered (`src/notice-cursors.ts`). Events at or below it are skipped, so a restart, a watcher replay or a re-sweep
+ *   posts nothing again. The cursor moves only after the synthetic post is accepted, so a refused post is retried and
+ *   never counted as delivered; two works with different coordinators keep independent cursors.
  * - **How often:** changes are coalesced per target, a target gets at most one notice per 60 s, and one notice names at
- *   most 20 works, then "and N more", and points at `boxd_status({ since })`.
+ *   most 20 works, then "and N more", and points at `boxd_status({ since })`. A queued item keeps the anchor of the
+ *   first unseen change for `since` and the newest sequence the notice covers, so the cursor can advance past both.
  * - **What they say:** only the plugin's own words. Work ids (checked against the work-id pattern), phases and
  *   outcomes from their fixed sets, codes from the §5 table (anything else is `RUN_FAILED`), and a cursor. Never
  *   `lastText` or any other guest text, because a notice lands in the coordinator's context.
  */
 import { isCode } from "./errors.js"
+import type { NoticeCursors } from "./notice-cursors.js"
 import type { Notices as NoticeMode } from "./options.js"
 import { PHASES, type SavedState } from "./ledger/types.js"
 import type { WorkEvent } from "./ports.js"
+import { reasonOf } from "./redact.js"
 import type { SessionAccess } from "./services.js"
 
 /** A target gets at most one notice per this long. */
@@ -36,20 +43,27 @@ export interface DroppedNotice {
   readonly at: string
 }
 
-interface Pending {
+export interface Pending {
+  /** The newest change's fields, with `seq` the anchor: the first change this notice has not delivered yet. */
   readonly event: WorkEvent
   readonly saved: SavedState
+  /** The newest sequence this item covers; the event's own `seq` when it is the only change (as in the text tests). */
+  readonly covered?: number
 }
 
 export interface NoticeDeps {
   readonly mode: () => NoticeMode
   readonly sessions: Pick<SessionAccess, "get" | "synthetic">
   readonly now: () => Date
+  /** The durable high-water mark per target session; updated only after the host accepts a notice. */
+  readonly cursors: NoticeCursors
   /**
    * Clears `session.notify` on every open work that names this session, after a drop; `cause` says the session is gone
    * (its works are orphans), and is absent when the host only refused the notice. Never throws.
    */
   readonly unsubscribe: (session: string, cause?: GoneCause) => Promise<void>
+  /** Records a problem for status's notices area. Never throws. */
+  readonly report?: (problem: string) => void
 }
 
 /** One work's change in a notice: `review-api idle (completed, not saved)`. Plugin words only. */
@@ -71,11 +85,15 @@ export function noticeItem(event: WorkEvent, saved: SavedState): string | undefi
   return `${event.workId} ${event.to}${code ? ` (${code})` : ""}`
 }
 
-/** The notice for one target: at most 20 works, then "and N more", and the cursor to read the rest with. */
-export function noticeText(items: readonly Pending[]): string | undefined {
+/**
+ * The notice for one target: at most 20 works, then "and N more", and the cursor to read the rest with. `delivered` is
+ * the target's highest covered sequence: the notice never points behind it, even when the first queued change was
+ * already covered by an earlier notice from another process.
+ */
+export function noticeText(items: readonly Pending[], delivered = 0): string | undefined {
   const lines = items.map((item) => noticeItem(item.event, item.saved)).filter((line): line is string => line !== undefined)
   if (!lines.length) return undefined
-  const since = Math.max(0, Math.min(...items.map((item) => item.event.seq)) - 1)
+  const since = Math.max(delivered, Math.min(...items.map((item) => item.event.seq)) - 1)
   const shown = lines.slice(0, NOTICE_MAX_WORKS)
   const more = lines.length - shown.length
   const works = `${lines.length} ${lines.length === 1 ? "work" : "works"} changed`
@@ -134,8 +152,12 @@ export class NoticeQueue {
     if (this.stopped || !target || this.deps.mode() === "off") return
     const works = this.pending.get(target) ?? new Map<string, Pending>()
     const earlier = works.get(event.workId)
-    // The newest change per work, with the cursor of the first change still unseen.
-    works.set(event.workId, { event: earlier ? { ...event, seq: Math.min(earlier.event.seq, event.seq) } : event, saved })
+    // The newest change per work, with the anchor of the first change still unseen and the newest sequence it covers.
+    works.set(event.workId, {
+      event: earlier ? { ...event, seq: Math.min(earlier.event.seq, event.seq) } : event,
+      saved,
+      covered: Math.max(event.seq, earlier?.covered ?? 0),
+    })
     this.pending.set(target, works)
     this.schedule(target)
   }
@@ -205,18 +227,29 @@ export class NoticeQueue {
 
   private async send(target: string, works: Map<string, Pending>): Promise<void> {
     this.pending.delete(target)
-    const items = [...works.values()].sort((a, b) => a.event.seq - b.event.seq)
-    const text = noticeText(items)
+    const items = [...works.entries()].sort((a, b) => a[1].event.seq - b[1].event.seq)
     const mode = this.deps.mode()
-    if (!text || mode === "off") return
+    if (!items.length || mode === "off") return
+    let delivered = 0
+    try {
+      delivered = await this.deps.cursors.covered(target)
+    } catch (error) {
+      // No cursor is known: deliver rather than lose the change, and say why a repeat is possible.
+      this.deps.report?.(`A notice cursor could not be read, so a change may be announced twice: ${reasonOf(error)}.`)
+    }
+    // An event at or below the saved cursor is settled: a previous notice, in this process or another, covered it.
+    const unseen = items.filter(([, item]) => (item.covered ?? item.event.seq) > delivered)
+    if (!unseen.length) return
+    const text = noticeText(unseen.map(([, item]) => item), delivered)
+    if (!text) return
     // The minute starts now, before any await, so no second notice can pass the check meanwhile.
     this.lastSent.set(target, this.deps.now().getTime())
     const check = await checkTarget(this.deps.sessions, target)
     if (check.state === "gone") return this.drop(target, check.why, check.cause)
     if (check.state === "unknown") {
-      // The host did not say: keep the changes (newer ones win) and try again at the next minute.
+      // The host did not say: keep the unseen changes (newer ones win) and try again at the next minute.
       const later = this.pending.get(target) ?? new Map<string, Pending>()
-      for (const [workId, item] of works) if (!later.has(workId)) later.set(workId, item)
+      for (const [workId, item] of unseen) if (!later.has(workId)) later.set(workId, item)
       this.pending.set(target, later)
       return
     }
@@ -231,6 +264,13 @@ export class NoticeQueue {
       } catch {
         return this.drop(target, "the host refused the notice twice")
       }
+    }
+    // Only an accepted post moves the cursor: a refused one is retried, and its change is never counted as delivered.
+    const covered = Math.max(...unseen.map(([, item]) => item.covered ?? item.event.seq))
+    try {
+      await this.deps.cursors.advance(target, covered)
+    } catch (error) {
+      this.deps.report?.(`A notice was delivered but its cursor was not saved, so a restart may repeat it: ${reasonOf(error)}.`)
     }
   }
 

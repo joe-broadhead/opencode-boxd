@@ -100,9 +100,12 @@ stops, and after three failed sweeps in a row, which status reports; the next st
 A notice goes only to the work's root coordinator: the session that started or last drove the work from the model path,
 found by walking `parentID` up from the calling session. It is checked again just before posting, and a session that is
 gone, archived or now under another one gets no notice and is unsubscribed. Changes are coalesced per coordinator, at
-most one notice a minute, at most 20 works named, with the cursor for the rest. A notice holds only the plugin's words:
-work ids, phases, outcomes and codes from the table, never a guest's text. With `notices: "wake"` an idle coordinator
-starts a turn; a wake the host refuses is posted once more as queue only.
+most one notice a minute, at most 20 works named, with the cursor for the rest. Each coordinator has a durable cursor in
+`v1/notice-cursors.json`, the highest event sequence a delivered notice covered: events at or below it are skipped, so a
+restart, a watcher replay or a re-sweep never announces the same change twice, and the cursor moves only after the host
+accepts the post. A notice holds only the plugin's words: work ids, phases, outcomes and codes from the table, never a
+guest's text. With `notices: "wake"` an idle coordinator starts a turn; a wake the host refuses is posted once more as
+queue only.
 
 ## Cost
 
