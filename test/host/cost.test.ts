@@ -1,10 +1,9 @@
-// Package E on every stock host (design §7.2, "the cost hooks on every host"): the context, compaction and idle hooks
-// register and fire on the host's own request path, with a recording loopback model; system parts stay byte-identical
-// across a fleet change, and the line is only on the tail of the first request after it; the compaction request carries
-// the works part; the idle note is admitted once, runs in the same execution and is readable as the plugin's own; the
-// session events orphan a coordinator's works; and `/boxd-cleanup` confirms each action with the host's own permission
-// prompt, which a person answers and no session message carries. E's services here are the narrow fakes (the watcher's
-// snapshot and C2's actions), behind the host's real session, permission, command and event domains.
+// Package E on the tested host (design §7.2): the idle check registers and fires on the host's own request path, with a
+// recording loopback model; its note is admitted once, runs in the same execution and is readable as the plugin's own;
+// the session events orphan a coordinator's works; and `/boxd-cleanup` confirms each action with the host's own
+// permission prompt, which a person answers and no session message carries. There is no per-request context or
+// compaction hook, so nothing is added to a request's messages or system parts. E's services here are the narrow fakes
+// (the watcher's snapshot and C2's actions), behind the host's real session, permission, command and event domains.
 import { HOST_SDK_DIR, ROOT as root } from "./isolate.js"
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { existsSync, mkdirSync, readFileSync } from "node:fs"
@@ -41,11 +40,7 @@ type Body = { messages: Array<{ role: string; content?: unknown }>; tools?: unkn
 const textOf = (content: unknown): string =>
   typeof content === "string" ? content : Array.isArray(content) ? content.map((part) => (part as { text?: string }).text ?? "").join("") : ""
 
-/**
- * An OpenAI-compatible model on loopback that records every request body and answers "ok"; a user message holding
- * `[[call]]` gets one Code Mode program that calls the test's `probe_echo` tool, and the request after the tool result
- * gets "done".
- */
+/** An OpenAI-compatible model on loopback that records every request body and answers "ok". */
 function recordingModel() {
   const bodies: Body[] = []
   const chunk = (delta: Record<string, unknown>, finish: string | null = null) =>
@@ -60,22 +55,6 @@ function recordingModel() {
       const body = (await request.json()) as Body
       bodies.push(body)
       const last = body.messages.at(-1)
-      // The person's own message: the plugin's fleet line may follow it.
-      const person = [...body.messages].reverse().find((message) => message.role === "user" && !textOf(message.content).startsWith("boxd: "))
-      if ((body.tools ?? []).length > 0 && last?.role === "user" && textOf(person?.content).includes("[[call]]")) {
-        return new Response(
-          new ReadableStream({
-            start(controller) {
-              const send = (line: string) => controller.enqueue(new TextEncoder().encode(line))
-              send(chunk({ role: "assistant", content: null, tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "execute", arguments: JSON.stringify({ code: "return await tools.probe.echo({})" }) } }] }))
-              send(chunk({}, "tool_calls"))
-              send("data: [DONE]\n\n")
-              controller.close()
-            },
-          }),
-          { headers: { "content-type": "text/event-stream" } },
-        )
-      }
       const value = (body.tools ?? []).length === 0 ? "Mock summary" : last?.role === "tool" ? "done" : "ok"
       return new Response(
         new ReadableStream({
@@ -107,8 +86,6 @@ async function startCostHost(options: Record<string, unknown>) {
   const model = recordingModel()
   const f: Fakes = fakes({ options })
   let ctxRef: Plugin.Context | undefined
-  /** What the `probe_echo` tool does when the model calls it: the test changes the fleet mid tool loop with it. */
-  let onTool: () => void = () => {}
   const stops: Dispose[] = []
   const plugin = Plugin.define({
     id: "boxd.host-test.cost",
@@ -121,20 +98,6 @@ async function startCostHost(options: Record<string, unknown>) {
         })
       })
       await ctx.model.transform((editor) => editor.default.set("mock", "m1"))
-      await ctx.tool.transform((editor) => {
-        editor.namespace({ name: "probe", description: "The cost host test's own tool" })
-        editor.add({
-          name: "echo",
-          description: "Echoes; the test changes the fleet while it runs.",
-          input: { type: "object", properties: {} },
-          output: { type: "object" },
-          options: { namespace: "probe", permission: "probe_echo" },
-          execute: async () => {
-            onTool()
-            return { output: { ok: true }, content: "echoed" }
-          },
-        })
-      })
       // The host's own session domain: the idle check reads its newest input and posts through it.
       const services = { ...f.services, sessions: ctx.session }
       await registerDefaultRules(ctx.agent, defaultRules(f.services.options.access), () => {}, f.services.options.access)
@@ -167,9 +130,6 @@ async function startCostHost(options: Record<string, unknown>) {
     model,
     location,
     ctx: () => ctxRef!,
-    set onTool(value: () => void) {
-      onTool = value
-    },
     async session() {
       return (await client.session.create({ location, agent: "build" })).id as string
     },
@@ -191,92 +151,9 @@ async function startCostHost(options: Record<string, unknown>) {
 }
 
 const turns = (bodies: readonly Body[]) => bodies.filter((body) => (body.tools ?? []).length > 0)
-const system = (body: Body) => JSON.stringify(body.messages.filter((message) => message.role === "system"))
 const lastText = (body: Body) => textOf(body.messages.at(-1)?.content)
-const hasLine = (body: Body) => body.messages.some((message) => message.role === "user" && textOf(message.content).startsWith("boxd: "))
 
 describe(`the cost hooks on @opencode/sdk ${HOST_VERSION}`, () => {
-  test("the fleet line: only on the tail of the first request after a change, system byte-identical, owner only, never stored", async () => {
-    const host = await startCostHost({})
-    try {
-      const owner = await host.session()
-      const other = await host.session()
-      host.f.watch.works = [work("a", { phase: "busy", idleSince: undefined, notify: owner }), work("b", { notify: owner })]
-
-      await host.prompt(owner, "first")
-      const first = turns(host.model.bodies).at(-1)!
-      expect(lastText(first)).toStartWith("boxd: 2 works — 1 busy, 1 idle (1 unsaved); ~€")
-      expect(first.messages.at(-1)?.role).toBe("user")
-      // The person's own message is the one before it, untouched.
-      expect(textOf(first.messages.at(-2)?.content)).toBe("first")
-
-      await host.prompt(owner, "second")
-      const second = turns(host.model.bodies).at(-1)!
-      expect(hasLine(second)).toBe(false)
-      expect(system(second)).toBe(system(first))
-
-      host.f.watch.works = [work("a", { notify: owner }), work("b", { notify: owner })]
-      await host.prompt(owner, "third")
-      const third = turns(host.model.bodies).at(-1)!
-      expect(lastText(third)).toStartWith("boxd: 2 works — 2 idle (2 unsaved)")
-      expect(system(third)).toBe(system(first))
-      // The earlier line was for that request only: it is not in this one's history.
-      expect(third.messages.filter((message) => textOf(message.content).startsWith("boxd: "))).toHaveLength(1)
-
-      await host.prompt(other, "not an owner")
-      expect(hasLine(turns(host.model.bodies).at(-1)!)).toBe(false)
-
-      const stored = (await host.ctx().session.context({ sessionID: owner })) as Array<{ text?: string }>
-      expect(stored.some((message) => (message.text ?? "").startsWith("boxd: "))).toBe(false)
-    } finally {
-      await host.close()
-    }
-  })
-
-  test("a change mid tool loop waits for the next turn: the step after the tool result carries no line", async () => {
-    const host = await startCostHost({})
-    try {
-      const owner = await host.session()
-      host.f.watch.works = [work("a", { phase: "busy", idleSince: undefined, notify: owner })]
-      // The fleet changes while the tool runs, between the loop's first request and its second.
-      host.onTool = () => void (host.f.watch.works = [work("a", { notify: owner }), work("b", { notify: owner })])
-      const before = turns(host.model.bodies).length
-      await host.prompt(owner, "[[call]] go")
-      const loop = turns(host.model.bodies).slice(before)
-      expect(loop).toHaveLength(2)
-      expect(lastText(loop[0]!)).toStartWith("boxd: 1 works — 1 busy")
-      // The host's tail on the step after a tool result is that result: the line waits, so the cached tail is reused.
-      expect(loop[1]!.messages.at(-1)?.role).toBe("tool")
-      expect(hasLine(loop[1]!)).toBe(false)
-      expect(system(loop[1]!)).toBe(system(loop[0]!))
-      await host.prompt(owner, "next turn")
-      expect(lastText(turns(host.model.bodies).at(-1)!)).toStartWith("boxd: 2 works — 2 idle (2 unsaved)")
-    } finally {
-      await host.close()
-    }
-  })
-
-  test("a compaction request carries the works part on its tail", async () => {
-    const host = await startCostHost({})
-    try {
-      const owner = await host.session()
-      host.f.watch.works = [work("a", { phase: "busy", idleSince: undefined, notify: owner }), work("b", { notify: owner })]
-      await host.prompt(owner, "first")
-      const before = host.model.bodies.length
-      await host.client.session.compact({ sessionID: owner })
-      const compaction = await until("the compaction request", async () => host.model.bodies.slice(before).find((body) => body.messages.some((message) => textOf(message.content).startsWith("Keep this list"))), 60_000)
-      // The host appends its own summary instruction after the hooks ran; the works part is the message just before it,
-      // after the whole history.
-      const index = compaction.messages.findIndex((message) => textOf(message.content).startsWith("Keep this list"))
-      expect(textOf(compaction.messages[index]!.content)).toBe("Keep this list in the summary: boxd works open: a (busy), b (idle); boxd_status lists all.")
-      expect(compaction.messages[index]!.role).toBe("user")
-      expect(index).toBe(compaction.messages.length - 2)
-      expect(textOf(compaction.messages.at(-1)!.content)).not.toContain("boxd")
-    } finally {
-      await host.close()
-    }
-  })
-
   test("the idle check: one note, admitted in the same execution, tagged and readable; then silent", async () => {
     const host = await startCostHost({ access: "read-only" })
     try {

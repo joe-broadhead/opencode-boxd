@@ -1,23 +1,16 @@
 /**
- * The words the hooks add (design §C.4): the fleet line, the compaction part and the idle note. Built only from the
- * plugin's own fields (counts, phases from their fixed set, validated work ids, money and the exact calls), never from
- * guest text, so nothing a guest model wrote can reach a coordinator's context this way. Package E owns this file.
+ * The words the idle check adds (design §C.4): the burn note. Built only from the plugin's own fields (phases from their
+ * fixed set, validated work ids, money and the exact calls), never from guest text, so nothing a guest model wrote can
+ * reach a coordinator's context this way. Package E owns this file.
  */
 import { assertWorkId } from "../names.js"
-import { PHASES, type Phase } from "../ledger/types.js"
 import type { Rates, WorkSnapshot } from "../ports.js"
 import type { AutomationState, BudgetState } from "../results.js"
-import { matches, ratesLabel, ratesNote, sign, suggestions, workPerHour } from "./fleet.js"
+import { matches, ratesNote, sign, workPerHour } from "./fleet.js"
 import { isRunning } from "./rates.js"
 
-/** The fleet line's limit, in characters (about 50 tokens). */
-export const LINE_MAX = 240
-/** The compaction part names at most this many works. */
-export const COMPACTION_MAX_IDS = 30
 /** The idle check speaks about a work waiting on a person once its idle cost passes this, in the billing currency. */
 export const NEEDS_INPUT_THRESHOLD = 1
-
-const PHASE_ORDER: readonly Phase[] = ["busy", "idle", "ready", "starting", "creating", "unreachable", "asleep"]
 
 /** A work id the plugin itself would accept, or nothing: the guard that keeps any other string out of a line. */
 function safeId(id: string): string | undefined {
@@ -29,72 +22,11 @@ function safeId(id: string): string | undefined {
   }
 }
 
-const unsaved = (work: WorkSnapshot) => work.saved !== "fresh" && (work.phase === "idle" || work.phase === "asleep" || work.phase === "ready")
-
-/** Money rounded to the nearest 0.10, so the line and its fingerprint move only on a real change. */
-const coarse = (value: number) => Math.round(value * 10) / 10
-
 export interface LineInput {
   readonly works: readonly WorkSnapshot[]
   readonly rates: Rates
   readonly automation: AutomationState
   readonly budget?: BudgetState
-}
-
-export interface FleetLine {
-  readonly text: string
-  /** The coarse figures the line is made of: the line is added only when this changes. */
-  readonly fingerprint: string
-}
-
-/** The fleet line for a coordinator: counts by phase, unsaved works, the cost per hour, and the first cleanup call. */
-export function fleetLine(input: LineInput): FleetLine {
-  const works = input.works.filter((work) => work.phase !== "closed" && work.phase !== "gone")
-  const counts = new Map<Phase, number>()
-  for (const work of works) counts.set(work.phase, (counts.get(work.phase) ?? 0) + 1)
-  const unsavedIdle = works.filter((work) => work.phase === "idle" && unsaved(work)).length
-  const running = works.filter((work) => isRunning(work.phase)).reduce((sum, work) => sum + workPerHour(work, input.rates), 0)
-  const money = (value: number) => `${sign(input.rates.currency)}${coarse(value).toFixed(2)}`
-  const phases = PHASE_ORDER.flatMap((phase) => {
-    const count = counts.get(phase)
-    if (!count) return []
-    return [phase === "idle" && unsavedIdle ? `${count} idle (${unsavedIdle} unsaved)` : `${count} ${phase}`]
-  })
-  const first = suggestions(works, input.rates)[0]
-  const cleanup = first ? ` Cleanup: ${first.call}${first.savesPerHour ? ` saves ~${money(first.savesPerHour)}/h` : ""}.` : ""
-  const automation = input.automation.startsWith("off") ? ` Automation ${input.automation}: cleaning up is yours.` : ""
-  const budget =
-    input.budget && input.budget.state !== "ok"
-      ? input.budget.state === "unknown"
-        ? " Budget not measurable (BUDGET_UNKNOWN)."
-        : ` Budget reached: ${money(input.budget.today ?? 0)} of ${money(input.budget.daily)} today (boxd's estimate).`
-      : ""
-  const head = `boxd: ${works.length} works — ${phases.join(", ") || "none running"}; ~${money(running)}/h running${ratesLabel(input.rates)}.`
-  // The parts in order of importance; a part that would pass the limit is left out.
-  let text = head
-  for (const part of [budget, cleanup, automation]) if (part && text.length + part.length <= LINE_MAX) text += part
-  const fingerprint = JSON.stringify([[...counts].sort(), unsavedIdle, coarse(running), first?.call ?? null, input.automation, input.budget?.state ?? null])
-  return { text: text.slice(0, LINE_MAX), fingerprint }
-}
-
-const KNOWN_PHASES: ReadonlySet<string> = new Set(PHASES)
-
-/** The open works as `id (phase)`, at most `COMPACTION_MAX_IDS`, and how many more: plugin ids and known phases only. */
-export function openWorks(works: readonly WorkSnapshot[]): string {
-  const open = works.filter((work) => work.phase !== "closed" && work.phase !== "gone")
-  const named = open.flatMap((work) => {
-    const id = safeId(work.workId)
-    if (!id) return []
-    return [KNOWN_PHASES.has(work.phase) ? `${id} (${work.phase})` : id]
-  })
-  const shown = named.slice(0, COMPACTION_MAX_IDS)
-  const more = open.length - shown.length
-  return `boxd works open: ${shown.join(", ") || "none"}${more > 0 ? `, and ${more} more` : ""}`
-}
-
-/** The compaction part: the open works with their phase, at most 30 ids, asking the summary to keep them. */
-export function compactionText(works: readonly WorkSnapshot[]): string {
-  return `Keep this list in the summary: ${openWorks(works)}; boxd_status lists all.`
 }
 
 export type BurnReason = "idle-running" | "sleep-failed" | "needs-input" | "budget"

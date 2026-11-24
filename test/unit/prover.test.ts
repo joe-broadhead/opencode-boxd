@@ -34,7 +34,7 @@ const laptopProver = (bin: string) => {
   return { ...laptop, replace: (transcripts: readonly StoredTranscript[], directory: string, op: OpContext) => replaceOnLaptop(laptop, transcripts, directory, op) }
 }
 
-/** A transcript in the shape `opencode session export` writes on 2.2 and 2.3: flat messages with `id` and `type`. */
+/** A transcript in the shape `opencode session export` writes: flat messages with `id` and `type`. */
 const transcript = (id: string, directory: string, title: string, messages: number, parentID?: string) => ({
   info: {
     id,

@@ -70,7 +70,8 @@ opencode api post /api/rpc/boxd.machines.tools/boxd_sleep -H "x-opencode-directo
 | `boxd_read` | read | allowed |
 | `boxd_ensure` | write | the agent or session allows `boxd_ensure` |
 | `boxd_submit` | write | the agent or session allows `boxd_submit` |
-| `boxd_harvest` | export | the agent or session allows `boxd_harvest` (it writes this laptop) |
+| `boxd_harvest` | export | the agent or session allows `boxd_harvest` (it writes here) |
+| `boxd_events_list` | read | allowed (the `boxd.works` source's `events_list` as a tool) |
 | `boxd_sleep` | write | the agent or session allows `boxd_sleep` |
 | `boxd_resume` | write | the agent or session allows `boxd_resume` |
 | `boxd_reassign` | write | the agent or session allows `boxd_reassign` |
@@ -85,7 +86,7 @@ A class is the worst thing the method does; it never decides whether a call runs
 ## The boxd.works source
 
 `events_list` and `probe` are the `boxd.works` source's methods (source contract, `package.json`'s `sources`), for a
-collector such as Memory's. They read this laptop's ledger only: no boxd call, no machine woken, no lock taken.
+collector. They read this machine's ledger only: no boxd call, no machine woken, no lock taken.
 
 ```sh
 opencode api post /api/rpc/boxd.machines.tools/probe -H "x-opencode-directory:$PWD" -d '{"input":{"sessionID":"<id>","input":{}}}'
@@ -114,14 +115,14 @@ opencode api post /api/rpc/boxd.machines.tools/events_list -H "x-opencode-direct
 ## Files in and out
 
 `boxd_submit` takes `files` to copy data to the machine, and `boxd_harvest` takes `files` to copy results back. A path is
-relative to the work tree; a laptop path must be inside the project or a folder in `allowedRoots`, and a symlink is never
+relative to the work tree; a path here must be inside the project or a folder in `allowedRoots`, and a symlink is never
 followed. The caps are 8 MiB a file and 32 MiB a call, and the ledger records each file's name, size and sha256, never
 its content.
 
 A worked example: summarise the bookmarks a previous step saved, and bring the summary back.
 
 ```sh
-# 1. One work, with the laptop folder it belongs to. It answers when the guest's OpenCode is up.
+# 1. One work, with the folder here it belongs to. It answers when the guest's OpenCode is up.
 opencode api post /api/rpc/boxd.machines.tools/boxd_ensure -H "x-opencode-directory:$PWD" \
   -d '{"input":{"sessionID":"<id>","input":{"workId":"bookmarks"}}}'
 

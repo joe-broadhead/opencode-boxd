@@ -4,7 +4,7 @@ import type { StatusFacts } from "../../src/status.js"
 import { defaultRules } from "../../src/permissions.js"
 import { TOOLS } from "../../src/tools.js"
 
-export const HOST = { version: "2.2.6", range: ">=2.2.3 <2.4.0", tested: true }
+export const HOST = { version: "2.4.1", range: ">=2.4.1 <2.5.0", tested: true }
 
 /** A fleet answer with nothing in it, and every block present. */
 export function fleet(overrides: Partial<StatusResult> = {}): StatusResult {

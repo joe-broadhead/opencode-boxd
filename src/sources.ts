@@ -1,7 +1,8 @@
 /**
  * boxd's side of the source contract (`@we-the-rebel-alliance/source-contract`, declared in `package.json`'s `sources`
  * as `boxd.works`): `events_list`, each phase change of each work as one normalised event, oldest first, and `probe`,
- * whose ledger it is. Both are tools RPC methods, for a consumer such as Memory's collector, and neither is a model tool.
+ * whose ledger it is. Both are tools RPC methods for a collector; `events_list` is also the `boxd_events_list` tool, and
+ * `probe` is a method only.
  *
  * - **Local only.** `events_list` reads the laptop ledger's `events.jsonl` through `LedgerPort.eventsSince`, the log
  *   `boxd_status` reads its cursor from. It makes no boxd call and no network call, never wakes a machine, and never
@@ -51,7 +52,7 @@ import { BoxdError } from "./errors.js"
 import type { ImportV0Port, LedgerPort, OpContext, WorkEvent } from "./ports.js"
 
 /** The plugin's package name, which every page names. */
-export const PACKAGE = "@joe-broadhead/opencode-boxd"
+export const PACKAGE = "@we-the-rebel-alliance/boxd-plugin"
 /** The cursor binding's plugin: the descriptor's source-id prefix. */
 export const NAMESPACE = "boxd"
 /** The source every event names, and the descriptor's `input.source`. */
@@ -332,7 +333,7 @@ export function probeWorks(deps: Pick<SourceDeps, "identity">, input: unknown): 
 
 const STRING = { type: "string" } as const
 
-const EVENTS_INPUT: JsonSchema = {
+export const EVENTS_INPUT: JsonSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
@@ -354,7 +355,7 @@ const PROBE_INPUT: JsonSchema = {
 }
 
 const EVENTS_DESCRIPTION =
-  "For a collector such as Memory's, not for answering questions: the phase changes of this laptop's boxd works, oldest first, as normalised events, " +
+  "For a collector, not for answering questions: the phase changes of the boxd works here, oldest first, as normalised events, " +
   "read from the local ledger only (no boxd call, no machine woken). Each says, in the plugin's own words, which work changed and to what phase, how a run ended and its code. " +
   "Pass the previous page's cursor to list what came after it; without one it starts at since, or 24 hours ago."
 

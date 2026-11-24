@@ -39,13 +39,13 @@ export const CODES = {
   NAME_INVALID: { state: "refused", message: "An input failed its rule; field names it.", next: "Fix the field the message names, as its reason says, then call again." },
   PATH_REFUSED: {
     state: "refused",
-    message: "A laptop path is outside the project and allowedRoots, or is a symlink.",
+    message: "A path here is outside the project and allowedRoots, or is a symlink.",
     next: 'Pass a path inside the project, or add its root to the plugin option "allowedRoots" and allow it with the external_directory rule.',
   },
   FILE_TOO_LARGE: { state: "refused", message: "A file is over 8 MiB, or the call is over 32 MiB.", next: "Move a smaller file, or split it: the limit is 8 MiB a file and 32 MiB a call." },
   FILE_CONFLICT: {
     state: "refused",
-    message: "The laptop file changed since the last harvest.",
+    message: "The file changed here since the last harvest.",
     next: "Keep the local edit and leave that path out, or restore the harvested copy and harvest again.",
   },
 
@@ -124,7 +124,7 @@ export const CODES = {
   },
   GUEST_VERSION: {
     state: "refused",
-    message: "The guest's OpenCode differs from this laptop's, and this call moves a transcript.",
+    message: "The guest's OpenCode differs from the OpenCode here, and this call moves a transcript.",
     next: "boxd_ensure({ workId }) upgrades it in place once the session is idle.",
   },
   GUEST_UNRESPONSIVE: {
@@ -155,6 +155,16 @@ export const CODES = {
     message: "Untracked or ignored paths were not harvested; paths, count and kind name them.",
     next: "Harvest them with files, or delete them on the machine, then boxd_harvest again.",
   },
+  UNPUSHED: {
+    state: "refused",
+    message: "A local branch, tag, stash or detached HEAD has commits that no remote ref contains; count and commits name them.",
+    next: 'Push every local branch and tag from the machine with boxd_exec({ workId, command: ["sh", "-c", "git push --all origin && git push --tags origin"] }); push a detached HEAD by name. Then drop again.',
+  },
+  UNPUSHED_UNKNOWN: {
+    state: "refused",
+    message: "The guest could not tell whether every commit is on a remote ref, so dropping would risk losing one.",
+    next: 'Run the check with boxd_exec({ workId, command: ["git", "rev-list", "--count", "--all", "HEAD", "--not", "--remotes"] }); push whatever it counts, then drop again.',
+  },
   DIRTY: { state: "refused", message: "The guest has uncommitted work and no stored patch.", next: "boxd_harvest({ workId }), then drop again." },
   GIT_UNKNOWN: { state: "refused", message: "The guest folder is not a git repository.", next: "Make it one, or boxd_sleep({ workId }) instead." },
 
@@ -166,7 +176,7 @@ export const CODES = {
   },
   IMPORT_FAILED: {
     state: "failed",
-    message: "This laptop's opencode session import failed; the export is kept.",
+    message: "The OpenCode here could not import the session; the export is kept.",
     next: "boxd_harvest({ workId }) again; the stored file is retried.",
   },
 
@@ -178,8 +188,8 @@ export const CODES = {
   },
   BOXD_MISSING: {
     state: "unreachable",
-    message: "No laptop boxd CLI: it is missing, not signed in, or the in-VM CLI.",
-    next: "Install the laptop boxd CLI on the server's PATH and run boxd auth login, in that server's HOME.",
+    message: "No boxd CLI on the host's PATH: it is missing, not signed in, or the in-VM CLI.",
+    next: "Install the host boxd CLI on the server's PATH and run boxd auth login, in that server's HOME.",
   },
   TIMEOUT: { state: "unreachable", message: "A step did not answer in its bound; the message names the step.", next: "The same call in a later turn." },
   CANCELLED: {

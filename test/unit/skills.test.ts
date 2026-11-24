@@ -5,13 +5,13 @@ import { join } from "node:path"
 import { loadSkills, parseSkill, skillPath } from "../../src/skills.js"
 import { TOOLS } from "../../src/tools.js"
 
-describe("the boxd skill", () => {
+describe("the boxd-sessions skill", () => {
   test("is the one skill, with the name, a description and a body", async () => {
     const { skills, problems } = await loadSkills()
     expect(problems).toEqual([])
     expect(skills).toHaveLength(1)
     const skill = skills[0]!
-    expect(String(skill.name)).toBe("boxd")
+    expect(String(skill.name)).toBe("boxd-sessions")
     expect(String(skill.description).length).toBeGreaterThan(30)
     expect(skill.content.length).toBeGreaterThan(200)
     expect(String(skill.path)).toBe(skillPath())
@@ -46,8 +46,8 @@ describe("the boxd skill", () => {
   })
 
   test("a file without frontmatter, or with another name, is SKILLS_INVALID", () => {
-    expect(() => parseSkill("boxd", "/x", "no frontmatter")).toThrow(/^SKILLS_INVALID: /)
-    expect(() => parseSkill("boxd", "/x", "---\nname: other\ndescription: x\n---\nbody")).toThrow(/^SKILLS_INVALID: /)
+    expect(() => parseSkill("boxd-sessions", "/x", "no frontmatter")).toThrow(/^SKILLS_INVALID: /)
+    expect(() => parseSkill("boxd-sessions", "/x", "---\nname: other\ndescription: x\n---\nbody")).toThrow(/^SKILLS_INVALID: /)
   })
 
   test("a missing file is reported as a problem, not thrown, so status can say so", async () => {
@@ -61,8 +61,8 @@ describe("the boxd skill", () => {
 
   test("a directory with the skill in it loads", async () => {
     const dir = await mkdtemp(join(tmpdir(), "boxd-skills-"))
-    await mkdir(join(dir, "boxd"), { recursive: true })
-    await writeFile(join(dir, "boxd", "SKILL.md"), "---\nname: boxd\ndescription: A host test skill.\n---\nBody.\n")
+    await mkdir(join(dir, "boxd-sessions"), { recursive: true })
+    await writeFile(join(dir, "boxd-sessions", "SKILL.md"), "---\nname: boxd-sessions\ndescription: A host test skill.\n---\nBody.\n")
     const { skills, problems } = await loadSkills(dir)
     expect(problems).toEqual([])
     expect(String(skills[0]!.description)).toBe("A host test skill.")

@@ -27,7 +27,7 @@ import { registerStatusCommand, registerStatusRpc, statusReader } from "./status
 import { ownedMethods, toolTransform, type RegistryDeps } from "./tools.js"
 import { createWatch } from "./watch.js"
 import { registerToolsRpc } from "@we-the-rebel-alliance/source-contract/tools-rpc"
-import { localIdentity, sourceMethods } from "./sources.js"
+import { listWorks, localIdentity, sourceMethods, type SourceDeps } from "./sources.js"
 import { PLUGIN } from "./tools-rpc.js"
 
 /** Internal seam: the host tests point the plugin at a fake boxd CLI, their own ledger root and their own skills. */
@@ -86,7 +86,17 @@ export function createBoxdPlugin(seam: BoxdSeam = {}) {
       const watcher = createWatch(core)
       const fleet: FleetServices = { ...core, watch: watcher.watch, cost: createCost({ ...core, watch: watcher.watch }) }
       const sessions = sessionRuns(fleet)
-      const registry: RegistryDeps = { runs: { ...viewRuns(fleet), ...machineRuns(fleet), ...sessions.runs }, selectors: sessions.selectors }
+      // The `boxd.works` source's reads, the same code behind `boxd_events_list`, the source's RPC methods and the ledger.
+      const sourceDeps: SourceDeps = { ledger: core.ledger, importV0, identity: localIdentity, now: () => hostServices.clock.now() }
+      const registry: RegistryDeps = {
+        runs: {
+          ...viewRuns(fleet),
+          ...machineRuns(fleet),
+          ...sessions.runs,
+          boxd_events_list: async (input, call) => ({ state: "ok" as const, ...(await listWorks(sourceDeps, input, call)) }),
+        },
+        selectors: sessions.selectors,
+      }
       const costServices: CostServices = { ...fleet, actions: sessions.actions }
       const read = statusReader(ctx, { services: fleet, host, problems: () => [...problems.values()] })
 
@@ -102,13 +112,11 @@ export function createBoxdPlugin(seam: BoxdSeam = {}) {
         await registerStatusCommand(ctx, read).then((registration) => registration.dispose),
         await registerStatusRpc(ctx.rpc, read).then((registration) => registration.dispose),
         // Every tool as a method with its class: a script calls them with no model, and the rules decide what runs. The
-        // boxd.works source's events_list and probe are methods only: they read the local ledger, never a machine.
+        // boxd.works source's probe is a method only: it reads nothing, not even the ledger. Its events_list is also the
+        // boxd_events_list tool above, and its own RPC method keeps the source descriptor's name until 4b's register.
         await registerToolsRpc(ctx as never, {
           plugin: PLUGIN,
-          methods: [
-            ...ownedMethods(registry, ctx.permission.assert),
-            ...sourceMethods({ ledger: core.ledger, importV0, identity: localIdentity, now: () => hostServices.clock.now() }, ctx.permission.assert),
-          ],
+          methods: [...ownedMethods(registry, ctx.permission.assert), ...sourceMethods(sourceDeps, ctx.permission.assert)],
         }),
         await ctx.tool.transform(toolTransform(registry, ctx.permission.assert)).then((registration) => registration.dispose),
         watcher.dispose,

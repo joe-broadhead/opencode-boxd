@@ -12,6 +12,7 @@ import { defaultRules } from "../../src/permissions.js"
 /** Design §3.14, row for row: the tool, its readOnly, its class, and whether it asserts. */
 const TABLE: ReadonlyArray<readonly [ToolName, boolean, ToolSpec["class"]]> = [
   ["status", true, "read"],
+  ["events_list", true, "read"],
   ["job", true, "read"],
   ["read", true, "read"],
   ["ensure", false, "write"],
@@ -53,7 +54,7 @@ function recorder() {
 }
 
 describe("the tool table", () => {
-  test("has the twelve tools of design §3.14, in order, each with its class and readOnly", () => {
+  test("has the thirteen tools of design §3.14, in order, each with its class and readOnly", () => {
     expect(TOOLS.map((tool) => [tool.name, tool.readOnly, tool.class])).toEqual(TABLE.map((row) => [...row]))
     for (const tool of TOOLS) {
       expect(tool.id).toBe(`boxd_${tool.name}`)
@@ -64,7 +65,7 @@ describe("the tool table", () => {
   })
 
   test("splits the reads from the changes exactly once each", () => {
-    expect(READ_TOOLS).toEqual(["boxd_status", "boxd_job", "boxd_read"])
+    expect(READ_TOOLS).toEqual(["boxd_status", "boxd_events_list", "boxd_job", "boxd_read"])
     expect(CHANGING_TOOLS).toEqual(["boxd_ensure", "boxd_submit", "boxd_harvest", "boxd_sleep", "boxd_resume", "boxd_reassign", "boxd_golden", "boxd_exec", "boxd_drop"])
     expect([...READ_TOOLS, ...CHANGING_TOOLS].sort()).toEqual(TOOLS.map((tool) => tool.id).sort())
   })
@@ -97,6 +98,7 @@ describe("the tool table", () => {
   test("each input names the design's fields and requires what the single form needs", () => {
     const fields = (name: ToolName) => Object.keys(toolSpec(name).input.properties as object).sort()
     expect(fields("status")).toEqual(["include", "limit", "region", "since", "view", "workIds"])
+    expect(fields("events_list")).toEqual(["account", "cursor", "limit", "since", "source"])
     expect(fields("job")).toEqual(["cost", "tail", "workId", "works"])
     expect(fields("read")).toEqual(["log", "maxBytes", "path", "tail", "workId"])
     expect(fields("ensure")).toEqual(["adopt", "directory", "git", "model", "ref", "region", "repair", "repo", "size", "title", "wait", "workId", "works"])
@@ -327,6 +329,8 @@ function inputFor(name: ToolName): Record<string, unknown> {
   switch (name) {
     case "status":
       return {}
+    case "events_list":
+      return { source: "works", since: "2026-11-17T00:00:00Z" }
     case "golden":
       return { region: "fra" }
     case "submit":

@@ -196,7 +196,7 @@ export function attentionOf(row: Row, facts: { readonly now: number; readonly ho
   if (observed?.guestVersion && facts.hostVersion && observed.guestVersion !== facts.hostVersion && unsaved && phase !== "busy") {
     reasons.push({ why: "version", error: "GUEST_VERSION", next: `${one("boxd_ensure", id)} upgrades it in place, then ${one("boxd_harvest", id)}` })
   }
-  if (record.laptopCopy === "unverified") reasons.push({ why: "laptop-copy", next: `${one("boxd_harvest", id)} replaces this laptop's copy of the transcript` })
+  if (record.laptopCopy === "unverified") reasons.push({ why: "laptop-copy", next: `${one("boxd_harvest", id)} replaces the copy of the transcript here` })
   if ((phase === "idle" || phase === "ready") && !observed?.needsInput && !facts.automation.startsWith("on")) {
     reasons.push({ why: "idle-running", next: one("boxd_sleep", id) })
   }

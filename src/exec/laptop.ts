@@ -3,7 +3,7 @@
  * runner's import pool (cap 2), with the `opencode` binary the plugin resolved once (`HostServices.opencodeBin`). It is
  * the one place the plugin drives the laptop's OpenCode; a harvest replaces sessions through it (`src/prover.ts`).
  *
- * On every tested release (2.2.3 to 2.3.2) a second `session import` of an id that already exists exits 0 with
+ * On the tested release (2.4.1) a second `session import` of an id that already exists exits 0 with
  * "Session already exists" and changes nothing, so an import that prints those words fails: the replace did not happen.
  * `delete` of an id the laptop does not have exits 1 with "Session not found: <id>", which is "absent".
  *
@@ -38,7 +38,7 @@ export function createLaptopPort(options: LaptopPortOptions): LaptopPort {
     try {
       return await runner.spawn({ ...context, pool: "import", bin, args, timeoutMs: TIMEOUTS.laptopImport })
     } catch (error) {
-      if (error instanceof BoxdError && error.code === "BOXD_MISSING") throw boxdError("IMPORT_FAILED", `This laptop's opencode could not be run (${error.what}).`)
+      if (error instanceof BoxdError && error.code === "BOXD_MISSING") throw boxdError("IMPORT_FAILED", `The OpenCode here could not be run (${error.what}).`)
       throw error
     }
   }
@@ -49,16 +49,16 @@ export function createLaptopPort(options: LaptopPortOptions): LaptopPort {
       const result = await run(["session", "delete", id, "--standalone"], context)
       if (result.code === 0) return "deleted"
       if (result.code === 1 && NOT_FOUND.exec(text(result))?.[1] === id) return "absent"
-      throw boxdError("IMPORT_FAILED", `This laptop's opencode session delete ${id} failed (${said(result)}).`)
+      throw boxdError("IMPORT_FAILED", `The OpenCode here could not delete session ${id} (${said(result)}).`)
     },
 
     async importSession(file, directory, context) {
       const result = await run(["session", "import", file, "--directory", directory, "--standalone"], context)
       const output = text(result)
-      if (result.code !== 0) throw boxdError("IMPORT_FAILED", `This laptop's opencode session import failed (${said(result)}).`)
-      if (ALREADY.test(output)) throw boxdError("IMPORT_FAILED", "This laptop's OpenCode still held the session, so the import changed nothing; delete it first, or harvest again.")
+      if (result.code !== 0) throw boxdError("IMPORT_FAILED", `The OpenCode here could not import the session (${said(result)}).`)
+      if (ALREADY.test(output)) throw boxdError("IMPORT_FAILED", "The OpenCode here still held the session, so the import changed nothing; delete it first, or harvest again.")
       const id = IMPORTED.exec(output)?.[1]
-      if (!id) throw boxdError("IMPORT_FAILED", "This laptop's opencode session import printed no session id.")
+      if (!id) throw boxdError("IMPORT_FAILED", "The OpenCode here printed no session id for the import.")
       return { id }
     },
   }

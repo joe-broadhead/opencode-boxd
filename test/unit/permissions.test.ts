@@ -10,7 +10,8 @@ describe("the generated default rules", () => {
     expect(all[0]).toEqual({ action: "boxd_*", resource: "*", effect: "allow" })
     for (const tool of TOOLS) expect(all).toContainEqual({ action: tool.id, resource: "*", effect: "allow" })
     // The pattern is what a tool a later release adds inherits.
-    expect(all).toHaveLength(2 + TOOLS.length + SOURCE_ACTIONS.length)
+    // The source actions add only `boxd_probe`: `boxd_events_list` is one of the tools now, and is not repeated.
+    expect(all).toHaveLength(2 + TOOLS.length + SOURCE_ACTIONS.length - 1)
     expect(all[1]).toEqual({ action: "boxd_cleanup", resource: "*", effect: "ask" })
   })
 
@@ -31,7 +32,7 @@ describe("the generated default rules", () => {
   test("every access value generates a block", () => {
     expect(ACCESS_VALUES).toEqual(["all", "ask-changes", "read-only"])
     for (const access of ACCESS_VALUES) {
-      expect(defaultRules(access).length).toBe(2 + TOOLS.length + SOURCE_ACTIONS.length)
+      expect(defaultRules(access).length).toBe(2 + TOOLS.length + SOURCE_ACTIONS.length - 1)
       // /boxd-cleanup confirms each action with a prompt at every access level (design §C.5).
       expect(evaluate([BASE, ...defaultRules(access)], "boxd_cleanup")).toBe("ask")
       // The boxd.works source's events_list and probe only read the local ledger: a collector runs them at every level.

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// A fake laptop boxd CLI (0.3.5) for the unit and host tests, and the fake laptop `opencode` beside it
+// A fake laptop boxd CLI (0.3.8; the external surface is recorded in `test/fixtures/boxd-cli-help.json`) for the unit
+// and host tests, and the fake laptop `opencode` beside it
 // (`--as-opencode`). It never touches a real machine: every command answers from a JSON state file (BOXD_FAKE_STATE),
 // with the real CLI's argv, JSON keys and error words, so a wrong flag fails here as it would there.
 //

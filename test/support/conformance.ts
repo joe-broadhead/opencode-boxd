@@ -56,13 +56,13 @@ export function fixtureDeps(log: EventLog, fixture: Fixture = FIXTURE, overrides
 
 export const call = (): ToolCall => ({ sessionID: "ses_conformance", agent: "build", messageID: "msg_conformance", id: "call_conformance", signal: new AbortController().signal, progress: async () => {} })
 
-/** The plugin's tools RPC methods, as describe lists them: the twelve tools and the source's two reads. */
+/** The plugin's tools RPC methods, as describe lists them: the thirteen tools and the source's two reads. */
 export function declaredTools(deps: SourceDeps): ToolDeclaration[] {
   const source = sourceMethods(deps, async () => {})
   return [...TOOLS.map((tool) => ({ id: tool.id, readOnly: tool.readOnly })), ...source.map((method) => ({ id: method.name, readOnly: method.class === "read" }))]
 }
 
-/** package.json's sources, as Memory's schema parses them for the kit; first read as a consumer reads the install. */
+/** package.json's sources, as the source schema parses them for the kit; first read as a collector reads the install. */
 export function declaredSources(): Sources {
   const installed = readInstalledDescriptor(ROOT)
   if (!installed.ok) throw new Error(`package.json's sources: ${installed.problems.join("; ")}`)

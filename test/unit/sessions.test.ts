@@ -5,7 +5,7 @@
 // the spawn budget rows of §4.4.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { BoxdError, boxdError } from "../../src/errors.js"
 import { createRuntime, type PluginRuntime } from "../../src/exec/runtime.js"
 import { sessionRuns } from "../../src/fleet/sessions.js"
@@ -150,6 +150,15 @@ function treeOf(machine: FakeMachine, workId: string): string {
 }
 const git = (dir: string, ...args: string[]) => Bun.spawnSync(["git", "-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.invalid", ...args])
 
+/** A remote beside the tree, with the branch pushed: what a work cloned from a repository has. */
+function publish(machine: FakeMachine, workId: string) {
+  const dir = treeOf(machine, workId)
+  const origin = join(dirname(dir), `${workId}-origin.git`)
+  Bun.spawnSync(["git", "init", "--bare", "--quiet", origin])
+  git(dir, "remote", "add", "origin", origin)
+  git(dir, "push", "--quiet", "-u", "origin", "HEAD")
+}
+
 /** A work as `boxd_ensure` leaves it: the machine, the helper installed, a clean git tree, and an open record. */
 async function openWork(workId: string, over: Partial<WorkRecord> = {}): Promise<FakeMachine> {
   const machine = counter.fake.machine({ name: `oc-${workId}`, region: "fra", labels: { owner: "opencode-boxd", role: "session", work: workId } })
@@ -159,6 +168,7 @@ async function openWork(workId: string, over: Partial<WorkRecord> = {}): Promise
   writeFileSync(join(dir, "README.md"), "# work\n")
   git(dir, "add", ".")
   git(dir, "commit", "--quiet", "-m", "init")
+  publish(machine, workId)
   const value: WorkRecord = {
     format: 1,
     workId,
@@ -472,13 +482,58 @@ describe("boxd_drop", () => {
     expect(machineState(machine).status).toBe("running")
   })
 
+  test("refuses UNPUSHED while a local branch holds a commit no remote ref has (#39), with the commits and the push step", async () => {
+    const machine = await savedWork("unpushed")
+    const tree = treeOf(machine, "unpushed")
+    writeFileSync(join(tree, "NOTES.md"), "notes\n")
+    git(tree, "add", ".")
+    git(tree, "commit", "--quiet", "-m", "local work")
+    const refused = await errorOf(runs.boxd_drop({ workId: "unpushed" }, call()))
+    expect(refused.code).toBe("UNPUSHED")
+    expect(refused.what).toContain("1 commit on a local branch, tag, stash or detached HEAD that no remote ref contains")
+    expect(refused.what).toContain("Dropping oc-unpushed would lose it")
+    expect(refused.details).toMatchObject({ count: 1, commits: [expect.stringContaining("local work")] })
+    expect(refused.next).toContain('git push --all origin && git push --tags origin')
+    // Pushed, the same work drops: what the guard wanted was the commit on a remote ref.
+    git(tree, "push", "--quiet", "origin", "HEAD")
+    expect(await runs.boxd_drop({ workId: "unpushed" }, call())).toMatchObject({ state: "dropped" })
+  })
+
+  test("refuses UNPUSHED_UNKNOWN when the guest cannot count unpushed commits (a broken ref), and removes nothing", async () => {
+    const machine = await savedWork("brokenref")
+    const tree = treeOf(machine, "brokenref")
+    // git status still answers from the current branch; walking every ref fails on the missing object.
+    writeFileSync(join(tree, ".git", "refs", "heads", "broken"), "0123456789012345678901234567890123456789\n")
+    const refused = await errorOf(runs.boxd_drop({ workId: "brokenref" }, call()))
+    expect(refused.code).toBe("UNPUSHED_UNKNOWN")
+    expect(refused.what).toContain("could not tell whether every commit is on a remote ref")
+    expect(refused.next).toContain('["git", "rev-list", "--count", "--all", "HEAD", "--not", "--remotes"]')
+    expect(refused.details).toMatchObject({ unknown: true })
+    expect(machineState(machine).status).toBe("running")
+  })
+
+  test("refuses a commit on a detached HEAD that no branch or remote ref holds", async () => {
+    const machine = await savedWork("detached")
+    const tree = treeOf(machine, "detached")
+    git(tree, "checkout", "--quiet", "--detach", "HEAD")
+    writeFileSync(join(tree, "DETACHED.md"), "detached\n")
+    git(tree, "add", ".")
+    git(tree, "commit", "--quiet", "-m", "detached work")
+    const refused = await errorOf(runs.boxd_drop({ workId: "detached" }, call()))
+    expect(refused.code).toBe("UNPUSHED")
+    expect(refused.details).toMatchObject({ count: 1, commits: [expect.stringContaining("detached work")] })
+    // The same commit under a remote ref: drop accepts.
+    git(tree, "push", "--quiet", "origin", "HEAD:refs/heads/detached")
+    expect(await runs.boxd_drop({ workId: "detached" }, call())).toMatchObject({ state: "dropped" })
+  })
+
   test("refuses a v0-imported work whose laptop copy is unverified, with next boxd_harvest; a harvest verifies it, and drop then removes it (F1)", async () => {
     const machine = await savedWork("imported")
     await ledger.update(["imported"], async (current) => ({ write: [{ ...current.get("imported")!, importedFrom: "v0" as const, laptopCopy: "unverified" as const }], value: undefined }), op())
     expect(ledger.saved((await record("imported"))!)).toBe("fresh")
 
     const refused = await errorOf(runs.boxd_drop({ workId: "imported" }, call()))
-    expect([refused.code, refused.what]).toEqual(["NOT_SAVED", "The work was imported from an earlier release, and no harvest since has verified this laptop's copy of its transcript."])
+    expect([refused.code, refused.what]).toEqual(["NOT_SAVED", "The work was imported from an earlier release, and no harvest since has verified the copy of its transcript here."])
     expect(refused.next).toStartWith("boxd_harvest(")
     expect(machineState(machine).status).toBe("running")
     expect(counter.fake.calls().some((line: string) => line.startsWith("machine remove "))).toBe(false)

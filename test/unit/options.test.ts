@@ -19,7 +19,6 @@ const DEFAULTS: Options = {
   autoSleepMinutes: 10,
   orphanHours: 12,
   leaseDays: 0,
-  costContext: true,
   idleCheck: true,
 }
 
@@ -47,7 +46,7 @@ describe("plugin options", () => {
     for (const automation of ["auto", "on", "off"]) expect(parseOptions({ automation })).toMatchObject({ automation })
     expect(parseOptions({ autoHibernateMinutes: 30, autoSleepMinutes: 0, orphanHours: 1, leaseDays: 3 })).toMatchObject({ autoHibernateMinutes: 30, autoSleepMinutes: 0, orphanHours: 1, leaseDays: 3 })
     expect(parseOptions({ budget: { daily: 50, action: "refuse" } })).toMatchObject({ budget: { daily: 50, action: "refuse" } })
-    expect(parseOptions({ costContext: false, idleCheck: false })).toMatchObject({ costContext: false, idleCheck: false })
+    expect(parseOptions({ idleCheck: false })).toMatchObject({ idleCheck: false })
   })
 
   test("refuses every value outside its rule, each as OPTIONS_INVALID with a next step", () => {
@@ -79,7 +78,6 @@ describe("plugin options", () => {
       { budget: { daily: 0, action: "warn" } },
       { budget: { daily: 50, action: "block" } },
       { budget: { dailyUsd: 50, action: "warn" } },
-      { costContext: "no" },
       { idleCheck: 1 },
       { allowUntestedHost: "yes" },
       { access: "write" },
@@ -90,35 +88,29 @@ describe("plugin options", () => {
     for (const raw of bad) expect(() => parseOptions(raw)).toThrow(/^OPTIONS_INVALID: .*Next step: /)
   })
 
-  test("the removed snapshot option names its replacement", () => {
-    expect(() => parseOptions({ snapshot: "opencode-golden" })).toThrow(/"snapshot" is removed: golden images are now built from stock\. Remove it; set "goldenBase" only/)
-  })
 })
 
 describe("the host", () => {
-  test("supports 2.2.3 up to, not including, 2.4.0", () => {
-    expect(SUPPORTED_HOST).toBe(">=2.2.3 <2.4.0")
-    expect(isSupportedHost("2.2.3")).toBe(true)
-    expect(isSupportedHost("2.2.6")).toBe(true)
-    expect(isSupportedHost("2.2.9")).toBe(true)
-    expect(isSupportedHost("2.3.0")).toBe(true)
-    expect(isSupportedHost("2.3.99")).toBe(true)
+  test("supports 2.4.1 up to, not including, 2.5.0", () => {
+    expect(SUPPORTED_HOST).toBe(">=2.4.1 <2.5.0")
+    expect(isSupportedHost("2.4.1")).toBe(true)
+    expect(isSupportedHost("2.4.9")).toBe(true)
+    expect(isSupportedHost("2.5.0")).toBe(false)
     expect(isSupportedHost("2.4.0")).toBe(false)
-    expect(isSupportedHost("2.2.2")).toBe(false)
-    expect(isSupportedHost("2.2.6-dev.1")).toBe(false)
+    expect(isSupportedHost("2.4.1-dev.1")).toBe(false)
   })
 
-  test("the tested list holds every release the checks run on, 2.2.7 through 2.3.2 included", () => {
-    expect(TESTED_HOSTS).toEqual(["2.2.3", "2.2.4", "2.2.5", "2.2.6", "2.2.7", "2.3.0", "2.3.1", "2.3.2"])
-    expect(isTestedHost("2.3.0")).toBe(true)
-    expect(isTestedHost("2.2.8")).toBe(false)
+  test("the tested list is 2.4.1 only: the release the checks run on", () => {
+    expect(TESTED_HOSTS).toEqual(["2.4.1"])
+    expect(isTestedHost("2.4.1")).toBe(true)
+    expect(isTestedHost("2.4.2")).toBe(false)
   })
 
   test("starts inside the range, and outside it only with the opt-in", () => {
-    expect(checkHost("2.2.4", false)).toEqual({ version: "2.2.4", range: SUPPORTED_HOST, tested: true })
-    expect(checkHost("2.2.8", false)).toEqual({ version: "2.2.8", range: SUPPORTED_HOST, tested: false })
-    expect(() => checkHost("2.4.0", false)).toThrow(/^HOST_UNTESTED: .*Next step: /)
-    expect(checkHost("2.4.0", true)).toMatchObject({ version: "2.4.0", tested: false })
+    expect(checkHost("2.4.1", false)).toEqual({ version: "2.4.1", range: SUPPORTED_HOST, tested: true })
+    expect(checkHost("2.4.2", false)).toEqual({ version: "2.4.2", range: SUPPORTED_HOST, tested: false })
+    expect(() => checkHost("2.5.0", false)).toThrow(/^HOST_UNTESTED: .*Next step: /)
+    expect(checkHost("2.5.0", true)).toMatchObject({ version: "2.5.0", tested: false })
     expect(checkHost("", true)).toMatchObject({ version: null, tested: false })
   })
 })

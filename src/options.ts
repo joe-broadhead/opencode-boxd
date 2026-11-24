@@ -50,9 +50,7 @@ export interface Options {
   readonly leaseDays: number
   /** Machine cost per day, warned about or refused at (§C.5); none by default. */
   readonly budget?: Budget
-  /** The context line and the compaction part (§C.4). */
-  readonly costContext: boolean
-  /** The end-of-turn idle check (§C.4). */
+  /** The end-of-turn idle check (§C.4): one synthetic note when money burns and automation will not act. */
   readonly idleCheck: boolean
 }
 
@@ -72,7 +70,6 @@ export const DEFAULT_OPTIONS: Options = {
   autoSleepMinutes: 10,
   orphanHours: 12,
   leaseDays: 0,
-  costContext: true,
   idleCheck: true,
 }
 
@@ -89,7 +86,7 @@ const quoted = (values: readonly string[]) => values.map((value) => `"${value}"`
 
 const ACCEPTED = {
   access: '"all" (the default), "ask-changes" or "read-only"',
-  allowedRoots: "an array of absolute laptop folders that work files may use besides the project (empty by default)",
+  allowedRoots: "an array of absolute folders here that work files may use besides the project (empty by default)",
   allowUntestedHost: "true or false (the default)",
   region: `${quoted(REGION_CHOICES)} ("auto" by default)`,
   keepFree: `an object with a whole number of machines, 0 or more, for each of ${quoted(REGIONS)} (0 by default)`,
@@ -97,7 +94,7 @@ const ACCEPTED = {
   git: "an object with a non-empty name and an email address",
   goldenPrefix: 'a lowercase name of up to 32 letters, digits or hyphens, starting with a letter ("oc-golden" by default)',
   goldenBase: '"stock" (the default) or a lowercase boxd snapshot name',
-  goldenSetup: "an absolute laptop path to a script",
+  goldenSetup: "an absolute path here to a script",
   buildGolden: '"auto" (the default) or "never"',
   notices: '"wake" (the default), "queue" or "off"',
   autoHibernateMinutes: "a whole number of minutes from 30 to 1440 (120 by default)",
@@ -106,16 +103,10 @@ const ACCEPTED = {
   orphanHours: "a whole number of hours, 1 or more (12 by default)",
   leaseDays: "a whole number of days, 0 or more (0, off, by default)",
   budget: 'an object with a positive daily amount in the organisation\'s billing currency and an action, "warn" or "refuse"',
-  costContext: "true (the default) or false",
   idleCheck: "true (the default) or false",
 } as const satisfies Record<keyof Options, string>
 
-/** Options that a release removed, with what replaced them. */
-const REMOVED: Readonly<Record<string, string>> = {
-  snapshot: 'The option "snapshot" is removed: golden images are now built from stock. Remove it; set "goldenBase" only to build on a hand-made base without model credentials',
-}
-
-const EXAMPLE = `"plugins": [{ "package": "github:joe-broadhead/opencode-boxd#<tag>", "options": { "region": "auto", "size": "2x8" } }]`
+const EXAMPLE = `"plugins": [{ "package": "github:we-the-rebel-alliance/boxd-plugin#v<version>", "options": { "region": "auto", "size": "2x8" } }]`
 
 const invalid = (problem: string) => boxdError("OPTIONS_INVALID", `${problem}. Fix the plugin options, for example ${EXAMPLE}`)
 
@@ -141,12 +132,11 @@ export function parseOptions(raw: unknown): Options {
   if (raw === undefined || raw === null) return DEFAULT_OPTIONS
   if (!isObject(raw)) throw invalid(`The plugin options must be an object, found ${describe(raw)}`)
   for (const key of Object.keys(raw)) {
-    if (Object.hasOwn(REMOVED, key)) throw invalid(REMOVED[key]!)
     if (!Object.hasOwn(ACCEPTED, key)) throw invalid(`Unknown option "${key}". Accepted options: ${quoted(Object.keys(ACCEPTED))}`)
   }
   const input = { ...DEFAULT_OPTIONS, ...raw } as Record<keyof Options, unknown>
 
-  for (const key of ["allowUntestedHost", "costContext", "idleCheck"] as const) if (typeof input[key] !== "boolean") throw wrong(key, input[key])
+  for (const key of ["allowUntestedHost", "idleCheck"] as const) if (typeof input[key] !== "boolean") throw wrong(key, input[key])
   const access = oneOf("access", input.access, ACCESS_VALUES)
   const { allowedRoots } = input
   if (!Array.isArray(allowedRoots) || allowedRoots.some((root) => typeof root !== "string" || !root.startsWith("/"))) throw wrong("allowedRoots", allowedRoots)
@@ -204,7 +194,6 @@ export function parseOptions(raw: unknown): Options {
     orphanHours: wholeNumber("orphanHours", input.orphanHours, 1),
     leaseDays: wholeNumber("leaseDays", input.leaseDays, 0),
     ...(budget ? { budget } : {}),
-    costContext: input.costContext as boolean,
     idleCheck: input.idleCheck as boolean,
   }
 }

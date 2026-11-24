@@ -7,7 +7,7 @@
  *   { "input": { "sessionID": "<session>", "input": <the method's input> } }
  *
  * A script runs as a session and the agent it names; the rule for the method's permission action is resolved before
- * dispatch, and only `allow` runs. boxd has no MCP server, so every method is the plugin's own: the twelve tools
+ * dispatch, and only `allow` runs. boxd has no MCP server, so every method is the plugin's own: the thirteen tools
  * (`ownedMethods` in `src/tools.ts`) and the `boxd.works` source's `events_list` and `probe` (`src/sources.ts`).
  */
 import { toolsRpcId, type Failure, type McpResult, type MethodSpec, type NextSteps, type ShapeCall, type ToolsRpcPlugin } from "@we-the-rebel-alliance/source-contract/tools-rpc"

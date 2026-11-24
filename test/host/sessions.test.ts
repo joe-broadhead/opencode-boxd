@@ -54,7 +54,14 @@ async function seedWork(host: Host, ledger: Awaited<ReturnType<typeof ledgerOf>>
     } finally {
       await runtime.dispose()
     }
-    for (const args of [["init", "--quiet"], ["commit", "--quiet", "--allow-empty", "-m", "init"]]) Bun.spawnSync(["git", "-C", tree, "-c", "user.name=t", "-c", "user.email=t@example.invalid", ...args])
+    const git = (...args: string[]) => Bun.spawnSync(["git", "-C", tree, "-c", "user.name=t", "-c", "user.email=t@example.invalid", ...args])
+    git("init", "--quiet")
+    git("commit", "--quiet", "--allow-empty", "-m", "init")
+    // A remote with the branch pushed, as a work cloned from a repository has: nothing is waiting to be lost (#39).
+    const origin = join(host.boxd.fake.disk(machine), "home", "boxd", `${workId}-origin.git`)
+    Bun.spawnSync(["git", "init", "--bare", "--quiet", origin])
+    git("remote", "add", "origin", origin)
+    git("push", "--quiet", "-u", "origin", "HEAD")
   }
   const record: WorkRecord = {
     format: 1,

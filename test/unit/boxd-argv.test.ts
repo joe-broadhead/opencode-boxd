@@ -1,4 +1,4 @@
-// Argv for the laptop CLI 0.3.5, one builder per verb, and the readers of its JSON answers. Every machine verb passes
+// Argv for the laptop CLI 0.3.8 (recorded in test/fixtures/boxd-cli-help.json), one builder per verb, and the readers of its JSON answers. Every machine verb passes
 // --region, every change acts by id, a create carries the cost bounds of design §C.2, and nothing ever asks for
 // --shared or --isolated.
 import { describe, expect, test } from "bun:test"

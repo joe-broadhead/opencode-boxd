@@ -1,6 +1,6 @@
-// The laptop port (F1): this laptop's own `opencode session delete` then `session import`, in the import pool. A
-// delete of an id the laptop does not have exits 1 with "Session not found: <id>" (measured on 2.2.6), which is
-// "absent"; any other failure is IMPORT_FAILED; an import that finds the id already there replaced nothing, so it fails.
+// The laptop port (F1): this machine's own `opencode session delete` then `session import`, in the import pool. A
+// delete of an id the machine does not have exits 1 with "Session not found: <id>", which is "absent"; any other
+// failure is IMPORT_FAILED; an import that finds the id already there replaced nothing, so it fails.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { writeFileSync } from "node:fs"
 import { join } from "node:path"
@@ -49,7 +49,7 @@ describe("the laptop port", () => {
     const file = exportFile("ses_twice")
     await laptop.importSession(file, "/project", context)
     const error = await fail(laptop.importSession(file, "/project", context))
-    expect([error?.code, error?.what]).toEqual(["IMPORT_FAILED", "This laptop's OpenCode still held the session, so the import changed nothing; delete it first, or harvest again."])
+    expect([error?.code, error?.what]).toEqual(["IMPORT_FAILED", "The OpenCode here still held the session, so the import changed nothing; delete it first, or harvest again."])
   })
 
   test("a delete that fails for another reason is IMPORT_FAILED, never absent", async () => {

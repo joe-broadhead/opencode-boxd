@@ -24,12 +24,6 @@ const STALE: [string, RegExp][] = [
   ["says the writes are off", /\b(?:the )?(?:machine )?changes? (?:are|stay) off\b/i],
 ]
 
-/**
- * Jelly's shared block is jelly's own text, word for word (the kit's drift check holds it byte for byte); it states what
- * asks at each access level, so it is not this page's claim about the default.
- */
-const withoutFamilyBlock = (text: string) => text.replace(/<!-- family-block:start -->[\s\S]*?<!-- family-block:end -->/, "")
-
 /** A sentence that names a restricting value describes that value, not the default. */
 const atAll = (text: string) =>
   text
@@ -37,17 +31,16 @@ const atAll = (text: string) =>
     .filter((sentence) => !/(?:ask-changes|read-only)/.test(sentence))
     .join(" ")
 
-const jellySummary = () => (JSON.parse(read("package.json")) as { jelly?: { summary?: string } }).jelly?.summary ?? ""
+const legacySummary = () => (JSON.parse(read("package.json")) as { jelly?: { summary?: string } }).jelly?.summary ?? ""
 
 /** The status a person reads with the default option and the block in place, and one tool this version does not know. */
 const defaultStatus = (): Status => buildStatus(statusFacts({ tools: [...TOOLS.map((tool) => tool.id), "shiny_new_tool"] }))
 
 describe("the model-facing text at access all", () => {
   const all = {
-    "the Jelly summary": jellySummary(),
-    "the Jelly page": withoutFamilyBlock(read("docs/jelly.md")),
+    "the legacy declaration's summary": legacySummary(),
     "the /boxd-status text": formatStatus(defaultStatus()),
-    "the boxd skill": read("skills/boxd/SKILL.md"),
+    "the boxd-sessions skill": read("skills/boxd-sessions/SKILL.md"),
   }
 
   test.each(Object.entries(all))("%s claims nothing the default block contradicts", (_file, text) => {

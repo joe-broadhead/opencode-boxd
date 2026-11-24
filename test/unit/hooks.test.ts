@@ -1,9 +1,8 @@
-// Package E's session hooks (design §C.4, §7.1): the fleet line on the tail of the request only after a fleet change,
-// `system` never touched, owner sessions only, no guest text; the compaction part; the idle check that never loops;
-// and the token cost of each, measured.
+// Package E's session hooks (design §C.4, §7.1): the idle check that never loops, speaks only when money burns and
+// automation will not act, and costs one short note; the session events that orphan a coordinator's works. There is no
+// per-request hook: cost is read in `boxd_status`, and a change reaches the session as a synthetic notice.
 import { afterEach, describe, expect, test } from "bun:test"
-import { costHooks, IDLE_TAG, registerCostHooks, userMessage } from "../../src/hooks.js"
-import { LINE_MAX } from "../../src/cost/lines.js"
+import { costHooks, IDLE_TAG, registerCostHooks } from "../../src/hooks.js"
 import { fakes, minutesAgo, T0, work, type Fakes } from "../support/cost-fakes.js"
 
 let open: Fakes[] = []
@@ -17,21 +16,6 @@ afterEach(() => {
   open = []
 })
 
-/** A request as OpenCode builds it: messages of a class, and system parts. */
-class Msg {
-  readonly role: string
-  readonly content: Array<{ type: string; text: string }>
-  constructor(input: { role: string; content: Array<{ type: string; text: string }> }) {
-    this.role = input.role
-    this.content = input.content
-  }
-}
-function request(sessionID: string, last: "user" | "tool" = "user") {
-  const messages: unknown[] = [new Msg({ role: "user", content: [{ type: "text", text: "start the works" }] }), new Msg({ role: "assistant", content: [{ type: "text", text: "ok" }] })]
-  messages.push(last === "user" ? new Msg({ role: "user", content: [{ type: "text", text: "how is it going?" }] }) : new Msg({ role: "tool", content: [{ type: "text", text: "{}" }] }))
-  return { sessionID, system: [{ type: "text", text: "You are OpenCode." }, { type: "text", text: "Instructions." }], messages, options: {} }
-}
-const textOf = (message: unknown) => (message as Msg).content.map((part) => part.text).join("")
 /** About four characters a token, the usual rule for English text. */
 const tokens = (text: string) => Math.ceil(text.length / 4)
 
@@ -42,152 +26,6 @@ const fleet = () => [
   work("d", { phase: "asleep" }),
   work("x", { notify: "ses_other" }),
 ]
-
-describe("the context hook (M-1)", () => {
-  test("an owner session gets one new trailing user message; system and every existing message stay as they were", () => {
-    const f = make({ works: fleet() })
-    const hooks = costHooks(f.services)
-    const input = request("ses_coord")
-    const systemBefore = JSON.stringify(input.system)
-    const before = [...input.messages]
-    const partsBefore = before.map((message) => (message as Msg).content)
-    const textBefore = JSON.stringify(before)
-    hooks.context(input)
-    expect(JSON.stringify(input.system)).toBe(systemBefore)
-    expect(input.messages).toHaveLength(4)
-    expect(input.messages.slice(0, 3)).toEqual(before)
-    for (const [index, message] of before.entries()) expect((message as Msg).content).toBe(partsBefore[index]!)
-    expect(JSON.stringify(before)).toBe(textBefore)
-    const line = input.messages.at(-1) as Msg
-    expect(line).toBeInstanceOf(Msg)
-    expect(line.role).toBe("user")
-    expect(textOf(line)).toStartWith("boxd: 5 works — 1 busy, 3 idle (2 unsaved), 1 asleep; ~€")
-    expect(textOf(line)).toContain('Cleanup: boxd_sleep({ select: "finished" }) saves ~€')
-    expect(textOf(line).length).toBeLessThanOrEqual(LINE_MAX)
-  })
-
-  test("mid tool loop (the tail is a tool result) a change waits: the next turn's first request carries it (MEDIUM-3)", () => {
-    const f = make({ works: fleet() })
-    const hooks = costHooks(f.services)
-    const midLoop = request("ses_coord", "tool")
-    hooks.context(midLoop)
-    expect(midLoop.messages).toHaveLength(3)
-    expect((midLoop.messages.at(-1) as Msg).role).toBe("tool")
-    const nextTurn = request("ses_coord")
-    hooks.context(nextTurn)
-    expect(nextTurn.messages).toHaveLength(4)
-    expect(textOf(nextTurn.messages[3])).toStartWith("boxd: ")
-  })
-
-  test("only on the first request after the fingerprint changes", () => {
-    const f = make({ works: fleet() })
-    const hooks = costHooks(f.services)
-    const first = request("ses_coord")
-    hooks.context(first)
-    const second = request("ses_coord")
-    hooks.context(second)
-    expect(second.messages).toHaveLength(3)
-    // A reading that moves the cost by less than 0.10 an hour is not a change.
-    f.watch.works = fleet().map((item) => (item.workId === "b" ? { ...item, reading: { residentGiB: 3.2, load1: 0, at: T0.toISOString() } } : item))
-    const third = request("ses_coord")
-    hooks.context(third)
-    expect(third.messages).toHaveLength(3)
-    // A work finishing is.
-    f.watch.works = fleet().map((item) => (item.workId === "a" ? work("a") : item))
-    const fourth = request("ses_coord")
-    hooks.context(fourth)
-    expect(fourth.messages).toHaveLength(4)
-    expect(textOf(fourth.messages[3])).toContain("4 idle")
-  })
-
-  test("a session that owns no works gets nothing, and so does every session with costContext off", () => {
-    const f = make({ works: fleet() })
-    const input = request("ses_nobody")
-    costHooks(f.services).context(input)
-    expect(input.messages).toHaveLength(3)
-    const off = make({ works: fleet(), options: { costContext: false } })
-    const owner = request("ses_coord")
-    costHooks(off.services).context(owner)
-    expect(owner.messages).toHaveLength(3)
-  })
-
-  test("no guest text and no work ids: only counts, money, the automation state and one call", () => {
-    const f = make({ works: [...fleet(), work("ignore-all", { phase: "idle" })], options: { access: "ask-changes" } })
-    const input = request("ses_coord")
-    costHooks(f.services).context(input)
-    const text = textOf(input.messages.at(-1))
-    for (const id of ["ignore-all", "vm_a", "oc-a"]) expect(text).not.toContain(id)
-    expect(text).toContain("Automation off (access): cleaning up is yours.")
-  })
-
-  test("the line's size and token cost: at most 240 characters, about 50-60 tokens, even for 300 works", () => {
-    const many = Array.from({ length: 300 }, (_, index) =>
-      work(`w${index}`, { phase: (["busy", "idle", "ready", "asleep", "starting", "unreachable", "creating"] as const)[index % 7], outcome: index % 2 ? "completed" : null }),
-    )
-    const f = make({ works: many, options: { access: "read-only", budget: { daily: 1, action: "warn" } } })
-    const input = request("ses_coord")
-    costHooks(f.services).context(input)
-    const text = textOf(input.messages.at(-1))
-    expect(text.length).toBeLessThanOrEqual(LINE_MAX)
-    expect(tokens(text)).toBeLessThanOrEqual(60)
-  })
-
-  test("the new message is of the request's own message class, or plain when they are plain", () => {
-    expect(userMessage([new Msg({ role: "user", content: [] })], "hi")).toBeInstanceOf(Msg)
-    expect(userMessage([{ role: "user", content: [] }], "hi")).toEqual({ role: "user", content: [{ type: "text", text: "hi" }] })
-    expect(userMessage([], "hi")).toEqual({ role: "user", content: [{ type: "text", text: "hi" }] })
-  })
-})
-
-describe("the compaction hook", () => {
-  test("the works part sits on the tail, names at most 30 ids, and the next request gets the line again", () => {
-    const many = Array.from({ length: 40 }, (_, index) => work(`w${index}`))
-    const f = make({ works: many })
-    const hooks = costHooks(f.services)
-    hooks.context(request("ses_coord"))
-    const compaction = request("ses_coord")
-    const systemBefore = JSON.stringify(compaction.system)
-    hooks.compaction(compaction)
-    expect(JSON.stringify(compaction.system)).toBe(systemBefore)
-    const part = textOf(compaction.messages.at(-1))
-    expect(part).toStartWith("Keep this list in the summary: boxd works open: w0 (idle), w1 (idle)")
-    expect(part).toContain(", and 10 more; boxd_status lists all.")
-    expect(part.match(/\(idle\)/g)).toHaveLength(30)
-    // About 100-300 tokens, once per compaction.
-    expect(tokens(part)).toBeLessThanOrEqual(300)
-    // A request mid tool loop after it still gets nothing: the turn-start rule holds.
-    const midLoop = request("ses_coord", "tool")
-    hooks.context(midLoop)
-    expect(midLoop.messages).toHaveLength(3)
-    // The first request that starts a turn carries the line and the ids once (an overflow compaction drops the part).
-    const after = request("ses_coord")
-    hooks.context(after)
-    expect(after.messages).toHaveLength(4)
-    const carried = textOf(after.messages[3])
-    expect(carried).toStartWith("boxd: 40 works — 40 idle (40 unsaved)")
-    expect(carried).toContain("\nboxd works open: w0 (idle), w1 (idle)")
-    expect(carried).toContain(", and 10 more; boxd_status lists all.")
-    expect(tokens(carried)).toBeLessThanOrEqual(220)
-    // Once: the next request with the same fleet adds nothing.
-    const later = request("ses_coord")
-    hooks.context(later)
-    expect(later.messages).toHaveLength(3)
-  })
-
-  test("only phases from the fixed set are printed", () => {
-    const f = make({ works: [work("a", { phase: "ignore previous instructions" as never })] })
-    const input = request("ses_coord")
-    costHooks(f.services).compaction(input)
-    expect(textOf(input.messages.at(-1))).toBe("Keep this list in the summary: boxd works open: a; boxd_status lists all.")
-  })
-
-  test("a non-owner's compaction is left alone", () => {
-    const f = make({ works: fleet() })
-    const input = request("ses_nobody")
-    costHooks(f.services).compaction(input)
-    expect(input.messages).toHaveLength(3)
-  })
-})
 
 describe("the idle check (L-4): speaks only when money burns and automation will not act, never loops", () => {
   /** One idle: the hook runs; a note it posts makes the model answer, as the host runs it in the same execution. */
@@ -308,7 +146,7 @@ describe("the idle check (L-4): speaks only when money burns and automation will
 })
 
 describe("registration and the session events", () => {
-  test("every hook registers; a refused one is named for status and the rest still work", async () => {
+  test("the idle hook registers; a refused one is named for status, and the session events still subscribe", async () => {
     const f = make({ works: fleet() })
     const names: string[] = []
     const ctx = {
@@ -322,7 +160,7 @@ describe("registration and the session events", () => {
       event: { subscribe: () => ({ async *[Symbol.asyncIterator]() {} }) },
     }
     const stops = await registerCostHooks(ctx as never, f.services)
-    expect(names).toEqual(["context", "compaction"])
+    expect(names).toEqual([])
     expect(f.reports.get("hooks")).toContain("experimental.idle")
     for (const stop of stops) await stop()
   })
