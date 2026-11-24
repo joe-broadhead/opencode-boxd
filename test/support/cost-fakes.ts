@@ -116,7 +116,7 @@ export function fakeActions(): FakeActions {
     },
     async harvest(ids, context) {
       calls.push({ method: "harvest", ids, context })
-      return envelope(ids, (workId) => ({ state: "saved", workId, outcome: "completed", sessions: [], git: { known: true, dirty: false, patchStored: false, untracked: 0, ignored: 0 }, next: "" }) as never, actions.failing.harvest)
+      return envelope(ids, (workId) => ({ state: "saved", workId, outcome: "completed", sessions: [], git: { known: true, dirty: false, patchStored: false, untracked: 0, ignored: 0, unpushed: 0 }, next: "" }) as never, actions.failing.harvest)
     },
     async sleep(ids, context) {
       calls.push({ method: "sleep", ids, context })

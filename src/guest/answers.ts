@@ -231,6 +231,14 @@ export function readGit(answer: Json): GitAnswer {
   const patch = answer.patch as Json | undefined
   if (patch !== undefined && (!count(patch.bytes) || !string(patch.sha256) || !SHA.test(patch.sha256))) throw shape("git")
   const remote = text(answer.remote)
+  // Commit subjects are the guest's words: redacted and cut before they can reach a result or a refusal.
+  const commit = (value: unknown): string | undefined => {
+    if (!string(value) || !value.trim()) return undefined
+    const line = shortReason(value.trim()) ?? value.trim()
+    return line.slice(0, 160)
+  }
+  const unpushed = Array.isArray(answer.unpushed) ? answer.unpushed.flatMap((value) => (commit(value) ? [commit(value)!] : [])) : []
+  if (answer.unpushedCount !== undefined && !count(answer.unpushedCount)) throw shape("git")
   return {
     known: answer.known,
     remote: remote ? withoutUserinfo(remote) : null,
@@ -240,6 +248,8 @@ export function readGit(answer: Json): GitAnswer {
     ...(patch ? { patch: { file: guestFile("git", patch.file), bytes: patch.bytes as number, sha256: patch.sha256 as string } } : {}),
     untracked: files("git", answer.untracked),
     ignored: files("git", answer.ignored),
+    unpushed: unpushed.slice(0, 20),
+    unpushedCount: count(answer.unpushedCount) ? (answer.unpushedCount as number) : unpushed.length,
     ...(answer.sessions !== undefined ? { sessions: (Array.isArray(answer.sessions) ? answer.sessions : [null]).map((item) => marks("git", item)) } : {}),
   }
 }

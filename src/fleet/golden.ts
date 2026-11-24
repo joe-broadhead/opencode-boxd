@@ -55,7 +55,7 @@ export const hasProviderKey = (secrets: readonly SecretInfo[]) => secrets.some((
 
 /** The one image a work of this size in any region is made from, for this laptop's OpenCode. */
 export function imageName(prefix: string, version: string | null, size: Size): string {
-  if (version === null) throw boxdError("GOLDEN_MISSING", "This laptop's OpenCode reports no version, so no golden image can be named for it.")
+  if (version === null) throw boxdError("GOLDEN_MISSING", "The OpenCode here reports no version, so no golden image can be named for it.")
   return assertSnapshot(`${prefix}-${version}-${size}`)
 }
 
@@ -116,7 +116,7 @@ export function createGolden(services: FleetServices, settings: { readonly bound
   async function recipe(region: Region, size: Size, base: string, name: string, context: OpContext): Promise<GoldenImage> {
     const started = now()
     const version = services.hostVersion
-    if (version === null) throw boxdError("GOLDEN_MISSING", "This laptop's OpenCode reports no version, so no golden image can be built for it.")
+    if (version === null) throw boxdError("GOLDEN_MISSING", "The OpenCode here reports no version, so no golden image can be built for it.")
     let step = "check the base"
     try {
       if (base !== "stock" && !(await images(context)).some((row) => row.region === region && row.name === base)) {

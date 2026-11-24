@@ -5,7 +5,7 @@ plugin relies on boxd's behaviour, and the fake CLI in the tests could hide a ga
 
 ## Where it runs
 
-Steps L1 to L11 run on a boxd machine with the **laptop** boxd CLI (0.3.5 or later) installed in an isolated `HOME`,
+Steps L1 to L11 run on a boxd machine with the **host** boxd CLI (0.3.5 or later) installed in an isolated `HOME`,
 signed in with a short-lived key that the owner mints for it:
 
 ```sh
@@ -37,7 +37,7 @@ for the owner to run. The README's known limits name what that leaves open.
 | L7 | `boxd_golden` from stock in `fra` and `nyc`: the time, the 401/200 password probe, the env file removed, and a work created from it at the image's size with no reboot. | not run |
 | L8 | `steer`, `queue` and `interrupt` against a real cheap model, on a task that steps every few seconds and on one blocked in `sleep 120`: steer lands at the next step, and only interrupt reaches the blocked one. | not run |
 | L9 | `machine rename <id> <new> -y` reboots the machine, and `machine label set <id> work=<new>` takes effect. | not run |
-| L10 | Harvest twice: the laptop copy changes the second time. A `boxd connect` prompt after the harvest makes drop answer `NOT_SAVED`. | not run |
+| L10 | Harvest twice: the copy here changes the second time. A `boxd connect` prompt after the harvest makes drop answer `NOT_SAVED`. | not run |
 | L11 | The import of an earlier ledger, from a copy of a real one the owner provides, in an isolated `HOME`: kill it once mid-way, restart, and compare; then read one running guest through its earlier helper with no upload, and see the first change adopt it. | not run |
 | L12 | Owner's Mac: first reproduce the stall that 24 parallel `boxd_ensure` calls caused on the earlier release, with the real OpenCode server; then the same on this release, with `health.loopLagMaxMs` and no "Event stream stalled". | not run |
 | L13 | Owner's Mac: the macOS config path, and the `PATH` the OpenCode server sees. | not run |

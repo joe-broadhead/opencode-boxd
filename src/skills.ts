@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url"
 import { Skill, type Plugin } from "@opencode/plugin"
 import { boxdError } from "./errors.js"
 
-const ID = "boxd"
+const ID = "boxd-sessions"
 export const SKILL_NAMES = [ID] as const
 
 const DEFAULT_DIR = fileURLToPath(new URL("../skills", import.meta.url))

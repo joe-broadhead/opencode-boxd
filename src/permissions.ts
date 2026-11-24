@@ -24,8 +24,9 @@ const rule = (action: string, effect: Rule["effect"]): Rule => ({ action, resour
 export const CLEANUP_ACTION = "boxd_cleanup"
 
 /**
- * The `boxd.works` source's two tools RPC methods (`src/sources.ts`): reads of the local ledger that a collector runs
- * with no one there, so every access value allows them, as it allows the read-only tools.
+ * The `boxd.works` source's tools RPC methods (`src/sources.ts`): reads of the local ledger that a collector runs with
+ * no one there, so every access value allows them, as it allows the read-only tools. `events_list` is one of those
+ * tools too, so it is not repeated below.
  */
 export const SOURCE_ACTIONS: readonly string[] = [EVENTS_ACTION, PROBE_ACTION]
 
@@ -47,7 +48,7 @@ export const defaultRules = (access: Access = "all"): Rule[] => {
     rule("boxd_*", changing),
     rule(CLEANUP_ACTION, "ask"),
     ...READ_TOOLS.map((tool) => rule(tool, "allow")),
-    ...SOURCE_ACTIONS.map((action) => rule(action, "allow")),
+    ...SOURCE_ACTIONS.filter((action) => !(READ_TOOLS as readonly string[]).includes(action)).map((action) => rule(action, "allow")),
     ...CHANGING_TOOLS.map((tool) => rule(tool, changing)),
   ]
 }

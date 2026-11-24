@@ -949,7 +949,7 @@ def own_repository(directory):
 
 def action_git(request):
     directory = work_directory(request.get("directory"))
-    answer = {"known": False, "remote": None, "branch": None, "sha": None, "dirty": False, "untracked": [], "ignored": []}
+    answer = {"known": False, "remote": None, "branch": None, "sha": None, "dirty": False, "untracked": [], "ignored": [], "unpushed": [], "unpushedCount": 0}
 
     def git(*args, text=True):
         return pinned_git(directory, *args, text=text)
@@ -979,6 +979,15 @@ def action_git(request):
         sha = git("rev-parse", "HEAD")
         remote = git("remote", "get-url", "origin")
         branch = git("branch", "--show-current")
+        # Commits a local branch holds that no remote ref contains (#39): with no remote, every commit is local, so
+        # dropping the machine would lose them. An empty repository has no branch and nothing to lose.
+        counted = git("rev-list", "--count", "--branches", "--not", "--remotes")
+        unpushed_count = int(counted.stdout.strip()) if counted.returncode == 0 and counted.stdout.strip().isdigit() else 0
+        unpushed = []
+        if unpushed_count:
+            named = git("log", "--branches", "--not", "--remotes", "--format=%h %s", "-n", "20")
+            if named.returncode == 0:
+                unpushed = [line.strip()[:200] for line in named.stdout.splitlines() if line.strip()]
         answer.update(
             known=True,
             remote=strip_userinfo(remote.stdout.strip()) or None,
@@ -987,6 +996,8 @@ def action_git(request):
             dirty=dirty,
             untracked=[entry(directory, name) for name in untracked[:LIST_LIMIT]],
             ignored=[entry(directory, name) for name in ignored[:LIST_LIMIT]],
+            unpushed=unpushed,
+            unpushedCount=unpushed_count,
         )
         if dirty:
             # Tracked changes, staged and unstaged together: `git diff` alone misses a staged file.

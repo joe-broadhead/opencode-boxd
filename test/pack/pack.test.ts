@@ -122,7 +122,7 @@ describe("package tarball", () => {
     expect(paths.filter((path) => path.endsWith(".d.ts"))).toEqual([])
     // The guest helper and the skill are the product, so they must be in every tarball.
     expect(paths).toContain("guest/guest.py")
-    expect(paths).toContain("skills/boxd/SKILL.md")
+    expect(paths).toContain("skills/boxd-sessions/SKILL.md")
   }, 120_000)
 
   test("ships the NOTICE for the bundled source contract", () => {
@@ -170,7 +170,7 @@ describe("package tarball", () => {
 })
 
 describe.each(TESTED_HOSTS)("installed alone, in stock OpenCode %s", (version) => {
-  test("is active, registers the twelve tools, adds the default rules, and answers the status RPC", async () => {
+  test("is active, registers the thirteen tools, adds the default rules, and answers the status RPC", async () => {
     const installed = installedPackage(false)
     const host = await serve(version, installed)
     try {
@@ -182,8 +182,8 @@ describe.each(TESTED_HOSTS)("installed alone, in stock OpenCode %s", (version) =
       })
       expect(plugin.state).toEqual({ status: "active" })
 
-      // The status RPC counts the tools OpenCode lists in the `boxd` namespace: twelve, none unknown.
-      await host.until("the twelve tools are registered", async () => {
+      // The status RPC counts the tools OpenCode lists in the `boxd` namespace: thirteen, none unknown.
+      await host.until("the thirteen tools are registered", async () => {
         const { output } = await host.api<{ output: { tools: number; unknownCount: number } }>("POST", "/api/rpc/boxd.machines/status", { input: {} })
         return output.tools === TOOLS.length && output.unknownCount === 0
       })
@@ -214,7 +214,7 @@ describe.each(TESTED_HOSTS)("installed alone, in stock OpenCode %s", (version) =
       const { data: agents } = await host.api<{ data: { id: string }[] }>("GET", "/api/agent")
       expect(agents.map((agent) => agent.id).filter((id) => !BUILT_IN_AGENTS.includes(id))).toEqual([])
       const { data: skills } = await host.api<{ data: { id: string; path: string }[] }>("GET", "/api/skill")
-      expect(skills.filter((skill) => skill.id === "boxd").map((skill) => skill.path)).toEqual([join(installed, "skills", "boxd", "SKILL.md")])
+      expect(skills.filter((skill) => skill.id === "boxd-sessions").map((skill) => skill.path)).toEqual([join(installed, "skills", "boxd-sessions", "SKILL.md")])
     } catch (error) {
       throw new Error(`${(error as Error).message}\n--- opencode ${version} log ---\n${host.log().slice(-3000)}`)
     } finally {

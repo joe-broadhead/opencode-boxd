@@ -1,4 +1,4 @@
-// The plugin on the public @opencode/sdk host: it loads, registers the twelve tools, inserts the default rules for each
+// The plugin on the public @opencode/sdk host: it loads, registers the thirteen tools, inserts the default rules for each
 // access value, asks for every change and never for a read, answers describe and the status RPC, and runs nothing when a
 // prompt is declined or a rule denies. The machine tools (ensure, golden, reassign, resume) are in `machines.test.ts`.
 // For a work the ledger does not hold, the session tools answer NOT_OURS and run no CLI; boxd_status answers the
@@ -24,10 +24,11 @@ const rule = (action: string, effect: Rule["effect"]): Rule => ({ action, resour
 const MACHINE_TOOLS = new Set(["boxd_ensure", "boxd_golden", "boxd_reassign", "boxd_resume"])
 const RUN_HERE = TOOLS.filter((tool) => !MACHINE_TOOLS.has(tool.id))
 const NOT_OURS = { state: "refused", error: "NOT_OURS" }
-/** What the fleet reads answer for a work this laptop's ledger does not know. */
+/** What the reads that are not about one work answer: the fleet, and the local ledger's events. */
 const FLEET_READS: Readonly<Record<string, object>> = {
   boxd_status: { state: "ok", counts: {}, attention: [] },
   boxd_job: { state: "refused", error: "NOT_OURS", workId: "review-api" },
+  boxd_events_list: { state: "ok", source: "works", events: [] },
 }
 /** What a tool answers here for review-api, a work the ledger does not hold. */
 const unknownWork = (id: string, input: Record<string, unknown>) => {
@@ -61,12 +62,12 @@ async function statusText(host: Host, sessionID: string) {
 }
 
 describe("the plugin on a stock host", () => {
-  test("loads, registers the twelve tools, adds the default rules, and answers status", async () => {
+  test("loads, registers the thirteen tools, adds the default rules, and answers status", async () => {
     const host = await startHost()
     try {
       const tools = (await host.probe().tool.list()).map((tool) => tool.id).filter((id) => id.startsWith("boxd_"))
       expect(tools.sort()).toEqual(TOOLS.map((tool) => tool.id).sort())
-      expect(tools).toHaveLength(12)
+      expect(tools).toHaveLength(13)
 
       const rules = (await agentRules(host)).get("build")!
       const block = defaultRules()
@@ -77,7 +78,7 @@ describe("the plugin on a stock host", () => {
 
       // An empty ledger and a signed-in CLI: connected, nothing open, and the posture.
       const status = await statusThroughRpc(host)
-      expect(status).toMatchObject({ version: PACKAGE_VERSION, state: "connected", signedIn: true, openWorks: 0, access: "all", host: { version: HOST_VERSION, range: SUPPORTED_HOST, tested: true }, tools: 12, unknownCount: 0, unguardedAgents: [] })
+      expect(status).toMatchObject({ version: PACKAGE_VERSION, state: "connected", signedIn: true, openWorks: 0, access: "all", host: { version: HOST_VERSION, range: SUPPORTED_HOST, tested: true }, tools: 13, unknownCount: 0, unguardedAgents: [] })
       expect(status.regions).toEqual([
         { region: "fra", limit: 300, inUse: 0, free: 300 },
         { region: "nyc", limit: 300, inUse: 0, free: 300 },
@@ -98,7 +99,17 @@ describe("the plugin on a stock host", () => {
       const build = await session(host)
       for (const tool of RUN_HERE) {
         const input =
-          tool.name === "status" ? {} : tool.name === "job" ? { workId: "review-api" } : tool.name === "reassign" ? { from: "spare-1", to: "review-api" } : tool.name === "exec" ? { workId: "review-api", command: ["true"] } : { workId: "review-api", text: "Add a health check." }
+          tool.name === "status"
+            ? {}
+            : tool.name === "events_list"
+              ? { source: "works" }
+              : tool.name === "job"
+                ? { workId: "review-api" }
+                : tool.name === "reassign"
+                  ? { from: "spare-1", to: "review-api" }
+                  : tool.name === "exec"
+                    ? { workId: "review-api", command: ["true"] }
+                    : { workId: "review-api", text: "Add a health check." }
         const before = host.boxd.calls().length
         const result = await attempt(host, build, "build", tool.id, "reject", input)
         expect({ tool: tool.id, asked: result.asked, output: result.output }).toMatchObject({ tool: tool.id, asked: undefined, output: unknownWork(tool.id, input) })
@@ -129,7 +140,7 @@ describe("the plugin on a stock host", () => {
     try {
       const build = await session(host)
       const listing = (await rpcCall(host, "describe", { sessionID: build })).output as { methods: Array<Record<string, any>>; unclassified: string[] }
-      // The twelve tools, then the boxd.works source's two reads.
+      // The thirteen tools, then the boxd.works source's two reads.
       expect(listing.methods.map((method) => method.name)).toEqual([...TOOLS.map((tool) => tool.id), "events_list", "probe"])
       expect(listing.unclassified ?? []).toEqual([])
       for (const method of listing.methods) {
@@ -172,7 +183,7 @@ describe("the boxd.works source on a stock host", () => {
           )
           return answer
         })
-        expect(page).toMatchObject({ source: "works", account: probed.account, owner: probed.owner, events: [], more: false, trust: "untrusted", plugin: "@joe-broadhead/opencode-boxd" })
+        expect(page).toMatchObject({ source: "works", account: probed.account, owner: probed.owner, events: [], more: false, trust: "untrusted", plugin: "@we-the-rebel-alliance/boxd-plugin" })
         expect(typeof page.cursor).toBe("string")
         // Once the ledger is published, the source's reads make no boxd call at all.
         const before = host.boxd.calls().length
@@ -258,7 +269,7 @@ describe("the access option (OD-29)", () => {
     try {
       const build = await session(host)
       for (const id of READ_TOOLS) {
-        const input = id === "boxd_status" ? {} : { workId: "review-api" }
+        const input = id === "boxd_status" ? {} : id === "boxd_events_list" ? { source: "works" } : { workId: "review-api" }
         expect((await rpcCall(host, id, { sessionID: build, input })).output).toMatchObject(unknownWork(id, input))
       }
       for (const id of CHANGING_TOOLS) expect({ id, code: await refusedCode(rpcCall(host, id, { sessionID: build, input: { workId: "review-api" } })) }).toEqual({ id, code: "PERMISSION_DENIED" })

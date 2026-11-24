@@ -36,7 +36,7 @@ export async function assertLaptopCli(bin: string, runner: PluginRunner, context
     if (IN_VM(help.stdout)) {
       throw boxdError(
         "BOXD_MISSING",
-        "The boxd CLI on the PATH is the one that runs inside a boxd machine. This plugin drives machines in every region from the laptop's boxd CLI, and the in-VM CLI is not supported.",
+        "The boxd CLI on the PATH is the one that runs inside a boxd machine. This plugin drives machines in every region from the boxd CLI here, and the in-VM CLI is not supported.",
       )
     }
     seen.add(bin)

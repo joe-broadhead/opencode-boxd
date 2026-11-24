@@ -116,7 +116,7 @@ const AGENTS_NEXT_STEP =
   "Put the default rules shown by /boxd-status first in each listed agent's own permissions, in opencode.json or the agent's Markdown file, followed by your top-level rules for boxd tools."
 
 const NOTHING_TO_DO = "Nothing to do."
-const SIGN_IN_NEXT_STEP = "Run boxd auth login in a terminal, check that the laptop's boxd CLI is on OpenCode's PATH, then run /boxd-status again."
+const SIGN_IN_NEXT_STEP = "Run boxd auth login in a terminal, check that the boxd CLI is on OpenCode's PATH here, then run /boxd-status again."
 const LISTED_UNKNOWN = 20
 const LISTED_ATTENTION = 10
 // A tool name comes from the host; list only plain names.
@@ -298,7 +298,7 @@ function automationText({ automation, notices }: Status) {
         : automation === "off (access)"
           ? 'off at this access level; set automation: "on" to consent, or clean up with boxd_sleep'
           : automation === "not-owner"
-            ? "another OpenCode process on this laptop runs it"
+            ? "another OpenCode process on this machine runs it"
             : automation === "off"
               ? "off (automation: \"off\")"
               : "unknown"
@@ -336,7 +336,7 @@ export function formatStatus(status: Status) {
     `- Connection: ${connection}`,
     `- Access: ${accessText(status)}`,
     `- Image: ${imageText(status)}`,
-    `- Guest: OpenCode ${status.guestVersion ?? "unknown"}, this laptop's version, to move a transcript; reads work across versions`,
+    `- Guest: OpenCode ${status.guestVersion ?? "unknown"}, the version here, to move a transcript; reads work across versions`,
     `- Works: ${worksText(status)}`,
     `- Attention: ${attentionText(status)}`,
     `- Machines: ${machinesText(status)}`,

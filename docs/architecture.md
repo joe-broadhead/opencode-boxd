@@ -1,11 +1,10 @@
 # Architecture
 
-The plugin has one job: let one coordinating agent on a laptop drive 1 to 300 or more OpenCode sessions on boxd
-machines, and keep every transcript on the laptop. [v1-design.md](v1-design.md) is the full design; this page is the
-map of what the code does.
+The plugin has one job: let one coordinating agent here drive 1 to 300 or more OpenCode sessions on boxd machines,
+one work per machine, and bring every transcript and its git back here. This page is the map of what the code does.
 
 ```
-OpenCode (laptop)                         boxd machine oc-<work id> (fra or nyc)
+OpenCode (here)                           boxd machine oc-<work id> (fra or nyc)
 ┌───────────────────────────┐ boxd CLI ┌──────────────────────────────────┐
 │ boxd_* tools ── runner ───┼────────▶ │ ~/.opencode-boxd/guest.py         │
 │ watcher ── notices        │ ◀────────┤ opencode serve on 127.0.0.1:4096  │
@@ -20,7 +19,7 @@ Each package fills one entry module, and `src/plugin.ts` builds them once, in or
 cost, the runs, then automation, the hooks and `/boxd-cleanup`. `src/ports.ts` and `src/services.ts` are the contract.
 
 - **The runtime** (`src/exec/*`, `src/boxd/*`, `src/guest/*`, `guest/guest.py`): the one runner every child process goes
-  through, the boxd CLI port with regions and by-id verbs, the guest port over the v1 helper, and the laptop's own
+  through, the boxd CLI port with regions and by-id verbs, the guest port over the v1 helper, and this machine's own
   `opencode` for session imports.
 - **The ledger** (`src/ledger/*`): format 1 under `v1/`, one record per work, copy-on-write writes, a lock per work
   across processes, the index, and `events.jsonl` with its cursor. `src/import-v0.ts` imports the earlier ledger once.
@@ -33,7 +32,7 @@ cost, the runs, then automation, the hooks and `/boxd-cleanup`. `src/ports.ts` a
   notices to each work's coordinator.
 - **Cost and cleanup** (`src/cost/*`, `src/automation.ts`, `src/hooks.ts`, `src/cleanup.ts`): rates and estimates, the
   budget, automatic harvest and sleep, the session hooks, and `/boxd-cleanup`.
-- **The registry** (`src/tools.ts`): one table of twelve tools, with their schemas, classes, descriptions and the one
+- **The registry** (`src/tools.ts`): one table of thirteen tools, with their schemas, classes, descriptions and the one
   place that asserts before a change. The tools RPC, the transform, the default rules, Jelly's declaration and status
   derive from it.
 - **Status** (`src/status.ts`, `src/tui.ts`): one model for `/boxd-status`, the `/boxd` dialog and the status RPC.
@@ -43,7 +42,7 @@ cost, the runs, then automation, the hooks and `/boxd-cleanup`. `src/ports.ts` a
 Every child the plugin starts goes through `src/exec/runner.ts`:
 
 - At most 12 boxd children at once for tool calls and reads; the background (the watcher, status's guest reads) uses at
-  most 4 of them. `boxd_exec` has its own lane of 4, and the laptop's session imports a lane of 2, so at most 18
+  most 4 of them. `boxd_exec` has its own lane of 4, and session imports here take a lane of 2, so at most 18
   children exist at once.
 - Every child has an explicit timeout (SIGTERM, then SIGKILL 2 s later), the call's stop signal, and an 8 MiB output
   cap. Transcripts and files go to disk with `machine cp`, never through stdout.
@@ -58,14 +57,14 @@ Every child the plugin starts goes through `src/exec/runner.ts`:
 
 ## The work tree and the file trip
 
-Every work has two folders, both recorded in the ledger: the laptop folder it belongs to (the project by default), and
-the guest's own `/home/boxd/work/<work id>`. A laptop path is never sent to the machine.
+Every work has two folders, both recorded in the ledger: the folder here it belongs to (the project by default), and
+the guest's own `/home/boxd/work/<work id>`. A path here is never sent to the machine.
 
 - `boxd_submit` checks each `files` entry (inside a root, not a symlink, within 8 MiB a file and 32 MiB a call), copies
   it up with `machine cp` before the prompt, and records name, size and sha256.
 - `boxd_harvest` has the helper write each session's export on the guest, copies each one to a temp file beside the
   stored copy, checks its size and sha256 against the helper's report, and only then renames it into place; then it
-  deletes and re-imports the session on this laptop, parents first. The patch and the untracked files take the same
+  deletes and re-imports the session here, parents first. The patch and the untracked files take the same
   path. A copy that is cut off or has the wrong digest leaves the stored copy as it was.
 - `boxd_drop` compares the guest's own session marks (each session's last message id and message count) with what the
   harvest stored, so a prompt that bypassed the plugin blocks the destroy too.
@@ -113,7 +112,7 @@ auto-suspend off and relies on hibernation:
 
 1. **At creation**, at every `access` level: auto-hibernate after `autoHibernateMinutes` (2 h), `idle.ignore-outbound`
    off, and a `delete-after` lease only with `leaseDays`.
-2. **Automation**, on the watcher's events, by one OpenCode process per laptop: a finished work is harvested and then
+2. **Automation**, on the watcher's events, by one OpenCode process per machine: a finished work is harvested and then
    hibernated after `autoSleepMinutes`, and so is an orphan whose coordinator is gone. A work waiting on a person is
    left. Nothing automatic ever drops. It runs at `access: "all"`, or with `automation: "on"`.
 3. **What agents see**: `cost` and `cleanup` in `boxd_status`, one fleet line on the tail of a coordinator's request
@@ -125,7 +124,7 @@ auto-suspend off and relies on hibernation:
 ## Why the guest is not the session
 
 A golden image is an image: booting one restores a disk, not a transcript, and an image reaches every work made from
-it. So a transcript moves only by export and import, the laptop holds the newest copy, and no work's machine is ever
+it. So a transcript moves only by export and import, this machine holds the newest copy, and no work's machine is ever
 saved as an image. Model credentials never enter an image: a guest gets its key from a sealed, host-bound `boxd env`
 secret that boxd injects at boot.
 
@@ -136,7 +135,7 @@ measure again.
 
 **OpenCode**
 
-- `opencode session import --standalone` keeps the transcript's id on 2.2.3–2.2.7 and 2.3.0–2.3.2. A second import of
+- `opencode session import --standalone` keeps the transcript's id on 2.4.1. A second import of
   an id already present answers `Session already exists`, exits 0 and changes nothing, so a harvest deletes the session
   first; `opencode session delete` of an absent id exits 1 with its not-found words, which the plugin reads as absent.
 - `POST /api/session/<id>/prompt` takes `delivery: "steer" | "queue"`; the default is `steer`, which a running session
@@ -149,7 +148,7 @@ measure again.
 - `opencode auth login` needs a login shell: `boxd machine exec --tty` exits silently, `boxd connect` then
   `opencode auth login` works.
 
-**The boxd CLI** (0.2.29 and 0.3.3; the laptop CLI 0.3.5 for the verbs the design names)
+**The boxd CLI** (0.2.29 and 0.3.3; the host CLI 0.3.5 for the verbs the design names)
 
 - `machine get --json` prints the id, status, size, labels, `sharing`, `isolated` (the string `"yes"` or `"no"`), the
   idle bounds and `delete_after`. `machine list --json` lists every machine with its status, size and labels, but no

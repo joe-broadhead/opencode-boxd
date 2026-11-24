@@ -18,6 +18,8 @@ const CONFIG = read("docs/configuration.md")
 const SCRIPTING = read("docs/scripting.md")
 
 const codes = Object.keys(CODES)
+/** The one tested list as prose: "2.4.1", or "2.4.1 and 2.4.2" with several. */
+const TESTED_LIST = TESTED_HOSTS.length === 1 ? TESTED_HOSTS[0]! : `${TESTED_HOSTS.slice(0, -1).join(", ")} and ${TESTED_HOSTS.at(-1)}`
 /** The source's methods, for their names and input schemas only: nothing here calls them. */
 const SOURCE_METHODS = sourceMethods({ ledger: { eventsSince: async () => ({ events: [], cursor: 0, cursorExpired: false }) }, importV0: { state: () => ({ state: "complete", works: 0, blocked: [] }) }, identity: () => ({ account: "local", owner: { id: "os-user:user@local", label: "user on local" } }), now: () => new Date() }, async () => {})
 
@@ -72,20 +74,20 @@ function conforms(value: unknown, schema: Record<string, unknown>, at = "input")
 describe("the README", () => {
   test("has the family's sections, in order", () => {
     const headings = [...README.matchAll(/^## (.+)$/gm)].map((match) => match[1])
-    expect(headings).toEqual(["Requirements", "Install", "Sign in", "Use", "Files in and out", "Permissions", "Configure", "Organisation rollout", "Troubleshooting", "Known limits", "Uninstall", "Links"])
+    expect(headings).toEqual(["Requirements", "Install", "Sign in", "Use", "Permissions", "Configure", "Troubleshooting", "Known limits", "Uninstall", "Links"])
     expect(README.split("\n")[0]).toBe("# boxd for OpenCode")
     expect(README).toContain("Unofficial; not affiliated with boxd.")
   })
 
   test("states the supported range and every tested release", () => {
-    expect(README).toContain("OpenCode `>=2.2.3 <2.4.0`")
-    expect(README).toContain(`tested on ${TESTED_HOSTS.slice(0, -1).join(", ")} and ${TESTED_HOSTS.at(-1)}`)
-    expect(README).toContain("macOS or Linux")
+    expect(README).toContain("OpenCode `>=2.4.1 <2.5.0`")
+    expect(README).toContain(`tested on ${TESTED_LIST}`)
+    expect(README).toContain("Linux or macOS")
   })
 
   test("installs from the GitHub release tag, not from a checkout or the registry", () => {
-    expect(README).toContain("opencode plugin add github:joe-broadhead/opencode-boxd#v0.1.4")
-    expect(README).not.toMatch(/plugins.*\.\/opencode-boxd/)
+    expect(README).toContain("opencode plugin add github:we-the-rebel-alliance/boxd-plugin#v0.0.0")
+    expect(README).not.toMatch(/plugins.*\.\/boxd-plugin/)
     expect(README).not.toMatch(/npm run build/)
   })
 
@@ -132,10 +134,10 @@ describe("the README", () => {
   })
 
   test("links every repo file on the default branch", () => {
-    const links = [...README.matchAll(/\]\((https:\/\/github\.com\/joe-broadhead\/opencode-boxd\/blob\/HEAD\/[^)]+)\)/g)].map((match) => match[1]!)
+    const links = [...README.matchAll(/\]\((https:\/\/github\.com\/we-the-rebel-alliance\/boxd-plugin\/blob\/master\/[^)]+)\)/g)].map((match) => match[1]!)
     expect(links.length).toBeGreaterThan(3)
     for (const link of links) {
-      const path = link.split("/blob/HEAD/")[1]!
+      const path = link.split("/blob/master/")[1]!
       expect(existsSync(new URL(path, root))).toBe(true)
     }
   })
@@ -146,20 +148,20 @@ describe("the README", () => {
       expect(text).not.toMatch(/\b\d+ tests?\b/i)
     }
     // The install spec names the release tag, the one place the README names the plugin's version.
-    expect(README.replace(/opencode-boxd#v\d+\.\d+\.\d+/g, "")).not.toMatch(/0\.\d+\.\d+/)
+    expect(README.replace(/boxd-plugin#v\d+\.\d+\.\d+/g, "")).not.toMatch(/\b0\.\d+\.\d+/)
   })
 })
 
 describe("the docs set", () => {
   test("has the shared files, each with a heading", () => {
-    for (const path of ["docs/configuration.md", "docs/architecture.md", "docs/images.md", "docs/jelly.md", "docs/scripting.md", "docs/live-check.md"]) {
+    for (const path of ["docs/configuration.md", "docs/architecture.md", "docs/images.md", "docs/scripting.md", "docs/live-check.md"]) {
       expect(existsSync(new URL(path, root))).toBe(true)
       expect(read(path)).toMatch(/^# /m)
     }
   })
 
   test("every 'tested on' list in the docs is TESTED_HOSTS", () => {
-    const expected = `${TESTED_HOSTS.slice(0, -1).join(", ")} and ${TESTED_HOSTS.at(-1)}`
+    const expected = TESTED_LIST
     const documents = ["README.md", "AGENTS.md", "SECURITY.md", "docs/configuration.md", "CHANGELOG.md"]
     let found = 0
     for (const document of documents) {
@@ -216,13 +218,6 @@ describe("the docs set", () => {
     for (const code of ["PERMISSION_DENIED", "SESSION_UNKNOWN", "SESSION_AGENT_REQUIRED", "TOOL_UNAVAILABLE"]) {
       expect(SCRIPTING).toContain(`\`${code}\``)
     }
-  })
-
-  test("jelly says every registered tool is declared, and what each access value does in Jelly", () => {
-    const jelly = read("docs/jelly.md")
-    expect(jelly).toContain("Every tool the plugin registers is declared")
-    expect(jelly).toContain("Jelly applies the `access` setting itself")
-    expect(jelly).not.toContain("a declared `allow` changes nothing in Jelly")
   })
 
   test("configuration has one Options row for every option the parser takes, with its default", () => {

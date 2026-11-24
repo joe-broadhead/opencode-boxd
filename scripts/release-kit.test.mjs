@@ -1974,11 +1974,18 @@ describe("CI: macOS on pushes to master and for releases, never on pull requests
     assert.deepEqual(ciJobsProblems(undefined, ["macos-26"]), ["no successful job on macos-26"])
   })
 
-  test("this repository's ci.yml: a pull request's matrix has no macOS entry, and a master push's does (npm run check)", () => {
-    const matrix = ciMatrix(readFileSync(join(SCRIPTS, "..", ".github", "workflows", "ci.yml"), "utf8"))
-    assert.deepEqual(matrix.problems, [])
-    assert.equal(matrix.pullRequest.some((runner) => /^macos-/.test(runner)), false)
-    assert.ok(matrix.push.includes("macos-26"), `a push to master runs ${matrix.push.join(", ")}`)
+  test("this repository's ci.yml: one job `ci` on the required runner rule (npm run check)", () => {
+    // The one-job shape replaces the family's old event-gated matrix (standard §5.1 item 7). The rule below is copied
+    // from the standard verbatim; a pull request from a fork runs the public runner.
+    const yml = readFileSync(join(SCRIPTS, "..", ".github", "workflows", "ci.yml"), "utf8")
+    assert.match(yml, /^  ci:\n    name: ci$/m, "the job is `ci` with the name `ci`")
+    assert.ok(
+      yml.includes(
+        "runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (vars.CI_RUNNER_PUBLIC || 'ubuntu-24.04') || 'ubuntu-24.04' }}",
+      ),
+      "the runner rule is the standard's",
+    )
+    assert.doesNotMatch(yml, /macos-/, "no macOS runner: the family runs one Linux job")
   })
 })
 

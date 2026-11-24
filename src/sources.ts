@@ -51,7 +51,7 @@ import { BoxdError } from "./errors.js"
 import type { ImportV0Port, LedgerPort, OpContext, WorkEvent } from "./ports.js"
 
 /** The plugin's package name, which every page names. */
-export const PACKAGE = "@joe-broadhead/opencode-boxd"
+export const PACKAGE = "@we-the-rebel-alliance/boxd-plugin"
 /** The cursor binding's plugin: the descriptor's source-id prefix. */
 export const NAMESPACE = "boxd"
 /** The source every event names, and the descriptor's `input.source`. */
@@ -332,7 +332,7 @@ export function probeWorks(deps: Pick<SourceDeps, "identity">, input: unknown): 
 
 const STRING = { type: "string" } as const
 
-const EVENTS_INPUT: JsonSchema = {
+export const EVENTS_INPUT: JsonSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
@@ -354,7 +354,7 @@ const PROBE_INPUT: JsonSchema = {
 }
 
 const EVENTS_DESCRIPTION =
-  "For a collector such as Memory's, not for answering questions: the phase changes of this laptop's boxd works, oldest first, as normalised events, " +
+  "For a collector such as Memory's, not for answering questions: the phase changes of the boxd works here, oldest first, as normalised events, " +
   "read from the local ledger only (no boxd call, no machine woken). Each says, in the plugin's own words, which work changed and to what phase, how a run ended and its code. " +
   "Pass the previous page's cursor to list what came after it; without one it starts at since, or 24 hours ago."
 

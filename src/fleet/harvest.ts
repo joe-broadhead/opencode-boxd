@@ -237,7 +237,7 @@ async function fetch(
 }
 
 /** No git facts: the guest folder is not the top of its own repository. A harvest records that and saves the rest. */
-const NO_GIT: GitAnswer = { known: false, remote: null, branch: null, sha: null, dirty: false, untracked: [], ignored: [] }
+const NO_GIT: GitAnswer = { known: false, remote: null, branch: null, sha: null, dirty: false, untracked: [], ignored: [], unpushed: [], unpushedCount: 0 }
 
 /**
  * The tree's git facts. They are optional to a harvest, never a reason to skip the transcript: a folder that is not the
@@ -355,7 +355,7 @@ function written(
     workId: record.workId,
     outcome: fetched.outcome,
     sessions: sessions.map((session) => ({ id: session.id, bytes: session.bytes })),
-    git: { known: gitState.known, dirty: gitState.dirty, patchStored: gitState.patchStored, untracked: gitState.untracked.length, ignored: gitState.ignored.length },
+    git: { known: gitState.known, dirty: gitState.dirty, patchStored: gitState.patchStored, untracked: gitState.untracked.length, ignored: gitState.ignored.length, unpushed: fetched.git.unpushedCount },
     ...(moved.length ? { files: moved.map((file) => ({ path: file.path, bytes: file.bytes, sha256: file.sha256, laptopPath: file.laptopPath! })) } : {}),
     next: dropAdvice(record.workId, complete, base.laptopCopy === "unverified", fetched.git, fetched.untracked?.expected ?? {}, storedFiles, Boolean(fetched.patch)),
   }
@@ -374,8 +374,11 @@ function dropAdvice(
 ): string {
   const call = `{ workId: "${workId}" }`
   if (!complete) return `This is a partial copy, so boxd_drop refuses. Once the session is idle: boxd_harvest(${call}).`
-  if (unverified) return `This laptop's copy of the transcript, imported from an earlier release, is not verified yet, so boxd_drop refuses: boxd_harvest(${call}) again.`
+  if (unverified) return `The copy of the transcript here, imported from an earlier release, is not verified yet, so boxd_drop refuses: boxd_harvest(${call}) again.`
   if (!git.known) return `The guest folder is not a git repository, so boxd_drop refuses. boxd_sleep(${call}) keeps it at the cost of its disk.`
+  if (git.unpushedCount > 0) {
+    return `The guest has ${git.unpushedCount} commit${git.unpushedCount === 1 ? "" : "s"} on a local branch that no remote ref contains, and a harvest stores no commits, so boxd_drop refuses: push them with boxd_exec({ workId: "${workId}", command: ["git", "push", "--all", "origin"] }), then boxd_drop(${call}).`
+  }
   const harvested = (file: { path: string; sha256: string }) => file.sha256 !== "" && (stored[file.path]?.sha256 === file.sha256 || files.get(file.path) === file.sha256)
   const lost = [...git.untracked, ...git.ignored].filter((file) => !harvested(file)).map((file) => file.path)
   if (lost.length) {

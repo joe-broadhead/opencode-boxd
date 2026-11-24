@@ -1,8 +1,8 @@
 {
-  "name": "@joe-broadhead/opencode-boxd",
-  "version": "0.1.4",
+  "name": "@we-the-rebel-alliance/boxd-plugin",
+  "version": "0.0.0",
   "private": true,
-  "description": "Unofficial OpenCode plugin for boxd: run a session on a private boxd machine and keep the transcript on your laptop",
+  "description": "Run OpenCode sessions on private boxd machines, one work per machine, and bring the transcripts and git back here",
   "keywords": [
     "opencode",
     "opencode-plugin",
@@ -12,11 +12,11 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/joe-broadhead/opencode-boxd.git"
+    "url": "git+https://github.com/we-the-rebel-alliance/boxd-plugin.git"
   },
-  "homepage": "https://github.com/joe-broadhead/opencode-boxd#readme",
+  "homepage": "https://github.com/we-the-rebel-alliance/boxd-plugin#readme",
   "bugs": {
-    "url": "https://github.com/joe-broadhead/opencode-boxd/issues"
+    "url": "https://github.com/we-the-rebel-alliance/boxd-plugin/issues"
   },
   "exports": {
     ".": "./dist/index.js",
@@ -38,7 +38,7 @@
     "CHANGELOG.md"
   ],
   "opencode": {
-    "host": ">=2.2.3 <2.4.0",
+    "host": ">=2.4.1 <2.5.0",
     "icons": [
       {
         "src": "assets/icon.svg",
@@ -71,13 +71,19 @@
   },
   "jelly": {
     "title": "boxd",
-    "summary": "Run an OpenCode session on a private boxd machine and keep the transcript on your laptop.",
+    "summary": "Run an OpenCode session on a private boxd machine and bring the transcript back here.",
     "icon": "assets/icon.svg",
     "cost": "boxd bills each plugin machine: compute and memory while running, disk while hibernated, until boxd_drop. boxd_golden and boxd_ensure may make a short-lived builder. At access Allowed, finished works are harvested and hibernated after 10 idle minutes by default; else only with automation \"on\".",
     "tools": [
       {
         "name": "boxd.status",
         "permission": "boxd_status",
+        "effect": "allow",
+        "readOnly": true
+      },
+      {
+        "name": "boxd.events_list",
+        "permission": "boxd_events_list",
         "effect": "allow",
         "readOnly": true
       },
@@ -149,7 +155,7 @@
       }
     ],
     "skills": [
-      "boxd"
+      "boxd-sessions"
     ],
     "rpc": [],
     "views": [],
@@ -261,14 +267,15 @@
     "conformance": "bun scripts/conformance.ts"
   },
   "devDependencies": {
-    "@opencode/client": "2.2.3",
-    "@opencode/plugin": "2.2.3",
-    "@opencode/sdk": "2.2.3",
+    "@opencode/client": "2.4.1",
+    "@opencode/plugin": "2.4.1",
+    "@opencode/sdk": "2.4.1",
     "@opentui/core": "0.8.0",
     "@opentui/solid": "0.8.0",
     "@types/bun": "1.4.4",
     "@types/node": "24.19.2",
-    "@we-the-rebel-alliance/source-contract": "github:we-the-rebel-alliance/source-contract#v0.3.0",
+    "@we-the-rebel-alliance/source-contract": "github:we-the-rebel-alliance/source-contract#2fd55cdc0c6c1067927fefc403a88bfd18c9a971",
+    "effect": "4.1.0",
     "esbuild": "0.28.2",
     "solid-js": "1.9.17",
     "typescript": "5.9.3"

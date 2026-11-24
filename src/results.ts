@@ -3,6 +3,7 @@
  * object with a `state`. A refusal or failure keeps a `state` beside `error`, `message` and `next`, plus the facts its
  * code carries. A list call returns `{ state, counts, results }`, one single-work result per item, in input order.
  */
+import type { EventsListResult } from "@we-the-rebel-alliance/source-contract/events"
 import type { Code, ErrorState, WarningCode } from "./errors.js"
 import type { Phase, SavedState } from "./ledger/types.js"
 import type { MachineId, MachineName, Region, RunOutcome, SecretInfo, Size } from "./ports.js"
@@ -15,6 +16,8 @@ export interface ErrorFacts {
   readonly paths?: readonly string[]
   readonly count?: number
   readonly kind?: "untracked" | "ignored"
+  /** Commits a local branch holds that no remote ref contains (`UNPUSHED`), at most the first 20. */
+  readonly commits?: readonly string[]
   /** Per region (`MACHINE_LIMIT`). */
   readonly limit?: ReadonlyArray<{ readonly region: Region; readonly limit: number; readonly inUse: number; readonly free: number }>
   /** How far the v0 import is (`LEDGER_IMPORTING`). */
@@ -254,7 +257,7 @@ export interface HarvestResult extends Next {
   readonly workId: string
   readonly outcome: RunOutcome | null
   readonly sessions: ReadonlyArray<{ readonly id: string; readonly bytes: number }>
-  readonly git: { readonly known: boolean; readonly dirty: boolean; readonly patchStored: boolean; readonly untracked: number; readonly ignored: number }
+  readonly git: { readonly known: boolean; readonly dirty: boolean; readonly patchStored: boolean; readonly untracked: number; readonly ignored: number; readonly unpushed: number }
   readonly files?: ReadonlyArray<{ readonly path: string; readonly bytes: number; readonly sha256: string; readonly laptopPath: string }>
 }
 
@@ -328,9 +331,13 @@ export interface ListResult<T extends { readonly state: string }> {
   readonly dryRun?: boolean
 }
 
+/** A page from `boxd_events_list`: the source's page, with the one `state` every tool answer carries. */
+export type EventsToolResult = EventsListResult & { readonly state: "ok" }
+
 /** Each tool's success result, by tool id: the registry's output contract. */
 export interface ToolResults {
   readonly boxd_status: StatusResult
+  readonly boxd_events_list: EventsToolResult
   readonly boxd_job: JobResult
   readonly boxd_read: ReadResult
   readonly boxd_ensure: EnsureResult

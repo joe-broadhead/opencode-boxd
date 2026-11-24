@@ -184,7 +184,7 @@ export async function jobRun(services: FleetServices, raw: Record<string, unknow
       try {
         const record = await services.ledger.get(workId, op)
         if (record) return record
-        throw boxdError("NOT_OURS", `No work has the id "${workId}" in this laptop's ledger. Nothing was read.`)
+        throw boxdError("NOT_OURS", `No work has the id "${workId}" in the ledger here. Nothing was read.`)
       } catch (error) {
         if (!input.list || !(error instanceof BoxdError)) throw error
         return refusal(error, { workId })

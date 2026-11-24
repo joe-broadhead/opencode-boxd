@@ -272,6 +272,9 @@ describe("the work tree", () => {
     expect(answer).toMatchObject({ known: true, dirty: true, remote: "https://github.com/o/r", branch: expect.any(String) })
     expect(answer.untracked).toEqual([{ path: "notes.txt", bytes: 5, sha256: createHash("sha256").update("notes").digest("hex") }])
     expect(answer.ignored).toEqual([{ path: "build/", bytes: 4, sha256: "" }])
+    // The only commit is on no remote ref: the work would lose it if the machine went (#39).
+    expect(answer.unpushedCount).toBe(1)
+    expect(answer.unpushed).toEqual([expect.stringMatching(/^[0-9a-f]{7,} init$/)])
     expect(answer.patch?.file).toBe("/home/boxd/.opencode-boxd/harvest/patch.diff")
     expect(readFileSync(onDisk(answer.patch!.file), "utf8")).toContain("+two")
     expect(answer.sessions).toEqual([{ id: "ses_g", parentId: null, lastMessageId: "msg_0", messages: 1, updated: 1 }])
@@ -286,7 +289,7 @@ describe("the work tree", () => {
     Bun.spawnSync(["git", "-C", outer, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "--quiet", "-m", "outer"])
     writeFileSync(join(outer, "outer.txt"), "changed")
     writeFileSync(onDisk(`${DIRECTORY}/inner.txt`), "inner")
-    expect(await change((target) => runtime.guest.git(target, { directory: DIRECTORY }, context()))).toEqual({ known: false, remote: null, branch: null, sha: null, dirty: false, untracked: [], ignored: [] })
+    expect(await change((target) => runtime.guest.git(target, { directory: DIRECTORY }, context()))).toEqual({ known: false, remote: null, branch: null, sha: null, dirty: false, untracked: [], ignored: [], unpushed: [], unpushedCount: 0 })
     // Its own repository, inside the outer one, is read alone: the outer change is not its state.
     git("init", "--quiet")
     const own = await change((target) => runtime.guest.git(target, { directory: DIRECTORY }, context()))

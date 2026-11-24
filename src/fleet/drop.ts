@@ -2,10 +2,12 @@
  * `boxd_drop` (design §3.9): destroy a work's machine, by its recorded id, and close the work. Destructive, so its
  * guard runs per work whatever asked (a tool call, a `select`, or `/boxd-cleanup`), and nothing automatic calls it.
  *
- * The guard: `saved: fresh` on this laptop, and for a v0-imported work a laptop copy a v1 harvest verified; then, in one `git` exec on the guest, a known git tree, every untracked or
- * ignored path harvested at the digest the guest still has, tracked changes stored as the same patch, and the guest's
- * own session marks (last message id and message count per session, and no new session under the root) equal to what
- * the harvest stored (M3, L-d). Then `machine remove <id>`, after `oc-<id>` was resolved to the recorded id (H2).
+ * The guard: `saved: fresh` here, and for a v0-imported work a copy a v1 harvest verified; then, in one `git` exec on
+ * the guest, a known git tree, no commit on a local branch that no remote ref contains (`UNPUSHED`, #39), every
+ * untracked or ignored path harvested at the digest the guest still has, tracked changes stored as the same patch, and
+ * the guest's own session marks (last message id and message count per session, and no new session under the root)
+ * equal to what the harvest stored (M3, L-d). Then `machine remove <id>`, after `oc-<id>` was resolved to the recorded
+ * id (H2).
  *
  * A work whose machine is gone closes without destroying anything, but only on two checks made in this call: a fresh
  * all-region listing with no `oc-<id>`, and a not-found `machine get <id>` in every region. A failed or unclear answer
@@ -101,13 +103,23 @@ async function guard(services: Services, record: WorkRecord, target: ChangeTarge
   }
   if (record.laptopCopy === "unverified") {
     // F1: v0 may have left an older transcript in this laptop's OpenCode; only a v1 harvest replaces and verifies it.
-    throw boxdError("NOT_SAVED", "The work was imported from an earlier release, and no harvest since has verified this laptop's copy of its transcript.")
+    throw boxdError("NOT_SAVED", "The work was imported from an earlier release, and no harvest since has verified the copy of its transcript here.")
   }
   await adoptIfV0(services, record, target, op)
   const rootId = record.session?.rootId
   const git = await services.guest.git(target, { directory: record.guestDirectory, ...(rootId ? { rootId } : {}) }, op)
   if (rootId) sessionsMatch(record, git)
   if (!git.known) throw boxdError("GIT_UNKNOWN", "The guest folder is not a git repository, so its files cannot be accounted for.")
+  // #39: a commit on a local branch that no remote ref has exists only on this machine, and a harvest stores no commits.
+  if (git.unpushedCount > 0) {
+    const named = git.unpushed.slice(0, 3).map((commit) => commit.slice(0, 60)).join("; ")
+    const more = git.unpushedCount > 3 ? ` and ${git.unpushedCount - 3} more` : ""
+    throw boxdError(
+      "UNPUSHED",
+      `The guest has ${git.unpushedCount} commit${git.unpushedCount === 1 ? "" : "s"} on a local branch that no remote ref contains${named ? `: ${named}${more}` : ""}. Dropping ${record.machine} would lose ${git.unpushedCount === 1 ? "it" : "them"}.`,
+      { count: git.unpushedCount, commits: git.unpushed.slice(0, LISTED_PATHS) },
+    )
+  }
   const folder = services.ledger.workFolder(record.workId)
   const out = new Map((record.files?.out ?? []).map((file) => [file.path, file.sha256]))
   const stored = async (path: string) => (record.gitState?.untrackedStored ? (await digestFile(join(folder, "untracked", path)).catch(() => undefined))?.sha256 : undefined)

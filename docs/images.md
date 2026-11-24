@@ -1,7 +1,7 @@
 # Golden images
 
 Every work machine boots from a golden image: a boxd snapshot named `<prefix>-<opencode version>-<size>` in the work's
-region, such as `oc-golden-2.2.6-4x16`, that holds this laptop's OpenCode and the guest helper, and nothing else. The
+region, such as `oc-golden-2.4.1-4x16`, that holds this machine's OpenCode and the guest helper, and nothing else. The
 plugin builds these images itself, from a fixed recipe; you do not build one by hand.
 
 - `boxd_ensure` builds the image it needs when it is missing (option `buildGolden: "auto"`, the default). A build for
@@ -15,9 +15,9 @@ plugin builds these images itself, from a fixed recipe; you do not build one by 
 ## The recipe
 
 1. **A builder machine**: `oc-gb-<region>-<size>-<rand>`, labelled `role=golden-builder`, with `--delete-after 2h` as
-   a safety net, so it is removed even if the laptop goes away. It starts from stock boxd, or from the `goldenBase`
+   a safety net, so it is removed even if this machine goes away. It starts from stock boxd, or from the `goldenBase`
    snapshot when one is set.
-2. **One exec on the builder**: upgrade OpenCode to this laptop's version (`opencode upgrade --major` from the stock
+2. **One exec on the builder**: upgrade OpenCode to this machine's version (`opencode upgrade --major` from the stock
    1.x, then `opencode upgrade <version>`), check `opencode --version` and that the guest server asks for its password,
    install the guest helper in `~/.opencode-boxd/`, and run your `goldenSetup` script when one is set.
 3. **The scrub**, the same whatever the base: stop `opencode serve`, and delete `/etc/profile.d/boxd-env.sh` (boxd writes
@@ -61,7 +61,7 @@ limit, and rotate it if anyone leaves the organisation.
 
 ## Your own customisation
 
-- **`goldenSetup`**: an absolute path to a laptop script, inside the project or an allowed root, that the builder runs
+- **`goldenSetup`**: an absolute path to a machine script, inside the project or an allowed root, that the builder runs
   before the scrub. Use it for tools, configuration or skills every work needs. It runs in every region the same way.
 - **`goldenBase`**: a snapshot name to build from instead of stock, so a hand-made machine's customisations carry over.
   A base snapshot lives in one region only; `goldenSetup` is how the same customisation reaches the other region. The
@@ -70,9 +70,9 @@ limit, and rotate it if anyone leaves the organisation.
 The builder's labels are captured into the image, and a restore inherits them under its own: works set `role=session`,
 which overrides `role=golden-builder`. Anything else that selects machines by that label must know this.
 
-## When the laptop's OpenCode changes
+## When this machine's OpenCode changes
 
-A laptop upgrade makes a new image name, so new works get the new image and open works keep the one they recorded.
+An OpenCode upgrade here makes a new image name, so new works get the new image and open works keep the one they recorded.
 `boxd_ensure` upgrades an open work's guest in place once its session is idle; until then the work stays usable for
 reads and prompts, and a harvest answers `GUEST_VERSION`.
 

@@ -92,7 +92,7 @@ describe("the boxd CLI the plugin finds on the PATH", () => {
       expect(error).toBeInstanceOf(BoxdError)
       expect((error as BoxdError).code).toBe("BOXD_MISSING")
       expect((error as BoxdError).what).toBe(
-        "The boxd CLI on the PATH is the one that runs inside a boxd machine. This plugin drives machines in every region from the laptop's boxd CLI, and the in-VM CLI is not supported.",
+        "The boxd CLI on the PATH is the one that runs inside a boxd machine. This plugin drives machines in every region from the boxd CLI here, and the in-VM CLI is not supported.",
       )
     }
     expect(new Set(calls())).toEqual(new Set(["--help"]))

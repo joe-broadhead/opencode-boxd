@@ -1,35 +1,36 @@
 ---
-name: boxd
-description: Run OpenCode sessions on private boxd machines, one work per machine, and keep the transcripts on this laptop. Use when the user says boxd, a cloud machine, a remote machine, a golden image, or running many coding sessions off this computer.
+name: boxd-sessions
+description: Run OpenCode sessions on the user's private boxd machines, one work per machine, and bring transcripts and git back. Use for 'boxd', remote or cloud machines, golden images, or many coding sessions in parallel. Not for a helper on this machine (subagent).
 ---
 
-# boxd
+# boxd sessions
 
-The laptop is the source of truth. A work is one task with one id, one machine (`oc-<workId>`) and one root session; the
-machine is a cache with more CPU. Read a tool's description before its first call; the input names below are the real
-ones.
+The machine running this session is the source of truth. A work is one task with one id, one machine (`oc-<workId>`) and
+one root session; the work machine is a cache with more CPU. Read a tool's description before its first call; the input
+names below are the real ones.
 
 ## The order
 
 1. `boxd_ensure({ workId })` makes the work exist, set up and ready, in one call, and converges an existing work to the
    input: `region` (`"auto"`, `"fra"`, `"nyc"`), `size` (`"1x4"`, `"2x8"`, `"4x16"`, `"8x32"`), `model`, `repo` and
-   `ref` to clone, `git` (`{ name, email }`, never a token), `directory` for the laptop folder. It waits until the
+   `ref` to clone, `git` (`{ name, email }`, never a token), `directory` for the folder here. It waits until the
    guest's OpenCode is up; `creating` or `starting` comes with a `next` that waits again.
 2. `boxd_submit({ workId, text })` admits a prompt and returns; it does not wait for the model. `mode: "steer"` (the
    default) lands at the running session's next step, `"queue"` after the run, and `"interrupt"` stops the run first.
-   `files: [{ from, to }]` copies laptop files in. A hibernated machine is woken.
+   `files: [{ from, to }]` copies files from here in. A hibernated machine is woken.
 3. Wait for the notice: a one-line message in your session names the works that changed. Or call `boxd_job({ workId })`
    for one work live, with `tail` for the newest messages, or `boxd_status` for the fleet.
-4. `boxd_harvest({ workId })` brings the transcript and git to this laptop; `files` brings outputs back, and
+4. `boxd_harvest({ workId })` brings the transcript and git back here; `files` brings outputs back, and
    `localDirectory` names another folder to import into. `saved` then reads `fresh`.
 5. `boxd_sleep({ workId })` hibernates; `boxd_drop({ workId })` destroys a finished, saved work; `boxd_resume` wakes or
    rebuilds one.
 
 Also: `boxd_read({ workId, path })` reads one file, or `log: "server"`, without a harvest; `boxd_exec({ workId, command })`
 runs one command with a timeout; `boxd_reassign({ from, to })` moves an unstarted work's machine to a new id;
-`boxd_golden` builds golden images (`boxd_ensure` builds a missing one by itself).
+`boxd_golden` builds golden images (`boxd_ensure` builds a missing one by itself); `boxd_events_list({ since })` reads the
+ledger's phase changes as events, for a collector or a script.
 
-`saved` says whether this laptop holds the work: `fresh` (a harvest after the last prompt), `stale` or `none`.
+`saved` says whether this machine holds the work: `fresh` (a harvest after the last prompt), `stale` or `none`.
 
 ## Many works at once
 
@@ -51,9 +52,10 @@ only what changed. Repeated causes fold into `groups`, such as fifteen works sto
 - Read `cost` and `cleanup` in `boxd_status`, and act on the first `cleanup` action, or say why not.
 - Automation and `access`: with `access` "all" the plugin harvests and hibernates finished works by itself. At
   "ask-changes" and "read-only" it does not, unless the person put `automation: "on"` in the plugin config: that line is
-  their consent. Consent is per OpenCode process: the ledger is one per laptop, so a process at "all" also cleans up
+  their consent. Consent is per OpenCode process: the ledger is one per machine, so a process at "all" also cleans up
   works created from an "ask-changes" project. When automation is off, cleaning up is your job: act on `cleanup`.
-- `cost.today` is boxd's machine cost only; model spend is not measured.
+- `cost.today` is boxd's machine cost only; model spend is not measured. Cost stays in `boxd_status`, not in every
+  request.
 - `/boxd-cleanup` is for the person. Its confirmations are permission prompts that only a person answers. Do not try to
   answer or work around them.
 
@@ -77,7 +79,7 @@ costs, then make the one call: a new work bills while its machine runs, `boxd_su
 - Do not drop a work that is not saved; harvest it first. Nothing automatic ever drops.
 - Do not destroy a machine to restart a session: `boxd_resume` wakes or rebuilds it from the saved transcript.
 - Do not copy `opencode.db`, and do not treat a golden image as a transcript.
-- Do not run `boxd machine exec` by hand for what `boxd_exec` does: it knows the work's region and machine, and its
+- Do not run the boxd CLI's `machine exec` by hand for what `boxd_exec` does: it knows the work's region and machine, and its
   arguments are passed exactly as given.
 - Do not loop over single calls with `Promise.all`; use one list call.
 

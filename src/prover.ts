@@ -24,7 +24,7 @@ export async function replaceOnLaptop(laptop: LaptopPort, transcripts: readonly 
   for (const transcript of transcripts) {
     await laptop.deleteSession(transcript.id, context)
     const { id } = await laptop.importSession(transcript.file, directory, context)
-    if (id !== transcript.id) throw boxdError("IMPORT_FAILED", `This laptop's import filed ${transcript.id} as ${id}, not under its own id.`)
+    if (id !== transcript.id) throw boxdError("IMPORT_FAILED", `The import here filed ${transcript.id} as ${id}, not under its own id.`)
     ids.push(id)
   }
   return ids

@@ -538,6 +538,10 @@ export interface GitAnswer {
   readonly patch?: { readonly file: string; readonly bytes: number; readonly sha256: string }
   readonly untracked: ReadonlyArray<{ readonly path: string; readonly bytes: number; readonly sha256: string }>
   readonly ignored: ReadonlyArray<{ readonly path: string; readonly bytes: number; readonly sha256: string }>
+  /** Commits on a local branch that no remote ref contains: `<short sha> <subject>`, at most 20; redacted. */
+  readonly unpushed: ReadonlyArray<string>
+  /** How many such commits there are, not only the ones named. */
+  readonly unpushedCount: number
   /** For a drop: every session under the root, with its marks (M3). */
   readonly sessions?: readonly SessionMarks[]
 }

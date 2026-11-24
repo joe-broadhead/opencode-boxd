@@ -1,6 +1,6 @@
 // Fails when a forbidden API, legacy surface, private host reference or machine-local path appears
 // in src/, test/, scripts/ or dist/. The list is the "Forbidden in this repository" list in AGENTS.md. APIs that the
-// public @opencode/plugin 2.2.3 types already reject fail the typecheck instead.
+// public @opencode/plugin 2.4.1 types already reject fail the typecheck instead.
 import { existsSync, readdirSync, readFileSync } from "node:fs"
 import { extname, join, relative, sep } from "node:path"
 import { fileURLToPath } from "node:url"
