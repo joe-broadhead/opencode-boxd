@@ -32,6 +32,9 @@ jobs:
       - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2.0.2
         with:
           bun-version: 1.4.4
+          # The shared runner's restored Bun cache can lack the executable it names (`/home/runner/.bun/bin/bun`);
+          # download the release each run, as the release workflow does, so the job cannot start from a stale cache.
+          no-cache: true
       - run: npm ci --ignore-scripts
       # actionlint parses the workflows as workflows, not as YAML: a `${{ }}` in a context that does not exist makes
       # GitHub reject the file and run nothing at all. The download is checked against its published checksums, and
