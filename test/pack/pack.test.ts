@@ -174,8 +174,28 @@ describe.each(TESTED_HOSTS)("installed alone, in stock OpenCode %s", (version) =
 
       const { data: agents } = await host.api<{ data: { id: string }[] }>("GET", "/api/agent")
       expect(agents.map((agent) => agent.id).filter((id) => !BUILT_IN_AGENTS.includes(id))).toEqual([])
-      const { data: skills } = await host.api<{ data: { id: string; path: string }[] }>("GET", "/api/skill")
-      expect(skills.filter((skill) => skill.id === "boxd-sessions").map((skill) => skill.path)).toEqual([join(installed, "skills", "boxd-sessions", "SKILL.md")])
+      const { data: skills } = await host.api<{ data: { id: string; description?: string; path: string; content?: string }[] }>("GET", "/api/skill")
+      const files = readdirSync(join(installed, "skills"), { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && existsSync(join(installed, "skills", entry.name, "SKILL.md")))
+        .map((entry) => {
+          const path = join(installed, "skills", entry.name, "SKILL.md")
+          const text = readFileSync(path, "utf8")
+          return { id: /^name:\s*(.+)$/m.exec(text)?.[1]?.trim() ?? entry.name, path }
+        })
+      expect(files.length).toBeGreaterThan(0)
+      const byId = new Map(skills.map((skill) => [skill.id, skill]))
+      for (const file of files) {
+        const skill = byId.get(file.id)
+        expect(skill).toBeDefined()
+        expect(String(skill!.description ?? "").length).toBeGreaterThan(0)
+        expect(String(skill!.path)).toBe(file.path)
+        expect(String(skill!.content).trim().length).toBeGreaterThan(0)
+        expect(existsSync(file.path)).toBe(true)
+      }
+      const fileIds = new Set(files.map((file) => file.id))
+      const ours = skills.filter((skill) => fileIds.has(skill.id) || skill.path.includes(`${sep}skills${sep}`))
+      for (const skill of ours) expect(existsSync(skill.path)).toBe(true)
+      expect(ours.filter((skill) => fileIds.has(skill.id)).map((skill) => skill.id).sort()).toEqual(files.map((file) => file.id).sort())
     } catch (error) {
       throw new Error(`${(error as Error).message}\n--- opencode ${version} log ---\n${host.log().slice(-3000)}`)
     } finally {

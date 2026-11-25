@@ -2,16 +2,37 @@
 // contract's status and probe answers validate, the access rules are generated for each level, a read runs at every
 // level, a change asks at ask-changes and is denied at read-only, and the one RPC id carries every method.
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test"
-import { readFileSync } from "node:fs"
-import { join } from "node:path"
+import { existsSync, readdirSync, readFileSync } from "node:fs"
+import { join, sep } from "node:path"
 import { agentRules, attempt, cleanup, effect, HOST_VERSION, session, startHost, statusThroughRpc, until } from "./harness.js"
 
 setDefaultTimeout(120_000)
 afterAll(cleanup)
 
 const PACKAGE_VERSION: string = JSON.parse(readFileSync(join(import.meta.dir, "..", "..", "package.json"), "utf8")).version
-const MANIFEST: { capabilities: { plugin: { name: string }; methods: Record<string, { class: string; effect?: string }> } } = JSON.parse(readFileSync(join(import.meta.dir, "..", "..", "package.json"), "utf8"))
+const MANIFEST: {
+  exports: Record<string, string>
+  capabilities: { plugin: { name: string }; methods: Record<string, { class: string; effect?: string }>; options: { properties: Record<string, unknown> }; sources: { id: string; kind: string }[] }
+} = JSON.parse(readFileSync(join(import.meta.dir, "..", "..", "package.json"), "utf8"))
 const METHODS = Object.keys(MANIFEST.capabilities.methods)
+/** The twelve tools v0.1.4 gave a user; every one must still be reachable as a boxd tool. */
+const OLD_TOOLS = ["status", "job", "read", "ensure", "submit", "harvest", "sleep", "resume", "reassign", "golden", "exec", "drop"] as const
+const SKILLS = join(import.meta.dir, "..", "..", "skills")
+
+/** Every skills/<id>/SKILL.md on disk, with the id and description its frontmatter declares. */
+function skillFiles(): { id: string; path: string; description: string }[] {
+  return readdirSync(SKILLS, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && existsSync(join(SKILLS, entry.name, "SKILL.md")))
+    .map((entry) => {
+      const path = join(SKILLS, entry.name, "SKILL.md")
+      const text = readFileSync(path, "utf8")
+      return {
+        id: /^name:\s*(.+)$/m.exec(text)?.[1]?.trim() ?? entry.name,
+        path,
+        description: /^description:\s*(.+)$/m.exec(text)?.[1]?.trim() ?? "",
+      }
+    })
+}
 
 describe("the plugin on OpenCode 2.4.1", () => {
   test("registers every method as a tool in the boxd namespace", async () => {
@@ -45,6 +66,72 @@ describe("the plugin on OpenCode 2.4.1", () => {
       const events = await attempt(host, sessionID, "build", "boxd_events_list", "reject", {})
       expect(events.ok).toBe(true)
       expect(events.output).toMatchObject({ source: "works", account: "default", trust: "untrusted" })
+    } finally {
+      await host.close()
+    }
+  })
+
+  test("registers every skills/<id>/SKILL.md with its description, path and content", async () => {
+    const host = await startHost()
+    try {
+      // An empty temp project: the host's own skills/ discovery cannot supply the plugin's skill.
+      expect(host.location.directory.startsWith(SKILLS)).toBe(false)
+      expect(existsSync(join(host.location.directory, "skills"))).toBe(false)
+      const files = skillFiles()
+      expect(files.length).toBeGreaterThan(0)
+      const listed = await until("every skill file is registered", async () => {
+        const { data } = await host.client.skill.list({ location: host.location })
+        const ids = new Set(data.map((skill) => String(skill.id)))
+        return files.every((file) => ids.has(file.id)) ? data : false
+      })
+      const byId = new Map(listed.map((skill) => [String(skill.id), skill]))
+      for (const file of files) {
+        const skill = byId.get(file.id)
+        expect(skill).toBeDefined()
+        expect(String(skill!.description ?? "").length).toBeGreaterThan(0)
+        expect(String(skill!.path)).toBe(file.path)
+        expect(String(skill!.content).trim().length).toBeGreaterThan(0)
+        expect(file.description.length).toBeGreaterThan(0)
+        expect(existsSync(file.path)).toBe(true)
+      }
+      // A registered skill whose path is under the plugin's skills/ tree must have its file; a file that is not
+      // registered already failed the `until` above.
+      const fileIds = new Set(files.map((file) => file.id))
+      const ours = listed.filter((skill) => fileIds.has(String(skill.id)) || String(skill.path).includes(`${sep}skills${sep}`))
+      for (const skill of ours) expect(existsSync(String(skill.path))).toBe(true)
+      expect(ours.filter((skill) => fileIds.has(String(skill.id))).map((skill) => String(skill.id)).sort()).toEqual(files.map((file) => file.id).sort())
+    } finally {
+      await host.close()
+    }
+  })
+
+  test("has parity with v0.1.4: every old tool, the renamed skill, the /boxd command, and the documented removals", async () => {
+    const host = await startHost()
+    try {
+      const tools = (await host.probe().tool.list()).filter((tool) => tool.options?.namespace === "boxd").map((tool) => tool.id).sort()
+      expect(tools).toEqual(expect.arrayContaining(OLD_TOOLS.map((tool) => `boxd_${tool}`)))
+      expect(tools).toHaveLength(METHODS.length)
+      expect(MANIFEST.capabilities.sources.map((source) => source.id).sort()).toEqual(["boxd.works", "boxd.works.list"])
+
+      const skills = await until("the boxd-sessions skill is registered", async () => {
+        const { data } = await host.client.skill.list({ location: host.location })
+        return data.some((skill) => String(skill.id) === "boxd-sessions") ? data : false
+      })
+      const skillNames = skills.map((skill) => String(skill.id))
+      expect(skillNames).toContain("boxd-sessions")
+      expect(skillNames).not.toContain("boxd")
+
+      const commands = await until("the /boxd command is registered", async () => {
+        const { data } = await host.client.command.list({ location: host.location })
+        return data.some((command) => command.name === "boxd") ? data : false
+      })
+      const commandNames = commands.map((command) => command.name)
+      expect(commandNames).toContain("boxd")
+      expect(commandNames).not.toContain("boxd-status")
+      expect(commandNames).not.toContain("boxd-cleanup")
+      expect(MANIFEST.exports["./tui"]).toBeUndefined()
+
+      for (const removed of ["costContext", "idleCheck", "snapshot"]) expect(MANIFEST.capabilities.options.properties).not.toHaveProperty(removed)
     } finally {
       await host.close()
     }

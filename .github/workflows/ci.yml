@@ -64,4 +64,13 @@ jobs:
           mkdir -p "$dir"
           (cd "$dir" && npm init -y >/dev/null && npm install "@opencode/cli@2.4.1" "@opencode/cli-$platform@2.4.1" --omit=optional --ignore-scripts --no-audit --no-fund)
           echo "OPENCODE_BIN_2_4_1=$dir/node_modules/@opencode/cli-$platform/bin/opencode" >> "$GITHUB_ENV"
+      - name: The git-tag install the release uses
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          H="$(mktemp -d)"
+          HOME="$H" XDG_CONFIG_HOME="$H/c" XDG_CACHE_HOME="$H/k" XDG_DATA_HOME="$H/d" XDG_STATE_HOME="$H/s" \
+            "$OPENCODE_BIN_2_4_1" plugin add "github:we-the-rebel-alliance/boxd-plugin#$HEAD_SHA"
+          find "$H/k/opencode/npm" -path '*/node_modules/@we-the-rebel-alliance/boxd-plugin/dist/index.js' -print -quit | grep -q .
       - run: npm run check
