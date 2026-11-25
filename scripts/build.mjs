@@ -13,6 +13,21 @@ const root = fileURLToPath(new URL("..", import.meta.url))
 const HOST = ["@opencode/plugin", "@opencode/plugin/*", "@opentui/*", "solid-js", "solid-js/*"]
 const provided = (path) => path.startsWith("node:") || isBuiltin(path) || HOST.some((name) => (name.endsWith("/*") ? path.startsWith(name.slice(0, -1)) : path === name))
 
+/** The yaml parser's ISC notice, carried in the bundle banner and in NOTICE. */
+const YAML_LICENSE = `Copyright Eemeli Aro <eemeli@gmail.com>
+
+Permission to use, copy, modify, and/or distribute this software for any purpose
+with or without fee is hereby granted, provided that the above copyright notice
+and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS
+OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
+THIS SOFTWARE.`
+
 rmSync(join(root, "dist"), { recursive: true, force: true })
 const result = await build({
   absWorkingDir: root,
@@ -30,7 +45,10 @@ const result = await build({
   minifyWhitespace: true,
   minifySyntax: true,
   // The YAML parser is CommonJS and reads `process` with require(); the bundle is ESM, so give it a real require.
-  banner: { js: `import { createRequire } from "node:module";\nconst require = createRequire(import.meta.url);` },
+  // The ISC notice travels in the banner because `legalComments: "none"` strips the parser's own comments.
+  banner: {
+    js: `import { createRequire } from "node:module";\nconst require = createRequire(import.meta.url);\n/*\n${YAML_LICENSE}\n*/`,
+  },
 })
 
 const problems = Object.entries(result.metafile.outputs).flatMap(([file, output]) =>
