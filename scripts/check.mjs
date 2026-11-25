@@ -15,6 +15,8 @@ const stages = {
   // The contract's whole gate: T0, the declaration, the recordings, T1 on the real 2.4.1 host, docs drift, forbidden
   // patterns and the bundled-kit check.
   conformance: () => run("bun", ["test", "./test/conformance"]),
+  // The committed conformance fixture must be redacted: the release tag is permanent.
+  record: () => run("plugin-kit", ["record", "--check"]),
   host: () => run("bun", ["test", "./test/host"]),
   pack: () => run("bun", ["test", "./test/pack"]),
   actionlint: () => {

@@ -13,8 +13,13 @@ the child sessions its subagents start; the machine is a cache with more CPU, an
 
 ## Install
 
-Install from a release tag: `opencode plugin add github:we-the-rebel-alliance/boxd-plugin#v0.0.0`. The tag is `v0.0.0`.
-A Git install does not update by itself: remove the exact tag you installed and add the new one.
+Install from a release tag:
+
+```sh
+opencode plugin add github:we-the-rebel-alliance/boxd-plugin#v0.0.0
+```
+
+The tag is `v0.0.0`. A Git install does not update by itself: remove the exact tag you installed and add the new one.
 
 Then run `opencode reload`, or restart OpenCode, and run `/boxd`.
 
