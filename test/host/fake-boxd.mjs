@@ -292,7 +292,11 @@ switch (verb) {
   case "machine rename": {
     const answer = update((state) => {
       const machine = must(state, region, positionals[0])
-      if (verb === "machine wake") machine.status = "running"
+      if (verb === "machine wake") {
+        machine.status = "running"
+        // A cold wake restores the VM before its guest's OpenCode is listening again.
+        machine.downPolls = state.wakeDownPolls ?? 0
+      }
       if (verb === "machine hibernate") machine.status = "hibernated"
       if (verb === "machine reboot" || verb === "machine resize" || verb === "machine rename") {
         // A reboot clears /tmp and the running processes; the disk stays.
@@ -427,7 +431,18 @@ function exec() {
       const parsed = JSON.parse(input)
       // The helper action this exec asked for, logged beside its spawn, so a test can tell a prompt from a read.
       if (parsed && typeof parsed === "object" && typeof parsed.action === "string") logLine({ phase: "action", id: spawnId, action: parsed.action })
-      if (parsed && typeof parsed === "object" && parsed.action && state.port) request = JSON.stringify({ ...parsed, base: `http://127.0.0.1:${state.port}` })
+      if (parsed && typeof parsed === "object" && parsed.action && state.port) {
+        // A guest action that talks to OpenCode counts as one look at the waking server; `health` reads /proc only.
+        const down =
+          parsed.action !== "health" &&
+          update((current) => {
+            const target = current.machines.find((item) => item.id === machine.id)
+            if (!target?.downPolls) return false
+            target.downPolls -= 1
+            return true
+          })
+        request = JSON.stringify({ ...parsed, base: `http://127.0.0.1:${down ? 1 : state.port}` })
+      }
     } catch {
       // Not JSON: the helper answers that itself.
     }
