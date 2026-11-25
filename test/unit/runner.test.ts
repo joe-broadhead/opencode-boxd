@@ -101,7 +101,7 @@ describe("the caps", () => {
       if (args[0] === "foreground" || args[0] === "background") {
         shared += 1
         peak = Math.max(peak, shared)
-        child.on("close", () => void (shared -= 1))
+        child.on("close", () => { shared -= 1 })
       }
       return child
     }

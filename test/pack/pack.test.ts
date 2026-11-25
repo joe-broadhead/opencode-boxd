@@ -256,8 +256,8 @@ async function serve(version: string, installedDir: string) {
   const port = await freePort()
   let log = ""
   const server = spawn(binary, ["serve", "--hostname", "127.0.0.1", "--port", String(port)], { cwd: directory, env, stdio: ["ignore", "pipe", "pipe"] })
-  server.stdout.on("data", (chunk) => void (log += chunk))
-  server.stderr.on("data", (chunk) => void (log += chunk))
+  server.stdout.on("data", (chunk) => { log += chunk })
+  server.stderr.on("data", (chunk) => { log += chunk })
   const exited = new Promise((done) => server.once("exit", done))
 
   const authorization = `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`

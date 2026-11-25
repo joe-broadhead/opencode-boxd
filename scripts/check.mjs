@@ -8,6 +8,7 @@ const root = fileURLToPath(new URL("..", import.meta.url))
 const env = { ...process.env, PATH: `${join(root, "node_modules", ".bin")}${delimiter}${process.env.PATH ?? ""}` }
 
 const stages = {
+  lint: () => run("biome", ["check", "."]),
   typecheck: () => run("tsc", ["--noEmit", "-p", "tsconfig.json"]),
   bundle: () => run("npm", ["run", "bundle"]),
   unit: () => run("bun", ["test", "./test/unit"]),

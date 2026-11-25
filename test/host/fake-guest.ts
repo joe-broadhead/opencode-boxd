@@ -217,7 +217,7 @@ export function startFakeGuest(options: { readonly version?: string } = {}): Fak
     sessions,
     interrupts,
     pending,
-    setVersion: (next: string) => void (version = next),
+    setVersion: (next: string) => { version = next },
     prompts,
     imports,
     switches,

@@ -20,7 +20,7 @@ export interface LaptopPortOptions {
 }
 
 const SESSION = /^ses_[A-Za-z0-9_-]{1,80}$/
-const ANSI = /\u001b\[[0-9;]*[A-Za-z]/g
+const ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*[A-Za-z]`, "g")
 /** What `opencode session delete` prints, with exit 1, for an id this laptop does not have. */
 const NOT_FOUND = /^(?:Error: )?Session not found: (ses_[A-Za-z0-9_-]+)\s*$/m
 /** What `session import` prints, with exit 0, when the id is already there: nothing was replaced. */

@@ -198,7 +198,7 @@ export async function attempt(host: Host, sessionID: string, agent: string, tool
       (result: unknown) => ({ ok: true as const, result: result as { output?: unknown; content?: string } }),
       (error: unknown) => ({ ok: false as const, error: error instanceof Error ? `${error.name}: ${error.message}` : String(error) }),
     )
-    .finally(() => void (settled = true))
+    .finally(() => { settled = true })
   let asked: string | undefined
   while (!settled) {
     const pending = await host.client.permission.list({ sessionID })

@@ -179,7 +179,7 @@ export class Ledger {
   /** One record as it is on disk now; undefined when the ledger has none. */
   async get(workId: string): Promise<WorkRecord | undefined> {
     const path = this.recordPath(workId)
-    let info
+    let info: Awaited<ReturnType<typeof stat>>
     try {
       info = await stat(path)
     } catch (error) {
@@ -246,7 +246,7 @@ export class Ledger {
     const seen = new Set<string>()
     for (const name of names) {
       if (!WORK_ID.test(name)) continue
-      let info
+      let info: Awaited<ReturnType<typeof stat>>
       try {
         info = await stat(join(this.root, LEDGER_PATHS.works, name, WORK_FILES.record))
       } catch (error) {
@@ -438,7 +438,7 @@ export class Ledger {
   /** A staged path must be the one the ledger handed out: `<final>.<pid>-<rand>.tmp` in the same folder, resolved. */
   private assertStagedBeside(path: string, final: string, folder: boolean): void {
     const resolved = resolve(path)
-    const ok = dirname(resolved) === dirname(final) && new RegExp(`^${escape(basename(final))}\\.[0-9]+-[0-9a-f]{12}\\.tmp$`).test(basename(resolved))
+    const ok = dirname(resolved) === dirname(final) && new RegExp(`^${escapeRegExp(basename(final))}\\.[0-9]+-[0-9a-f]{12}\\.tmp$`).test(basename(resolved))
     if (!ok || resolved.includes(`${sep}..${sep}`)) throw boxdError("LEDGER_FAILED", `${path} is not a ${folder ? "folder" : "file"} the ledger staged for ${basename(final)}.`)
   }
 
@@ -515,7 +515,7 @@ export class Ledger {
   }
 }
 
-const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
 const WORK_PATH = (path: string) => !(!path || path.startsWith("/") || path.includes("\\") || path.includes("\0") || /(^|\/)\.\.?(\/|$)/.test(path) || path.endsWith("/"))
 

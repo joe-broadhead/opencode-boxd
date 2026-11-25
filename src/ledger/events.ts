@@ -163,7 +163,7 @@ async function appendText(path: string, text: string): Promise<void> {
 
 /** The last complete line's sequence number, the file's size, and whether it ends in a line cut off by a crash. */
 async function lastLine(path: string): Promise<{ seq: number | undefined; size: number; cut: boolean }> {
-  let handle
+  let handle: Awaited<ReturnType<typeof open>>
   try {
     handle = await open(path, "r")
   } catch (error) {

@@ -165,7 +165,7 @@ export async function listWorks(deps: SourceDeps, input: unknown, call?: Pick<Ca
   const from = request.cursor === undefined ? undefined : decodeWorksCursor(request.cursor)
 
   const now = deps.now()
-  let page
+  let page: Awaited<ReturnType<SourceDeps["ledger"]["eventsSince"]>>
   try {
     page = await deps.ledger.eventsSince(from?.q ?? 0, opContext(call))
   } catch (error) {

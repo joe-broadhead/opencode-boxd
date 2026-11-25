@@ -213,7 +213,7 @@ export function fakes(input: { options?: Record<string, unknown>; works?: WorkSn
     boxdBin: "boxd",
     opencodeBin: "opencode",
     clock: { now: () => state.clock.now },
-    report: (area: string, problem: string | undefined) => void (problem ? reports.set(area, problem) : reports.delete(area)),
+    report: (area: string, problem: string | undefined) => { problem ? reports.set(area, problem) : reports.delete(area) },
     sessions: {
       get: async ({ sessionID }: { sessionID: string }) => {
         const entry = sessionTable.get(sessionID)

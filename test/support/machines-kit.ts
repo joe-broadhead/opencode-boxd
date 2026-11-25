@@ -80,7 +80,7 @@ export async function startKit(input: KitInput = {}): Promise<Kit> {
     ledgerRoot: join(root, "ledger"),
     clock: { now: () => new Date() },
     sessions,
-    report: (area, problem) => void (problem ? problems.set(area, problem) : problems.delete(area)),
+    report: (area, problem) => { problem ? problems.set(area, problem) : problems.delete(area) },
   }
   const ledger = createLedger({ ...host, ...runtime })
   const kit = {} as Kit

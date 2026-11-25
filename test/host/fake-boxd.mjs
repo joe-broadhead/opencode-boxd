@@ -90,7 +90,7 @@ if (argv.length === 1 && argv[0] === "--help") {
   process.exit(0)
 }
 
-update((state) => void state.log.push(argv.join(" ")))
+update((state) => { state.log.push(argv.join(" ")) })
 
 // ── Argv, as clap reads it ────────────────────────────────────────────────────────────────────────────────────────
 
@@ -152,10 +152,13 @@ function parse(args) {
       if (kind === 0) flags[name] = true
       else if (kind === "optional") flags[name] = inline ?? "on"
       else {
-        const value = inline ?? args[++index]
+        index += 1
+        const value = inline ?? args[index]
         if (value === undefined) fail(`error: a value is required for '${name}' but none was supplied`, 2)
-        if (kind === "many") (flags[name] ??= []).push(value)
-        else flags[name] = value
+        if (kind === "many") {
+          flags[name] ??= []
+          flags[name].push(value)
+        } else flags[name] = value
       }
       continue
     }
@@ -258,8 +261,9 @@ switch (verb) {
       if (flags["--from-snapshot"] && !snapshot) fail(`error: no snapshot "${flags["--from-snapshot"]}" in ${region}`)
       const labels = { ...(snapshot?.labels ?? {}) }
       for (const pair of flags["--label"] ?? []) labels[pair.slice(0, pair.indexOf("="))] = pair.slice(pair.indexOf("=") + 1)
+      state.nextId = (state.nextId ?? 0) + 1
       const machine = {
-        id: `vm_${(state.nextId = (state.nextId ?? 0) + 1).toString().padStart(4, "0")}`,
+        id: `vm_${state.nextId.toString().padStart(4, "0")}`,
         name,
         region,
         status: "running",

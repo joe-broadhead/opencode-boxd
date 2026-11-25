@@ -1,7 +1,7 @@
 /**
  * Package D's watcher and notices (design §3.13): the sweep, `events.jsonl`, the notices to each work's root
  * coordinator, and the event stream package E consumes. Package D owns this file, `src/notices.ts` and
- * `src/fleet/model.ts`. `src/plugin.ts` calls `createWatch` once and disposes it with the plugin.
+ * `src/fleet/model.ts`. `src/index.ts` calls `createWatch` once and disposes it with the plugin.
  *
  * - **A local tick every 60 s** (no CLI call): it reads the ledger's index and tails `events.jsonl`, only when the file
  *   changed, so an event a change tool or another OpenCode process appended reaches the subscribers and the notices.

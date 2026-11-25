@@ -26,7 +26,7 @@ server and no integration: the account is the machine's own identity (`accounts.
 | Command | Does |
 |---|---|
 | `npm ci` | installs dev tooling only; there are no runtime dependencies |
-| `npm run check` | everything CI runs: typecheck, bundle, unit, `plugin-kit check` (T0/T1, docs, forbidden), host, pack, actionlint |
+| `npm run check` | everything CI runs: lint, typecheck, bundle, unit, conformance, host, pack, actionlint, `plugin-kit check` (T0/T1, docs, forbidden) |
 | `npm run bundle` | builds `dist/index.js` from `src/index.ts`; `dist/` is committed |
 | `npx plugin-kit docs` | regenerates the generated doc sections from the manifest |
 | `npx plugin-kit conformance` | the whole conformance report, without the kit's repository checks |

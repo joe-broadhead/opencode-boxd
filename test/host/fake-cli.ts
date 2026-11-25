@@ -212,12 +212,13 @@ export function startFakeCli(options: { readonly dir?: string; readonly version?
       return made
     },
     snapshot(input) {
-      update((state) => void state.snapshots.push({ region: "fra", storage: "local", status: "ready", vcpu: 2, labels: {}, ...input }))
+      update((state) => { state.snapshots.push({ region: "fra", storage: "local", status: "ready", vcpu: 2, labels: {}, ...input }) })
     },
     fault(verb, fault) {
       update((state) => {
         state.faults ??= {}
-        ;(state.faults[verb] ??= []).push(fault)
+        state.faults[verb] ??= []
+        state.faults[verb]!.push(fault)
       })
     },
     disk,

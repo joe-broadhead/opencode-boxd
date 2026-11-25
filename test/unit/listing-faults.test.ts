@@ -24,7 +24,7 @@ const ids = (prefix: string, n: number) => Array.from({ length: n }, (_, index) 
 const fault = (w: World, times = 3) => {
   for (let index = 0; index < times; index++) w.counter.fake.fault("machine list", { stderr: "error: network unreachable", code: 1 })
 }
-const later = (w: World, ms: number) => void (w.clock.now = new Date(w.clock.now.getTime() + ms))
+const later = (w: World, ms: number) => { w.clock.now = new Date(w.clock.now.getTime() + ms) }
 
 /** Busy works with the helper installed, at a CLI latency that makes reads queue past their listing. */
 async function busyFleet(w: World, prefix: string, n: number) {

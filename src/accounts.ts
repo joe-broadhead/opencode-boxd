@@ -27,7 +27,7 @@ export function identityOf(id: string): MachineIdentity {
   return { id, label: `${line(user) || "user"} on ${line(host) || "this machine"}` }
 }
 
-const line = (text: string): string => text.replace(/[\u0000-\u001f\u007f]+/g, "").replace(/\s+/g, " ").trim().slice(0, 120)
+const line = (text: string): string => text.replace(/\p{Cc}+/gu, "").replace(/\s+/g, " ").trim().slice(0, 120)
 
 /** This process's machine identity. */
 export const machineIdentity = (): MachineIdentity => identityOf(localIdentity())

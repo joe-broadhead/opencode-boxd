@@ -83,7 +83,7 @@ describe("reads", () => {
 
   test("a create whose answer names another machine is BOXD_FAILED, and nothing is branded", async () => {
     fake.snapshot({ region: "fra", name: "img" })
-    fake.update((state) => void (state.createAnswersName = "oc-someone-else"))
+    fake.update((state) => { state.createAnswersName = "oc-someone-else" })
     const key = { create: { region: "fra" as const, name: "oc-asked" as const } }
     const error = await fail(
       runner.withMachineLock(key, context(), () =>
@@ -104,7 +104,7 @@ describe("reads", () => {
   })
 
   test("the machine limit per region, cached for a minute; the org-wide shape gives every region the same headroom", async () => {
-    fake.update((state) => void (state.limits = { fra: 2, nyc: 5 }))
+    fake.update((state) => { state.limits = { fra: 2, nyc: 5 } })
     fake.machine({ name: "oc-a", region: "fra" })
     expect(await boxd.machineLimit(context())).toEqual([
       { region: "fra", limit: 2, inUse: 1, free: 1 },
@@ -116,7 +116,7 @@ describe("reads", () => {
 
   test("usage for an owner, and a plain refusal for a member", async () => {
     expect(await boxd.usage("24h", context())).toEqual({ available: false, reason: "boxd's machine usage is for organisation owners and admins." })
-    fake.update((state) => void (state.usage = { currency: "USD", complete: true, rates: { vcpu_hour_micro: 47000, ram_gib_hour_micro: 14000, disk_gib_hour_micro: 96 }, machines: [{ id: "vm_0001", cost_micro: 1_000_000 }] }))
+    fake.update((state) => { state.usage = { currency: "USD", complete: true, rates: { vcpu_hour_micro: 47000, ram_gib_hour_micro: 14000, disk_gib_hour_micro: 96 }, machines: [{ id: "vm_0001", cost_micro: 1_000_000 }] } })
     expect(await boxd.usage("24h", context())).toMatchObject({ available: true, currency: "USD", total: 1, complete: true, machines: [{ machineId: "vm_0001", cost: 1 }] })
   })
 
@@ -125,7 +125,7 @@ describe("reads", () => {
     expect(await boxd.snapshots(context())).toEqual([{ region: "nyc", name: "oc-golden-2.4.1-2x8", storage: "local", status: "ready" }])
     await boxd.snapshots(context())
     expect(fake.calls().filter((call) => call.startsWith("snapshots list"))).toHaveLength(1)
-    fake.update((state) => void (state.secrets = [{ name: "OPENCODE_API_KEY", scope: "private", domains: ["api.example.com"] }]))
+    fake.update((state) => { state.secrets = [{ name: "OPENCODE_API_KEY", scope: "private", domains: ["api.example.com"] }] })
     expect(await boxd.secrets(context())).toEqual([{ name: "OPENCODE_API_KEY", scope: "private", hosts: ["api.example.com"] }])
   })
 })
@@ -154,7 +154,7 @@ describe("changes", () => {
       )
     await create("a", 2)
     expect(fake.read().machines[0]!.deleteAfter).toBe("2d")
-    fake.update((state) => void (state.limits = { fra: 1 }))
+    fake.update((state) => { state.limits = { fra: 1 } })
     expect(code(await fail(create("b")))).toBe("MACHINE_LIMIT")
     expect(fake.read().machines).toHaveLength(1)
   })
@@ -169,7 +169,7 @@ describe("changes", () => {
     await owned("fra", "oc-a", machine.id, (target) => boxd.hibernate(target, context()))
     expect(fake.read().machines[0]!.status).toBe("hibernated")
     // The name now points at another machine.
-    fake.update((state) => void (state.machines[0]!.name = "oc-moved"))
+    fake.update((state) => { state.machines[0]!.name = "oc-moved" })
     const other = fake.machine({ name: "oc-a", region: "fra" })
     const refused = await fail(owned("fra", "oc-a", machine.id, (target) => boxd.remove(target, context())))
     expect(refused?.code).toBe("NOT_OURS")
@@ -258,7 +258,7 @@ describe("exec and copies", () => {
     expect(ran.stdout).toBe("fresh\n")
     // The shared listing was young enough: the read used it, and listed nothing more.
     expect(lists()).toBe(before)
-    fake.update((state) => void (state.machines.find((machine) => machine.name === "oc-b")!.status = "hibernated"))
+    fake.update((state) => { state.machines.find((machine) => machine.name === "oc-b")!.status = "hibernated" })
     // Once the shared listing has aged too, the read takes a fresh one, which shows the machine asleep.
     clock += 2_100
     const refused = await fail(boxd.exec(readTarget({ ...old, takenAt: old.takenAt - 5_000 }, "oc-b"), "echo no", { timeoutSeconds: 5, json: false }, context()))
@@ -304,7 +304,7 @@ describe("the CLI itself", () => {
   test("the flavour check runs once per binary, as one flight, and refuses the in-VM CLI", async () => {
     await Promise.all([boxd.list({ maxAgeMs: 10_000 }, context()), boxd.machineLimit(context()), boxd.snapshots(context())])
     expect(fake.spawns().filter((spawn) => spawn.argv[0] === "--help")).toHaveLength(1)
-    fake.update((state) => void (state.inVm = true))
+    fake.update((state) => { state.inVm = true })
     const fresh = createBoxdCli({ bin: fake.bin, runner: createRunner() })
     const error = await fail(fresh.list({ maxAgeMs: 0 }, context()))
     expect(error?.code).toBe("BOXD_MISSING")

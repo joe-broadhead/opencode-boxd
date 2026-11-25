@@ -21,7 +21,7 @@ export interface Classified {
   readonly region?: Region
 }
 
-const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 const REGION = `(${REGIONS.join("|")})`
 
 /**
@@ -49,7 +49,7 @@ const FIXED: ReadonlyArray<{ readonly kind: Exclude<BoxdFailureKind, "missing" |
 export function classify(output: string, asked: Asked = {}): Classified {
   for (const { kind, pattern } of FIXED) if (pattern.test(output)) return { kind }
   if (asked.machine) {
-    const name = escape(asked.machine)
+    const name = escapeRegExp(asked.machine)
     // 0.3: `error: no machine "<name>" in <region>`, optionally followed by the hint for a name in another region.
     const notFound = new RegExp(`^error: no machine "${name}" in ${REGION}\\b`, "m").exec(output)
     if (notFound) {

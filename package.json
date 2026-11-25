@@ -474,6 +474,7 @@
   },
   "scripts": {
     "bundle": "node scripts/build.mjs",
+    "lint": "biome check .",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "unit": "bun test ./test/unit",
     "host": "bun test ./test/host",
@@ -484,6 +485,7 @@
     "test": "npm run unit"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.6.9",
     "@opencode/client": "2.4.1",
     "@opencode/plugin": "2.4.1",
     "@opencode/sdk": "2.4.1",

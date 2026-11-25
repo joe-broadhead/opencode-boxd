@@ -55,7 +55,7 @@ export async function readWork(services: Services, item: ReadItem, op: OpContext
     if (row.status !== "running") throw boxdError("MACHINE_ASLEEP", `${record.machine} is ${row.status}, and a read never wakes a machine.`)
     return services.guest.read({ region: record.region!, name: record.machine as MachineName, listing, machineId: record.machineId }, input, op)
   }
-  let answer
+  let answer: Awaited<ReturnType<Services["guest"]["read"]>>
   try {
     answer = await attempt(false)
   } catch (error) {

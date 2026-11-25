@@ -74,7 +74,7 @@ const invalid = (field: string, message: string) => boxdError("NAME_INVALID", me
 /** The list registry holds 50 items. */
 const LIST_CAP = 50
 /** Control characters would escape to six bytes each in JSON and only make a work's text unreadable. */
-const CONTROLS = /[\u0000-\u001f\u007f-\u009f]/g
+const CONTROLS = /\p{Cc}+/gu
 
 /**
  * Current works as the contract's `list` items, newest first: by `lastActivityAt` (then by id, so the order is stable),

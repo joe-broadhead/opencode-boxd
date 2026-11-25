@@ -96,7 +96,7 @@ describe("the helper on the machine", () => {
     expect(existsSync(onDisk("/home/boxd/.boxd-plugin-upload.py"))).toBe(false)
     expect(existsSync(onDisk(DIRECTORY))).toBe(true)
     expect(verbs()).toEqual(["machine get", "machine exec", "machine cp", "machine exec"])
-    fake.update((state) => void (state.log = []))
+    fake.update((state) => { state.log = [] })
     expect((await setup()).helperUploaded).toBe(false)
     expect(verbs()).toEqual(["machine get", "machine exec"])
   })
@@ -131,8 +131,8 @@ describe("the helper on the machine", () => {
 
   test("a read on a hibernated machine runs nothing and wakes nothing", async () => {
     await setup()
-    fake.update((state) => void (state.machines[0]!.status = "hibernated"))
-    fake.update((state) => void (state.log = []))
+    fake.update((state) => { state.machines[0]!.status = "hibernated" })
+    fake.update((state) => { state.log = [] })
     expect((await fail(runtime.guest.serve(await readTarget(), {}, context())))?.code).toBe("MACHINE_ASLEEP")
     expect(verbs()).toEqual(["machine list"])
     expect(fake.read().wokenByExec ?? []).toEqual([])
@@ -145,7 +145,7 @@ describe("the helper on the machine", () => {
 
   test("two identical reads in flight share one exec", async () => {
     await setup()
-    fake.update((state) => void (state.log = []))
+    fake.update((state) => { state.log = [] })
     const target = await readTarget()
     await Promise.all([runtime.guest.serve(target, {}, context()), runtime.guest.serve(target, {}, context())])
     expect(verbs().filter((verb) => verb === "machine exec")).toHaveLength(1)
@@ -330,7 +330,7 @@ describe("sessions", () => {
     await setup()
     guestServer.next("ses_parent")
     await change((target) => runtime.guest.prompt(target, { directory: DIRECTORY, sessionId: null, title: "t", text: "go", delivery: "steer" }, context()))
-    fake.update((state) => void (state.log = []))
+    fake.update((state) => { state.log = [] })
     const busy = await change((target) => runtime.guest.export(target, { rootId: "ses_parent" }, context()))
     expect(busy).toMatchObject({ outcome: "busy", guestVersion: "2.4.1" })
     expect(existsSync(onDisk("/home/boxd/.boxd-plugin/exports/ses_parent.json"))).toBe(false)

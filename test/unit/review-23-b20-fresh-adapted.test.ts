@@ -31,7 +31,7 @@ describe("fresh", () => {
     fake.machine({ name: "oc-a", region: "fra" })
     const guest = createGuestPort({ boxd, runner })
     const listing = await boxd.list({ maxAgeMs: 0 }, ctx("l"))
-    fake.update((s) => void (s.latencyMs = [2500, 2500]))
+    fake.update((s) => { s.latencyMs = [2500, 2500] })
     const target: ReadTarget = { region: "fra", name: "oc-a", listing, machineId: null }
     const first = settle(guest.health(target, ctx("r1")))
     await sleep(20)
@@ -46,7 +46,7 @@ describe("fresh", () => {
 
   test("M-2 fresh: the flavour check and an identical guest read are joined; Stop of A leaves B its answer", async () => {
     fake.machine({ name: "oc-a", region: "fra" })
-    fake.update((s) => void (s.latencyMs = [700, 700]))
+    fake.update((s) => { s.latencyMs = [700, 700] })
     // flavour check: nothing warmed yet; A and B both need it.
     const stop = new AbortController()
     const a = settle(boxd.list({ maxAgeMs: 0 }, ctx("A", stop.signal)))
@@ -59,9 +59,9 @@ describe("fresh", () => {
     expect(rb.ok).toBe(true)
     // identical guest reads
     const guest = createGuestPort({ boxd, runner })
-    fake.update((s) => void (s.latencyMs = [0, 0]))
+    fake.update((s) => { s.latencyMs = [0, 0] })
     const listing = await boxd.list({ maxAgeMs: 0 }, ctx("l"))
-    fake.update((s) => void (s.latencyMs = [700, 700]))
+    fake.update((s) => { s.latencyMs = [700, 700] })
     const target: ReadTarget = { region: "fra", name: "oc-a", listing, machineId: null }
     const stop2 = new AbortController()
     const ga = settle(guest.health(target, ctx("GA", stop2.signal)))

@@ -58,7 +58,7 @@ export function createBoxdPlugin(seam: BoxdSeam = {}) {
       }
       // Transforms replay on every rebuild, so each one overwrites its own entry rather than appending.
       const problems = new Map<string, string>(skillProblem === undefined ? [] : [["skill", skillProblem]])
-      const report = (area: string, problem: string | undefined) => void (problem ? problems.set(area, problem) : problems.delete(area))
+      const report = (area: string, problem: string | undefined) => { problem ? problems.set(area, problem) : problems.delete(area) }
 
       // The services, in order: each stage sees only what the stages before it built (src/services.ts).
       const hostServices: HostServices = {

@@ -44,7 +44,7 @@ async function known(k: Kit, workId: string, record: Partial<WorkRecord> = {}, m
   const { status, ...rest } = machine as { status?: string }
   const made = await owned(k, workId, rest)
   // The helper's install is an exec, which boxd answers by waking the machine: the status is set after it.
-  if (status) k.counter.fake.update((state) => void (state.machines.find((entry) => entry.id === made.id)!.status = status))
+  if (status) k.counter.fake.update((state) => { state.machines.find((entry) => entry.id === made.id)!.status = status })
   await k.write(workRecord(workId, { region: made.region, machineId: made.id as never, laptopDirectory: k.project, ...record }))
   return made
 }
@@ -153,7 +153,7 @@ describe("boxd_ensure: a new work", () => {
   test("MACHINE_LIMIT: every region full answers with each region's limit, inUse and free, and creates nothing", async () => {
     const k = await kit()
     await k.golden("all")
-    k.counter.fake.update((state) => void (state.limits = { fra: 1, nyc: 1 }))
+    k.counter.fake.update((state) => { state.limits = { fra: 1, nyc: 1 } })
     k.counter.fake.machine({ name: "oc-one", region: "fra" })
     k.counter.fake.machine({ name: "oc-two", region: "nyc" })
     k.reset()
@@ -271,14 +271,14 @@ describe("boxd_ensure: an existing work converges", () => {
   test("a silent VM agent after the plugin's resize is rebooted once; the next silence answers AGENT_UNREACHABLE; repair reboots", async () => {
     const k = await kit()
     const machine = await known(k, "quiet")
-    k.counter.fake.update((state) => void (state.resizeSilencesAgent = true))
+    k.counter.fake.update((state) => { state.resizeSilencesAgent = true })
     const resized = (await k.runs.boxd_ensure({ workId: "quiet", size: "4x16" }, k.call())) as EnsureResult
     expect(resized).toMatchObject({ state: "ready", rebooted: true })
     expect(k.calls().filter((entry) => entry === `machine reboot ${machine.id} --region fra --json`)).toHaveLength(1)
     expect((await k.record("quiet"))?.reboots).toEqual([expect.objectContaining({ why: "agent-silent" })])
 
     // The agent goes silent again; the plugin changed nothing since its own reboot, so it does not reboot by itself.
-    k.counter.fake.update((state) => void (state.machines.find((entry) => entry.id === machine.id)!.agentSilent = true))
+    k.counter.fake.update((state) => { state.machines.find((entry) => entry.id === machine.id)!.agentSilent = true })
     k.reset()
     const silent = await errorOf(k.runs.boxd_ensure({ workId: "quiet" }, k.call()))
     expect(silent.code).toBe("AGENT_UNREACHABLE")
@@ -294,11 +294,11 @@ describe("boxd_ensure: an existing work converges", () => {
     await known(k, "warmup")
     // Nothing answers on the guest's port: the server is down, so setup starts it and the wait sees it still coming up.
     const port = k.counter.fake.read().port
-    k.counter.fake.update((state) => void (state.port = 9))
+    k.counter.fake.update((state) => { state.port = 9 })
     const first = (await k.runs.boxd_ensure({ workId: "warmup" }, k.call())) as EnsureResult
     expect(first.state).toBe("starting")
     expect(first.next).toContain('boxd_ensure({ workId: "warmup" })')
-    k.counter.fake.update((state) => void (state.port = port))
+    k.counter.fake.update((state) => { state.port = port })
     k.reset()
     const second = (await k.runs.boxd_ensure({ workId: "warmup" }, k.call())) as EnsureResult
     expect(second.state).toBe("ready")
@@ -309,7 +309,7 @@ describe("boxd_ensure: an existing work converges", () => {
     const k = await kit()
     const machine = await known(k, "moved")
     // Someone removed the work's machine and made another under the same name.
-    k.counter.fake.update((state) => void (state.machines.find((entry) => entry.id === machine.id)!.status = "destroyed"))
+    k.counter.fake.update((state) => { state.machines.find((entry) => entry.id === machine.id)!.status = "destroyed" })
     k.counter.fake.machine({ name: "oc-moved", region: "fra", labels: { owner: "boxd", work: "moved" } })
     k.reset()
     const error = await errorOf(k.runs.boxd_ensure({ workId: "moved", size: "4x16", repair: "reboot" }, k.call()))
@@ -352,7 +352,7 @@ describe("boxd_golden (design §2.3, §3.11)", () => {
 
   test("no warning when a provider key is among the sealed secrets; with no input every region is built", async () => {
     const k = await kit()
-    k.counter.fake.update((state) => void (state.secrets = [{ name: "ANTHROPIC_API_KEY", scope: "private", domains: ["api.anthropic.com"] }]))
+    k.counter.fake.update((state) => { state.secrets = [{ name: "ANTHROPIC_API_KEY", scope: "private", domains: ["api.anthropic.com"] }] })
     const built = (await k.runs.boxd_golden({}, k.call())) as GoldenResult
     expect(built.warning).toBeUndefined()
     expect(built.images.map((image) => image.region)).toEqual(["fra", "nyc"])
@@ -451,7 +451,7 @@ describe("the regions option pins new placement", () => {
     const k = await kit({ options: { regions: ["fra"] } })
     await k.golden("fra")
     k.counter.fake.snapshot({ region: "nyc", name: IMAGE })
-    k.counter.fake.update((state) => void (state.limits = { fra: 1, nyc: 300 }))
+    k.counter.fake.update((state) => { state.limits = { fra: 1, nyc: 300 } })
     k.counter.fake.machine({ name: "oc-one", region: "fra" })
     k.reset()
     const error = await errorOf(k.runs.boxd_ensure({ workId: "three", wait: "none" }, k.call()))
@@ -492,7 +492,7 @@ describe("the regions option pins new placement", () => {
     expect(ensured).toMatchObject({ state: "ready", region: "nyc", created: false, machineId: machine.id })
     expect(k.calls().some((entry) => /^machine (new|wake)/.test(entry))).toBe(false)
     // Asleep: resume wakes it by id, in its own region, with no create.
-    k.counter.fake.update((state) => void (state.machines.find((entry) => entry.id === machine.id)!.status = "hibernated"))
+    k.counter.fake.update((state) => { state.machines.find((entry) => entry.id === machine.id)!.status = "hibernated" })
     k.reset()
     const resumed = (await k.runs.boxd_resume({ workId: "abroad" }, k.call())) as ResumeResult
     expect(resumed).toMatchObject({ state: "ready", rebuilt: false, region: "nyc" })
@@ -505,7 +505,7 @@ describe("the regions option pins new placement", () => {
     await k.golden("fra")
     k.counter.fake.snapshot({ region: "nyc", name: IMAGE })
     const machine = await known(k, "restored", {}, { region: "nyc" })
-    k.counter.fake.update((state) => void (state.machines.find((entry) => entry.id === machine.id)!.status = "destroyed"))
+    k.counter.fake.update((state) => { state.machines.find((entry) => entry.id === machine.id)!.status = "destroyed" })
     k.reset()
     const result = (await k.runs.boxd_resume({ workId: "restored" }, k.call())) as ResumeResult
     expect(result).toMatchObject({ state: "ready", rebuilt: true, region: "nyc" })
@@ -519,7 +519,7 @@ describe("the regions option pins new placement", () => {
   test("a gone machine outside the allowlist is rebuilt there even when its image is missing: the build is recovery", async () => {
     const k = await kit({ options: { regions: ["fra"] } })
     const machine = await known(k, "recovered", {}, { region: "nyc" })
-    k.counter.fake.update((state) => void (state.machines.find((entry) => entry.id === machine.id)!.status = "destroyed"))
+    k.counter.fake.update((state) => { state.machines.find((entry) => entry.id === machine.id)!.status = "destroyed" })
     k.reset()
     const result = (await k.runs.boxd_resume({ workId: "recovered" }, k.call())) as ResumeResult
     expect(result).toMatchObject({ state: "ready", rebuilt: true, region: "nyc" })
@@ -533,7 +533,7 @@ describe("the regions option pins new placement", () => {
   test("a landed work outside the allowlist with no image and buildGolden never answers GOLDEN_MISSING, not REGION_NOT_ALLOWED", async () => {
     const k = await kit({ options: { regions: ["fra"], buildGolden: "never" } })
     const machine = await known(k, "bare", {}, { region: "nyc" })
-    k.counter.fake.update((state) => void (state.machines.find((entry) => entry.id === machine.id)!.status = "destroyed"))
+    k.counter.fake.update((state) => { state.machines.find((entry) => entry.id === machine.id)!.status = "destroyed" })
     k.reset()
     const error = await errorOf(k.runs.boxd_resume({ workId: "bare" }, k.call()))
     expect(error.code).toBe("GOLDEN_MISSING")
@@ -556,9 +556,9 @@ describe("the regions option pins new placement", () => {
     const k = await kit({ options: { regions: ["fra"] } })
     k.counter.fake.snapshot({ region: "nyc", name: IMAGE })
     const machine = await known(k, "packed", {}, { region: "nyc" })
-    k.counter.fake.update((state) => void (state.limits = { nyc: 1 }))
+    k.counter.fake.update((state) => { state.limits = { nyc: 1 } })
     k.counter.fake.machine({ name: "oc-occupant", region: "nyc" })
-    k.counter.fake.update((state) => void (state.machines.find((entry) => entry.id === machine.id)!.status = "destroyed"))
+    k.counter.fake.update((state) => { state.machines.find((entry) => entry.id === machine.id)!.status = "destroyed" })
     k.reset()
     const error = await errorOf(k.runs.boxd_resume({ workId: "packed" }, k.call()))
     expect(error).toMatchObject({
@@ -655,7 +655,7 @@ describe("boxd_reassign (design §3.10)", () => {
   test("acting by id: oc-<from> re-pointed to another machine answers NOT_OURS, and nothing is renamed", async () => {
     const k = await kit()
     const machine = await known(k, "repointed")
-    k.counter.fake.update((state) => void (state.machines.find((entry) => entry.id === machine.id)!.status = "destroyed"))
+    k.counter.fake.update((state) => { state.machines.find((entry) => entry.id === machine.id)!.status = "destroyed" })
     k.counter.fake.machine({ name: "oc-repointed", region: "fra", labels: { owner: "boxd" } })
     k.reset()
     expect((await errorOf(k.runs.boxd_reassign({ from: "repointed", to: "other" }, k.call()))).code).toBe("NOT_OURS")
@@ -719,7 +719,7 @@ describe("boxd_resume (design §3.8)", () => {
     const folder = join(k.services.ledger.workFolder("phoenix"), "exports")
     mkdirSync(folder, { recursive: true })
     writeFileSync(join(folder, "ses_phoenix.json"), JSON.stringify({ info: { id: "ses_phoenix", title: "phoenix" }, messages: [] }))
-    k.counter.fake.update((state) => void (state.machines.find((entry) => entry.id === machine.id)!.status = "destroyed"))
+    k.counter.fake.update((state) => { state.machines.find((entry) => entry.id === machine.id)!.status = "destroyed" })
     k.reset()
     const result = (await k.runs.boxd_resume({ works: ["phoenix"] }, k.call())) as ListResult<ResumeResult>
     expect(result).toMatchObject({ state: "done", results: [{ state: "ready", rebuilt: true }] })
@@ -738,7 +738,7 @@ describe("boxd_resume (design §3.8)", () => {
   test("a failed read is never gone: a get that fails other than not-found rebuilds nothing", async () => {
     const k = await kit()
     const machine = await known(k, "flaky")
-    k.counter.fake.update((state) => void (state.machines.find((entry) => entry.id === machine.id)!.status = "destroyed"))
+    k.counter.fake.update((state) => { state.machines.find((entry) => entry.id === machine.id)!.status = "destroyed" })
     k.counter.fake.fault("machine get", { stderr: "error: upstream timeout" })
     k.reset()
     const error = await errorOf(k.runs.boxd_resume({ workId: "flaky" }, k.call()))
@@ -749,7 +749,7 @@ describe("boxd_resume (design §3.8)", () => {
   test("a machine renamed by hand is found by its id, and answers NOT_OURS naming it", async () => {
     const k = await kit()
     const machine = await known(k, "renamed")
-    k.counter.fake.update((state) => void (state.machines.find((entry) => entry.id === machine.id)!.name = "oc-by-hand"))
+    k.counter.fake.update((state) => { state.machines.find((entry) => entry.id === machine.id)!.name = "oc-by-hand" })
     const error = await errorOf(k.runs.boxd_resume({ workId: "renamed" }, k.call()))
     expect(error.code).toBe("NOT_OURS")
     expect(error.what).toContain("oc-by-hand")
@@ -781,7 +781,7 @@ describe("one machine per work, whatever the listing shows (review HIGH-1)", () 
   test("a recorded create that landed in fra while the listing lags is adopted there, never made again in nyc", async () => {
     const k = await kit()
     await k.golden("all")
-    k.counter.fake.update((state) => void (state.limits = { fra: 5, nyc: 300 }))
+    k.counter.fake.update((state) => { state.limits = { fra: 5, nyc: 300 } })
     const landed = await owned(k, "lag")
     await k.write(workRecord("lag", { region: "fra", laptopDirectory: k.project, pendingCreate: { at: new Date().toISOString(), image: IMAGE } }))
     lagListing(k)
@@ -877,7 +877,7 @@ describe("auto counts the machines that landed (review MEDIUM-3)", () => {
   test("six creates where fra has the image and 3 free and nyc 40: three go to each region, none refused", async () => {
     const k = await kit()
     await k.golden("fra")
-    k.counter.fake.update((state) => void (state.limits = { fra: 3, nyc: 40 }))
+    k.counter.fake.update((state) => { state.limits = { fra: 3, nyc: 40 } })
     // The machine-limit answer is cached from before the creates, as at the start of a long list.
     await k.services.boxd.machineLimit({ call: { callId: "warm", source: "boxd_status" } })
     const list = (await k.runs.boxd_ensure({ works: Array.from({ length: 6 }, (_, index) => ({ workId: `w${index}`, wait: "created" })) }, k.call())) as ListResult<EnsureResult>
@@ -895,7 +895,7 @@ describe("the bound B holds for active steps (review MEDIUM-4)", () => {
     const k = await kit({ seam: { boundMs: () => bound } })
     await k.golden("fra")
     bound = 1_500
-    k.counter.fake.update((state) => void (state.latencyMs = [900, 900]))
+    k.counter.fake.update((state) => { state.latencyMs = [900, 900] })
     const t0 = Date.now()
     const result = (await k.runs.boxd_ensure({ workId: "late", region: "fra" }, k.call())) as EnsureResult
     expect(result.state).toBe("creating")
@@ -950,7 +950,7 @@ describe("waits ride out an outage and a busy runner (review MEDIUM 5b)", () => 
       state.latencyMs = [300, 300]
       state.port = 9
     })
-    const back = setTimeout(() => k.counter.fake.update((state) => void (state.port = port)), 6_000)
+    const back = setTimeout(() => k.counter.fake.update((state) => { state.port = port }), 6_000)
     try {
       return await run()
     } finally {
@@ -979,10 +979,10 @@ describe("waits ride out an outage and a busy runner (review MEDIUM 5b)", () => 
     const k = await kit({ seam: { intervalMs: 100 } })
     await known(k, "relisted")
     const port = k.counter.fake.read().port
-    k.counter.fake.update((state) => void (state.port = 9))
+    k.counter.fake.update((state) => { state.port = 9 })
     // Every listing in the next second fails: the wait's own listing and the runner's refresh alike.
     for (let index = 0; index < 4; index++) k.counter.fake.fault("machine list", { stderr: "error: network unreachable", code: 1 })
-    const back = setTimeout(() => k.counter.fake.update((state) => void (state.port = port)), 1_000)
+    const back = setTimeout(() => k.counter.fake.update((state) => { state.port = port }), 1_000)
     const result = (await k.runs.boxd_ensure({ workId: "relisted" }, k.call())) as EnsureResult
     clearTimeout(back)
     expect(result.state).toBe("ready")
@@ -1013,9 +1013,9 @@ describe("waits ride out an outage and a busy runner (review MEDIUM 5b)", () => 
     const k = await kit({ seam: { intervalMs: 100 } })
     await known(k, "queued")
     const port = k.counter.fake.read().port
-    k.counter.fake.update((state) => void (state.port = 9))
+    k.counter.fake.update((state) => { state.port = 9 })
     k.staleReads = 4
-    const back = setTimeout(() => k.counter.fake.update((state) => void (state.port = port)), 1_000)
+    const back = setTimeout(() => k.counter.fake.update((state) => { state.port = port }), 1_000)
     const result = (await k.runs.boxd_ensure({ workId: "queued" }, k.call())) as EnsureResult
     clearTimeout(back)
     expect(result.state).toBe("ready")
@@ -1062,7 +1062,7 @@ describe("the reviewer's lows", () => {
   test("LOW-7: a known machine missing in its region says boxd_resume checks every region, not MACHINE_GONE", async () => {
     const k = await kit()
     const machine = await known(k, "vanished")
-    k.counter.fake.update((state) => void (state.machines.find((entry) => entry.id === machine.id)!.status = "destroyed"))
+    k.counter.fake.update((state) => { state.machines.find((entry) => entry.id === machine.id)!.status = "destroyed" })
     const error = await errorOf(k.runs.boxd_ensure({ workId: "vanished" }, k.call()))
     expect(error.code).toBe("BOXD_FAILED")
     expect(error.what).toContain("boxd_resume")
@@ -1084,7 +1084,7 @@ describe("a get's label-based target only adopts a work with no recorded machine
   test("a work with a recorded id is never taken over by a fully labelled machine that now holds its name", async () => {
     const k = await kit()
     const machine = await known(k, "pinned")
-    k.counter.fake.update((state) => void (state.machines.find((entry) => entry.id === machine.id)!.status = "destroyed"))
+    k.counter.fake.update((state) => { state.machines.find((entry) => entry.id === machine.id)!.status = "destroyed" })
     const stranger = k.counter.fake.machine({ name: "oc-pinned", region: "fra", labels: { owner: "boxd", role: "session", work: "pinned" } })
     // The port would hand it out for adoption by its labels...
     expect((await k.services.boxd.get("fra", "oc-pinned", op)).owned?.target.machineId as string | undefined).toBe(stranger.id)
@@ -1100,7 +1100,7 @@ describe("a get's label-based target only adopts a work with no recorded machine
     const k = await kit()
     await k.golden("fra")
     const machine = await known(k, "rebuilt")
-    k.counter.fake.update((state) => void (state.machines.find((entry) => entry.id === machine.id)!.status = "destroyed"))
+    k.counter.fake.update((state) => { state.machines.find((entry) => entry.id === machine.id)!.status = "destroyed" })
     k.counter.fake.machine({ name: "oc-rebuilt", region: "fra", labels: { owner: "boxd", role: "session", work: "rebuilt" } })
     lagListing(k, 2)
     expect((await errorOf(k.runs.boxd_resume({ workId: "rebuilt" }, k.call()))).code).toBe("NOT_OURS")

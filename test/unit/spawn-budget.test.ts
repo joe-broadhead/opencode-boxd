@@ -149,7 +149,7 @@ describe("the steady-state sequences fit their rows", () => {
 
 describe("under load", () => {
   test("120 changes on 40 machines at once, with 20 to 60 ms of CLI latency: never more than 12 boxd children, none untagged", async () => {
-    counter.fake.update((state) => void (state.latencyMs = [20, 60]))
+    counter.fake.update((state) => { state.latencyMs = [20, 60] })
     const machines = Array.from({ length: 40 }, (_, index) => counter.fake.machine({ name: `oc-w${index}`, region: "fra" }))
     counter.reset()
     const stop = new AbortController()
@@ -173,7 +173,7 @@ describe("under load", () => {
   test("Stop mid-queue on real processes: the queued calls start no child, and no child outlives the call", async () => {
     await runtime.boxd.assertLaptopCli(context("warm"))
     // Long enough that no child finishes on its own, however slowly the machine starts processes.
-    counter.fake.update((state) => void (state.latencyMs = [20_000, 20_000]))
+    counter.fake.update((state) => { state.latencyMs = [20_000, 20_000] })
     counter.reset()
     const stop = new AbortController()
     const calls = Array.from({ length: 40 }, (_, index) => runtime.boxd.list({ maxAgeMs: 0 }, { ...context(`call_stop_${index}`), signal: stop.signal }).then(() => "ran", (error: { code?: string }) => error.code))

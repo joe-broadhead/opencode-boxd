@@ -37,7 +37,7 @@ export async function ensureDir(path: string): Promise<void> {
 
 /** Flushes a folder's entries, so a rename in it survives a power cut. A file system that cannot do it is not an error. */
 export async function fsyncDir(path: string): Promise<void> {
-  let handle
+  let handle: Awaited<ReturnType<typeof open>> | undefined
   try {
     handle = await open(path, "r")
     await handle.sync()
