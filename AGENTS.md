@@ -26,7 +26,8 @@ server and no integration: the account is the machine's own identity (`accounts.
 | Command | Does |
 |---|---|
 | `npm ci` | installs dev tooling only; there are no runtime dependencies |
-| `npm run check` | everything CI runs: typecheck, build, unit, `plugin-kit check` (T0/T1, docs, forbidden), host, pack, actionlint |
+| `npm run check` | everything CI runs: typecheck, bundle, unit, `plugin-kit check` (T0/T1, docs, forbidden), host, pack, actionlint |
+| `npm run bundle` | builds `dist/index.js` from `src/index.ts`; `dist/` is committed |
 | `npx plugin-kit docs` | regenerates the generated doc sections from the manifest |
 | `npx plugin-kit conformance` | the whole conformance report, without the kit's repository checks |
 | `npx plugin-kit release <version>` | cuts a release; CI publishes it |
@@ -99,7 +100,7 @@ section. Hand-written text is plain English: short sentences, one term per conce
 
 ## Forbidden
 
-- Editing `dist/` by hand, or committing it outside a release.
+- Editing `dist/` by hand; it is built by `npm run bundle` and committed.
 - Adding runtime dependencies, peer dependencies or lifecycle scripts.
 - Naming any app in code, manifest or docs, except in an `x-<app>` key.
 - Copying contract code into this repository.

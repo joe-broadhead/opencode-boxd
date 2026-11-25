@@ -61,7 +61,7 @@ function pack(): Packed {
     packed = { filename: basename(tarball), size: statSync(tarball).size, entryCount: files.length, files }
     return packed
   }
-  run("node", [join(root, "scripts", "check.mjs"), "build"], root)
+  run("node", [join(root, "scripts", "check.mjs"), "bundle"], root)
   const result = run("npm", ["pack", "--json", "--ignore-scripts", "--pack-destination", work], root)
   packed = (JSON.parse(result) as Packed[])[0]!
   return packed

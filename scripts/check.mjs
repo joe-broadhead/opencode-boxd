@@ -9,7 +9,7 @@ const env = { ...process.env, PATH: `${join(root, "node_modules", ".bin")}${deli
 
 const stages = {
   typecheck: () => run("tsc", ["--noEmit", "-p", "tsconfig.json"]),
-  build: () => run("node", ["scripts/build.mjs"]),
+  bundle: () => run("npm", ["run", "bundle"]),
   unit: () => run("bun", ["test", "./test/unit"]),
   // The contract's whole gate: T0, the declaration, the recordings, T1 on the real 2.4.1 host, docs drift, forbidden
   // patterns and the bundled-kit check.

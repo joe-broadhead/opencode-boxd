@@ -1,8 +1,8 @@
 name: Release
 
 # A tag v<package.json version> on a master commit whose CI passed creates the GitHub Release. Releases are not
-# published to npm: a consumer pins the tag, github:we-the-rebel-alliance/boxd-plugin#v<version>, and dist/ is built by
-# this workflow. Only the owner decides a release; an agent never pushes a tag on its own.
+# published to npm: a consumer pins the tag, github:we-the-rebel-alliance/boxd-plugin#v<version>, and the committed
+# dist/ is checked and packed by this workflow. Only the owner decides a release; an agent never pushes a tag on its own.
 
 on:
   push:
@@ -39,6 +39,8 @@ jobs:
         # The contract is a public repository, and npm records its GitHub dependency over ssh. A runner has no key.
         run: git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
       - run: npm ci --ignore-scripts
+      - name: The committed bundle is current
+        run: npm run bundle && git diff --exit-code dist/
       - name: actionlint
         run: |
           set -euo pipefail

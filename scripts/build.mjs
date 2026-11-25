@@ -36,7 +36,7 @@ const problems = Object.entries(result.metafile.outputs).flatMap(([file, output]
 const files = readdirSync(join(root, "dist")).sort()
 if (JSON.stringify(files) !== JSON.stringify(["index.js"])) problems.push(`dist/ must hold exactly index.js, found ${files.join(", ")}`)
 if (problems.length) {
-  console.error(`build: the bundle is not self-contained:\n  ${problems.join("\n  ")}`)
+  console.error(`bundle: the bundle is not self-contained:\n  ${problems.join("\n  ")}`)
   process.exit(1)
 }
-console.log("build: dist/index.js is self-contained.")
+console.log("bundle: dist/index.js is self-contained.")

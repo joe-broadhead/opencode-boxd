@@ -473,7 +473,7 @@
     }
   },
   "scripts": {
-    "build": "node scripts/build.mjs",
+    "bundle": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "unit": "bun test ./test/unit",
     "host": "bun test ./test/host",
