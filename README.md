@@ -21,7 +21,8 @@ boxd is a trademark of Azin Tech Operating Company B.V.; this unofficial plugin 
 ## Install
 
 Install from a release: `opencode plugin add github:we-the-rebel-alliance/boxd-plugin#v<version>`. The first release on
-plugin-contract is v0.0.0 (phase 4b).
+plugin-contract is v0.0.0 (phase 4b). Tags from before the transfer are not releases of this plugin and are not
+installable.
 
 Run `opencode reload`, or restart OpenCode, then run `/boxd-status`.
 
@@ -221,9 +222,10 @@ version and one next step.
 - **The machine limit and usage are read as boxd documents them.** The per-region shape of `manage machine-limit
   --json` and the keys of `manage usage --json` are not confirmed against every boxd release; the region headroom in
   status, `MACHINE_LIMIT`'s numbers, `auto`'s region choice and the machine cost rest on that reading.
-- **`regions` pins new placement, not history.** It refuses a new machine or golden image outside its list; a work
-  that already lives in another region still converges, is harvested, resumed and dropped there, and a resume rebuilds
-  a gone machine in the work's own region.
+- **`regions` pins new placement, not history.** It refuses a new work's machine, and a golden build for one, outside its
+  list; a work that already lives in another region still converges, is harvested, resumed and dropped there, and a
+  resume rebuilds a gone machine in the work's own region, building that image there when it is missing (unless
+  `buildGolden` is `"never"`). A prune deletes images in every region, because deleting is not placement.
 - **A call waits at most 4 minutes, measured up to 10.** A tool answers its real state (`creating`, `starting`) with a
   `next` after at most 4 minutes.
 - **Model spend is not measured.** `cost.today`, the budget and `/boxd-cleanup` count boxd's machine cost only.

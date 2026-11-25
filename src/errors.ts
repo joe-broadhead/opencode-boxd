@@ -63,7 +63,7 @@ export const CODES = {
   },
   MACHINE_LIMIT: {
     state: "refused",
-    message: "No region has room for another machine; limit, inUse and free are given per region.",
+    message: "No allowed region has room for another machine; limit, inUse and free are given per region.",
     next: 'Pass region: "<other region>" when it has room; otherwise free machines with boxd_drop or boxd_reassign, or have the owner raise the limit with boxd manage machine-limit request --max-vms <n>.',
   },
   REGION_NOT_ALLOWED: {

@@ -217,7 +217,7 @@ export const TOOLS: readonly ToolSpec[] = [
     input: listable(
       {
         ...WORK_ITEM,
-        region: choice(["auto", ...REGIONS], 'Where a new work goes; "auto" picks the region with the most free machines among those the option "regions" allows. Ignored for an existing work.'),
+        region: choice(["auto", ...REGIONS], 'Where a new work goes; "auto" picks the region with the most free machines among those the option "regions" allows. An existing work keeps its own region, though a named region is still checked against "regions".'),
         size: SIZE,
         model: { ...MODEL, description: `${MODEL.description as string} Recorded as the work's default, for its first session.` },
         git: GIT,
@@ -346,9 +346,9 @@ export const TOOLS: readonly ToolSpec[] = [
     readOnly: false,
     list: false,
     description:
-      "Build, list or prune golden images, named <prefix>-<opencode version>-<size>. A build runs a fixed recipe on a short-lived builder machine (stock or a base snapshot, the goldenSetup script, then a scrub) and never saves a work's machine. With no input, it builds the default size in every region the plugin option \"regions\" allows that lacks one, and never in a region outside it. An existing image answers present unless rebuild is true. A base that holds model credentials is refused.",
+      "Build, list or prune golden images, named <prefix>-<opencode version>-<size>. A build runs a fixed recipe on a short-lived builder machine (stock or a base snapshot, the goldenSetup script, then a scrub) and never saves a work's machine. With no input, it builds the default size in every region the plugin option \"regions\" allows that lacks one, and never builds in a region outside it; a prune removes images in every region, because deleting is not placement. An existing image answers present unless rebuild is true. A base that holds model credentials is refused.",
     input: object({
-      region: choice([...REGIONS, "all"], 'Which region; every region the option "regions" allows by default.'),
+      region: choice([...REGIONS, "all"], 'Which region; every region the option "regions" allows by default, and a prune may name any region.'),
       size: SIZE,
       from: string('"stock", or a base snapshot name in that region; the goldenBase option by default.'),
       rebuild: boolean("Rebuild an image that exists, under the same name."),

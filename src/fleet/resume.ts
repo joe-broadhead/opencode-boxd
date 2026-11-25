@@ -12,9 +12,9 @@
  *   `oc-<id>`, and a `get` of the recorded id that answers boxd's exact not-found words in every region. A failed read
  *   is never "gone". The new machine comes from the recorded image when it is this laptop's OpenCode's, otherwise from
  *   the current golden image for the work's size (built when it is missing), with the creation flags of §C.2. A work
- *   whose machine landed in a region is rebuilt there even when that region is outside the option `regions`; a claim
- *   that never landed, and a work with no region, are new placement, and only allowed regions take them. No golden
- *   image is built outside the allowlist.
+ *   whose machine landed in a region is rebuilt there even when that region is outside the option `regions`, and its
+ *   golden image is built there when it is missing: that is recovery, not new placement. A claim that never landed, and
+ *   a work with no region, are new placement, and only allowed regions take them.
  * - **Import:** a work with saved sessions whose guest has no session (a rebuilt machine, or `SESSION_MISSING`) gets
  *   each stored export copied up with `machine cp` and imported by the helper, parents first, as one tree. The guest's
  *   OpenCode is upgraded to this laptop's first, because a transcript moves only between matching versions.
@@ -186,14 +186,14 @@ async function rebuild(
       reserved = undefined
     }
     if (!snapshots.some((row) => row.region === region && row.name === image)) {
-      // The record's own region is rebuilt even outside the allowlist; an image for it is never built there.
-      if (!allowed.includes(region)) {
-        throw boxdError("REGION_NOT_ALLOWED", `No golden image ${image} is in ${region}, where this work was recorded, and the plugin option "regions" allows only ${regionsText(allowed)}, so none is built there; nothing was created. Add "${region}" to "regions" and call again.`, {
+      // A landed work is rebuilt in its own region even outside the allowlist: building the image there is part of that
+      // recovery, not new placement. A claim that never landed was refused above, before anything was claimed here.
+      if (options.buildGolden === "never") {
+        throw boxdError("GOLDEN_MISSING", `No golden image ${image} in ${region}, where this work was recorded, and buildGolden is "never". Set it to "auto" so a resume builds the image there, or add "${region}" to "regions" and build it with boxd_golden({ region: "${region}", size: "${record.size}" }).`, {
           region,
-          allowed,
+          size: record.size,
         })
       }
-      if (options.buildGolden === "never") throw boxdError("GOLDEN_MISSING", `No golden image ${image} in ${region}, and buildGolden is "never".`)
       const built = await context.waiting(() => machines.golden.build({ region, size: record.size, base: options.goldenBase, name: image }, { signal: context.signal, until: context.deadline }))
       if (built === STILL_BUILDING) return { building: image }
     }

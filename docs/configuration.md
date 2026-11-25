@@ -18,8 +18,8 @@ All options go in the plugin entry in `opencode.json`, and every one is optional
 | `access` | `"all"` | What the plugin's own tools may do without asking: `"all"` allows everything, `"ask-changes"` allows the reads and asks for every change, `"read-only"` allows the reads and denies every change. A later rule of the user's still wins. |
 | `allowedRoots` | `[]` | Absolute folders here that a work may read and write besides the project. A path outside both is refused. |
 | `allowUntestedHost` | `false` | Run on an OpenCode outside `>=2.4.1 <2.5.0`. Status then says the host is untested. |
-| `regions` | `["fra", "nyc"]` | The regions a new work or golden image may be placed in: a non-empty list of unique known regions, in any order. Every new placement is filtered to it, including `auto`; any other region is refused `REGION_NOT_ALLOWED` and nothing is created. It pins new placement only: works that already live elsewhere still converge, are harvested, resumed and dropped, and a resume rebuilds a gone machine in the work's own region. |
-| `region` | `"auto"` | Where a new work goes within `regions`: `"auto"` picks the region with the most free machines after `keepFree`, preferring one that already has the golden image; or `"fra"` or `"nyc"`. A named region must be one of `regions`, and setting both to disagree is `OPTIONS_INVALID`. |
+| `regions` | `["fra", "nyc"]` | The regions a new work or a new golden image may be placed in: a non-empty list of unique known regions, in any order. Every new placement is filtered to it, including `auto`; any other region is refused `REGION_NOT_ALLOWED` and nothing is created. It pins new placement only: works that already live elsewhere still converge, are harvested, resumed and dropped, a resume rebuilds a gone machine in the work's own region (building its image there when it is missing), and a prune covers every region. |
+| `region` | `"auto"` | Where a new work goes within `regions`: `"auto"` picks the region with the most free machines after `keepFree`, preferring one that already has the golden image; or `"fra"` or `"nyc"`. A named region must be one of `regions` (checked even for an existing work, where it is otherwise ignored), and setting both to disagree is `OPTIONS_INVALID`. |
 | `keepFree` | `{ "fra": 0, "nyc": 0 }` | Machines `"auto"` leaves free in each region, such as the organisation's CI pool. |
 | `size` | `"2x8"` | A new work's size: `"1x4"`, `"2x8"`, `"4x16"` or `"8x32"` (vCPU x GiB). |
 | `git` | none | `{ "name", "email" }`: the guest's git identity for every new work. Never a token. |
@@ -38,13 +38,16 @@ All options go in the plugin entry in `opencode.json`, and every one is optional
 
 An unknown option or a value out of its range stops the plugin with `OPTIONS_INVALID`; OpenCode's plugin list shows why.
 
-`regions` is the placement allowlist. With `"regions": ["fra"]`, no new machine and no golden image is made in `nyc`:
+`regions` is the placement allowlist for new work. With `"regions": ["fra"]`, no new work's machine is made in `nyc`:
 `boxd_ensure` with `region: "nyc"` answers `REGION_NOT_ALLOWED`, `region: "auto"` chooses only `fra` (a full or kept
 `fra` answers `MACHINE_LIMIT` with `fra` alone, never `nyc`), and `boxd_golden` builds only `fra`. Reads are not
-pinned: `boxd_status({ region: "nyc" })` still filters works there. A work that already lives in `nyc` keeps working —
-`boxd_ensure`, `boxd_harvest`, `boxd_sleep`, `boxd_drop` and `boxd_resume` act on its own machine, and a resume
-rebuilds a destroyed machine in `nyc` rather than stranding the work. Only a create that has not landed yet is new
-placement, and it is refused outside the list.
+pinned: `boxd_status({ region: "nyc" })` still filters works there, and a prune deletes images in every region, because
+deleting is not placement. A work that already lives in `nyc` keeps working: `boxd_ensure` (a named `region` is checked
+against `regions` even then, and otherwise ignored), `boxd_harvest`, `boxd_sleep`, `boxd_drop` and `boxd_resume` act on
+its own machine, and a resume rebuilds a destroyed machine in `nyc` rather than stranding the work, building its image
+there when it is missing (unless `buildGolden` is `"never"`, which answers `GOLDEN_MISSING` as it does elsewhere): that
+is recovery, not new placement. Only a create that has not landed yet is new placement, and it is refused outside the
+list.
 
 The plugin is tested on 2.4.1. Inside `>=2.4.1 <2.5.0` a release that was not tested, such as 2.4.2, still starts:
 status marks the version `untested` and the next step is the same as on a tested release. Outside the range the plugin

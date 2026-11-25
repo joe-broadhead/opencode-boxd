@@ -172,4 +172,16 @@ describe("the regions allowlist", () => {
     expect(error.what).toContain("No other region has room either")
     expect(error.what).toContain('The option "regions" allows only "fra"')
   })
+
+  test("a resume rebuild outside the allowlist reports its own region and a next step resume can take", () => {
+    const rows = limits([300, 0], [1, 1])
+    const error = limitAtCreate(boxdError("MACHINE_LIMIT", "your org has reached its machine limit"), "nyc", rows, usedBy(rows), new InFlight(), ["fra"])
+    expect(error.details.limit).toEqual([
+      { region: "fra", limit: 300, inUse: 0, free: 300 },
+      { region: "nyc", limit: 1, inUse: 1, free: 0 },
+    ])
+    expect(error.what).toContain("This work is rebuilt in nyc")
+    expect(error.what).toContain("free a machine there with boxd_drop or boxd_reassign")
+    expect(error.what).not.toContain('pass region: "fra"')
+  })
 })

@@ -9,7 +9,8 @@
  *   the size, unless another allowed region has `PREFER_IMAGE_MARGIN` or more free machines than it.
  * - A named region is used as asked when it is allowed; `keepFree` is for `auto` only. It still answers `MACHINE_LIMIT`
  *   when the region is full, naming another allowed region when that has room. `MACHINE_LIMIT` carries a row per allowed
- *   region, and says the allowlist when it excludes one.
+ *   region (and the work's own region on a resume rebuild, which may be outside the allowlist), and says the allowlist
+ *   when it excludes one.
  * - **What is in use** comes from the all-region listing the caller took in this call, not from the machine-limit
  *   answer, which boxd's port caches for 60 s and which a create does not refresh. The listing shows every machine that
  *   landed before it was asked for; this process's creates still in flight, and those that landed after the listing
@@ -151,9 +152,17 @@ function limitError(rows: readonly RegionLimit[], message: string, allowed: read
 /**
  * boxd's own limit refusal at create time, as `MACHINE_LIMIT` with every allowed region's numbers (the cached ones,
  * which the refusal has just shown to be optimistic for `region`).
+ *
+ * A resume rebuilds a work in its recorded region, which may be outside the option `regions`; there the refusing region
+ * gets its own row and a next step resume can take (free a machine in that region, or raise the limit), never "pass
+ * region: …", which `boxd_resume` has no input for.
  */
 export function limitAtCreate(error: BoxdError, region: Region, limits: readonly RegionLimit[], used: InUse, inFlight: InFlight, allowed: readonly Region[]): BoxdError {
-  const listed = ordered(allowed)
+  const recovery = !allowed.includes(region)
+  const listed = ordered(recovery ? [...allowed, region] : allowed)
   const rows = headroom(limits, used, inFlight, listed).map((row) => (row.region === region ? { ...row, free: 0 } : row))
-  return limitError(rows, `boxd refused a new machine in ${region}: ${error.what} (${describe(rows)}).${otherAdvice(rows, region)}`, listed)
+  const advice = recovery
+    ? ` This work is rebuilt in ${region}, where its machine was recorded: free a machine there with boxd_drop or boxd_reassign, or have the owner raise the limit with boxd manage machine-limit request --max-vms <n>.`
+    : otherAdvice(rows, region)
+  return limitError(rows, `boxd refused a new machine in ${region}: ${error.what} (${describe(rows)}).${advice}`, listed)
 }
