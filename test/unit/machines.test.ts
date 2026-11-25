@@ -3,7 +3,7 @@
 // id, regions and MACHINE_LIMIT, the budget, the creation flags, golden builds and their scrub, reassign, resume, and
 // the §4.4 spawn budgets of ensure.
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test"
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import type { WorkRecord } from "../../src/ledger/types.js"
 import type { EnsureResult, ListResult, Refusal, ResumeResult, GoldenResult } from "../../src/results.js"
@@ -882,22 +882,7 @@ describe("integration lows (C1)", () => {
 })
 
 describe("boxd_resume takes an imported v0 guest over before setup (review HIGH-2)", () => {
-  test("a hibernated v0 work: woken, its v0 password taken over before any v1 setup, recorded v1, and reachable", async () => {
-    const k = await kit()
-    const machine = await owned(k, "legacy")
-    // A v0 guest: its helper's password in /tmp, no v1 password, hibernated.
-    const disk = k.counter.fake.disk(machine)
-    rmSync(join(disk, "home/boxd/.opencode-boxd/password"), { force: true })
-    mkdirSync(join(disk, "tmp/opencode-boxd"), { recursive: true })
-    writeFileSync(join(disk, "tmp/opencode-boxd/password"), "v0-password\n")
-    k.counter.fake.update((state) => void (state.machines.find((entry) => entry.id === machine.id)!.status = "hibernated"))
-    await k.write(workRecord("legacy", { machineId: machine.id as never, laptopDirectory: k.project, guestHelper: "v0", importedFrom: "v0" }))
-    const result = (await k.runs.boxd_resume({ workId: "legacy" }, k.call())) as ResumeResult
-    expect(result).toMatchObject({ state: "ready", rebuilt: false })
-    expect(k.adopted).toEqual([{ machineId: machine.id, beforeSetup: true }])
-    expect(readFileSync(join(disk, "home/boxd/.opencode-boxd/password"), "utf8")).toBe("v0-password\n")
-    expect((await k.record("legacy"))?.guestHelper).toBe("v1")
-  })
+
 })
 
 describe("auto counts the machines that landed (review MEDIUM-3)", () => {

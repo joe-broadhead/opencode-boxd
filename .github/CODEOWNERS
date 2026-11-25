@@ -1,0 +1,9 @@
+# CODEOWNERS
+
+# The plugin's maintainer.
+* @joe-broadhead
+
+# The contract maintainers review the manifest, the agent guide and the docs.
+package.json @we-the-rebel-alliance/contract-maintainers
+AGENTS.md @we-the-rebel-alliance/contract-maintainers
+docs/ @we-the-rebel-alliance/contract-maintainers

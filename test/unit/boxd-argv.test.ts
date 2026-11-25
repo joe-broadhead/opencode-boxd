@@ -2,8 +2,8 @@
 // --region, every change acts by id, a create carries the cost bounds of design §C.2, and nothing ever asks for
 // --shared or --isolated.
 import { describe, expect, test } from "bun:test"
-import * as argv from "../../src/boxd/argv.js"
-import { parseCreated, parseListing, parseMachine, parseMachineLimit, parseSecrets, parseSnapshots, parseUsage, regionLimits } from "../../src/boxd/parse.js"
+import * as argv from "../../src/provider/boxd/argv.js"
+import { parseCreated, parseListing, parseMachine, parseMachineLimit, parseSecrets, parseSnapshots, parseUsage, regionLimits } from "../../src/provider/boxd/parse.js"
 import type { ChangeTarget, MachineId } from "../../src/ports.js"
 
 // A test builds a target by hand; in the plugin only checkOwned makes one.

@@ -4,8 +4,8 @@
  *
  * - A reached `budget` with `action: "refuse"` answers `BUDGET_REACHED` before anything wakes or is created.
  * - **Wake:** the machine is in the work's region under its name: the name is resolved to the recorded id, and a
- *   sleeping machine is woken by id. An imported v0 guest is taken over (its password, §6.3) before `setup`, which would
- *   otherwise start a v1 server beside the v0 one on the same port.
+ *   sleeping machine is woken by id before `setup`, which would
+ *   otherwise start a second server on the same port.
  * - **One machine per work:** a work whose create may have landed (no id yet) adopts the machine in its recorded region,
  *   and a rebuild claims its region in the record and creates there, adopting a machine that already holds the name.
  * - **Rebuild,** only when the machine is gone by the rule drop uses (H2): a fresh all-region listing with no
@@ -24,7 +24,7 @@ import { BoxdError, boxdError } from "../errors.js"
 import { GUEST_HELPER_PATH, LIST_MAX_ITEMS, REGIONS, TIMEOUTS, type ChangeTarget, type Listing, type MachineInfo, type OpContext, type Owned, type Region } from "../ports.js"
 import type { WorkRecord } from "../ledger/types.js"
 import type { ListResult, ResumeResult } from "../results.js"
-import type { CallContext } from "../tools.js"
+import type { CallContext } from "../call.js"
 import {
   adoptAt,
   checkBudget,
@@ -102,11 +102,11 @@ async function importSaved(machines: Machines, record: WorkRecord, target: Chang
 }
 
 /**
- * The machine is there: woken by its id when it sleeps, and an imported v0 guest taken over (§6.3) before anything
+ * The machine is there: woken by its id when it sleeps, before anything
  * starts a v1 server beside it. Under the machine's lock; the ledger after it.
  */
 async function wakeHere(machines: Machines, record: WorkRecord, owned: Owned, context: ItemContext, op: OpContext): Promise<{ readonly target: ChangeTarget; readonly record: WorkRecord; readonly woke: boolean }> {
-  const { boxd, runner, importV0 } = machines.services
+  const { boxd, runner } = machines.services
   const target = owned.target
   const woke = await runner.withMachineLock({ id: target.machineId }, op, async () => {
     let woken = false
@@ -115,15 +115,13 @@ async function wakeHere(machines: Machines, record: WorkRecord, owned: Owned, co
       await boxd.wake(target, op)
       woken = true
     }
-    // A v0 guest still runs its server on the same port with its own password: a v1 setup must not start beside it.
-    if (record.guestHelper === "v0") await importV0.adopt(target, op)
     return woken
   })
   const current =
-    record.slept || record.guestHelper === "v0" || record.machineId !== target.machineId
+    record.slept || record.machineId !== target.machineId
       ? await patch(machines, record.workId, op, (now) => {
           const { slept: _awake, pendingCreate: _landed, ...rest } = now ?? record
-          return { ...rest, region: target.region, machineId: target.machineId, guestHelper: "v1" } as WorkRecord
+          return { ...rest, region: target.region, machineId: target.machineId } as WorkRecord
         })
       : record
   return { target, record: current, woke }
@@ -210,7 +208,7 @@ async function rebuild(
       ...rest,
       region,
       machineId: landed.info.id,
-      ...(landed.created ? { image: { name: image, opencode: hostVersion }, guestHelper: "v1" as const, session: base.session?.notify ? { notify: base.session.notify } : {} } : {}),
+      ...(landed.created ? { image: { name: image, opencode: hostVersion }, session: base.session?.notify ? { notify: base.session.notify } : {} } : {}),
       ...(lease ? { lease } : {}),
     } as WorkRecord
   })
@@ -323,14 +321,12 @@ export async function runResume(machines: Machines, input: Record<string, unknow
   for (const key of Object.keys(input)) if (key !== "workId" && key !== "works") throw boxdError("NAME_INVALID", `${key} is not an input of boxd_resume.`, { field: key })
   if (input.works === undefined) {
     const workId = idOf(input.workId, "workId")
-    await machines.services.ledger.ready(opOf(call, "boxd_resume"))
     return runOne({ signal: call.signal, ...settings }, (context) => resumeOne(machines, workId, context, call))
   }
   if (!Array.isArray(input.works) || input.works.length < 1 || input.works.length > LIST_MAX_ITEMS) throw boxdError("NAME_INVALID", `works must be a list of 1 to ${LIST_MAX_ITEMS} work ids.`, { field: "works" })
   const ids = input.works.map((value, index) => idOf(value, `works[${index}]`))
   const duplicate = ids.findIndex((id, index) => ids.indexOf(id) !== index)
   if (duplicate !== -1) throw boxdError("NAME_INVALID", `works[${duplicate}] "${ids[duplicate]}" appears twice; name each work once.`, { field: `works[${duplicate}]` })
-  await machines.services.ledger.ready(opOf(call, "boxd_resume"))
   return runList(
     ids,
     { signal: call.signal, ...settings, workId: (id) => id, success: (result) => result.state === "ready", pendingStates: ["starting"], again: (pending) => listCall("boxd_resume", pending, "ids") },

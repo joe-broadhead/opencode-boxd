@@ -1,7 +1,9 @@
 import { boxdError } from "./errors.js"
 import { assertSnapshot } from "./names.js"
-import { ACCESS_VALUES, type Access } from "./permissions.js"
 import { REGIONS, SIZES, type Region, type Size } from "./ports.js"
+
+export type Access = "all" | "ask-changes" | "read-only"
+export const ACCESS_VALUES: readonly Access[] = ["all", "ask-changes", "read-only"]
 
 /** Where a new work goes: the region with the most free machines after `keepFree`, or one region. */
 export type RegionChoice = "auto" | Region
@@ -19,6 +21,8 @@ export interface Budget {
 export interface Options {
   /** What the plugin's own tools may do without asking: everything, ask for changes, or reads only. */
   readonly access: Access
+  /** The one local account's profile, or an empty map: a local plugin has one account, `default`. */
+  readonly accounts: Readonly<Record<string, Readonly<Record<string, unknown>>>>
   /** Laptop roots a work may name or write besides the project: paths outside both are refused. */
   readonly allowedRoots: readonly string[]
   /** Run on an OpenCode version outside the supported range, with a warning in status. */
@@ -53,12 +57,11 @@ export interface Options {
   readonly leaseDays: number
   /** Machine cost per day, warned about or refused at (§C.5); none by default. */
   readonly budget?: Budget
-  /** The end-of-turn idle check (§C.4): one synthetic note when money burns and automation will not act. */
-  readonly idleCheck: boolean
 }
 
 export const DEFAULT_OPTIONS: Options = {
   access: "all",
+  accounts: {},
   allowedRoots: [],
   allowUntestedHost: false,
   regions: [...REGIONS],
@@ -74,7 +77,6 @@ export const DEFAULT_OPTIONS: Options = {
   autoSleepMinutes: 10,
   orphanHours: 12,
   leaseDays: 0,
-  idleCheck: true,
 }
 
 const REGION_CHOICES: readonly RegionChoice[] = ["auto", ...REGIONS]
@@ -90,6 +92,7 @@ const quoted = (values: readonly string[]) => values.map((value) => `"${value}"`
 
 const ACCEPTED = {
   access: '"all" (the default), "ask-changes" or "read-only"',
+  accounts: 'an object with one profile per alias; a local plugin has only "default" (an empty object)',
   allowedRoots: "an array of absolute folders here that work files may use besides the project (empty by default)",
   allowUntestedHost: "true or false (the default)",
   regions: `a non-empty array of unique regions from ${quoted(REGIONS)}, where new works and golden images may be placed (${quoted(REGIONS)} by default)`,
@@ -108,7 +111,6 @@ const ACCEPTED = {
   orphanHours: "a whole number of hours, 1 or more (12 by default)",
   leaseDays: "a whole number of days, 0 or more (0, off, by default)",
   budget: 'an object with a positive daily amount in the organisation\'s billing currency and an action, "warn" or "refuse"',
-  idleCheck: "true (the default) or false",
 } as const satisfies Record<keyof Options, string>
 
 const EXAMPLE = `"plugins": [{ "package": "github:we-the-rebel-alliance/boxd-plugin#v<version>", "options": { "region": "auto", "size": "2x8" } }]`
@@ -141,7 +143,13 @@ export function parseOptions(raw: unknown): Options {
   }
   const input = { ...DEFAULT_OPTIONS, ...raw } as Record<keyof Options, unknown>
 
-  for (const key of ["allowUntestedHost", "idleCheck"] as const) if (typeof input[key] !== "boolean") throw wrong(key, input[key])
+  if (typeof input.allowUntestedHost !== "boolean") throw wrong("allowUntestedHost", input.allowUntestedHost)
+  const { accounts: accountMap } = input
+  if (!isObject(accountMap)) throw wrong("accounts", accountMap)
+  for (const [alias, profile] of Object.entries(accountMap)) {
+    if (alias !== "default") throw invalid(`The option "accounts" names "${alias}", and a local plugin has one account, "default"`)
+    if (!isObject(profile) || Object.keys(profile).length > 0) throw invalid('The option "accounts"."default" must be an empty object: the local profile has no fields')
+  }
   const access = oneOf("access", input.access, ACCESS_VALUES)
   const { allowedRoots } = input
   if (!Array.isArray(allowedRoots) || allowedRoots.some((root) => typeof root !== "string" || !root.startsWith("/"))) throw wrong("allowedRoots", allowedRoots)
@@ -196,6 +204,7 @@ export function parseOptions(raw: unknown): Options {
 
   return {
     access,
+    accounts: accountMap as Readonly<Record<string, Readonly<Record<string, unknown>>>>,
     allowedRoots: allowedRoots as readonly string[],
     allowUntestedHost: input.allowUntestedHost as boolean,
     regions,
@@ -214,6 +223,5 @@ export function parseOptions(raw: unknown): Options {
     orphanHours: wholeNumber("orphanHours", input.orphanHours, 1),
     leaseDays: wholeNumber("leaseDays", input.leaseDays, 0),
     ...(budget ? { budget } : {}),
-    idleCheck: input.idleCheck as boolean,
   }
 }

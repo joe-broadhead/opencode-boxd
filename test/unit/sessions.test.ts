@@ -7,7 +7,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaul
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { BoxdError, boxdError, CODES } from "../../src/errors.js"
-import { createRuntime, type PluginRuntime } from "../../src/exec/runtime.js"
+import { createProvider, type PluginProvider } from "../../src/provider/index.js"
 import { sessionRuns } from "../../src/fleet/sessions.js"
 import { quote } from "../../src/fleet/exec.js"
 import { rootOf } from "../../src/fleet/submit.js"
@@ -15,9 +15,9 @@ import { ledgerPort } from "../../src/ledger/index.js"
 import { Ledger } from "../../src/ledger/store.js"
 import type { WorkRecord } from "../../src/ledger/types.js"
 import { parseOptions } from "../../src/options.js"
-import { CAPS, type ChangeTarget, type ImportV0Port, type LedgerPort, type MachineId, type OpContext, type WorkEvent, type WorkSnapshot } from "../../src/ports.js"
+import { CAPS, type ChangeTarget, type LedgerPort, type MachineId, type OpContext, type WorkEvent, type WorkSnapshot } from "../../src/ports.js"
 import type { CostPort, FleetActions, FleetServices, Selectors } from "../../src/services.js"
-import type { CallContext } from "../../src/tools.js"
+import type { CallContext } from "../../src/call.js"
 import { startFakeGuest, type FakeGuest } from "../host/fake-guest.js"
 import { plant } from "../host/fake-lock.mjs"
 import type { FakeMachine } from "../host/fake-cli.js"
@@ -32,7 +32,7 @@ setDefaultTimeout(60_000)
 const VERSION = "2.2.6"
 let guest: FakeGuest
 let counter: CountingFake
-let runtime: PluginRuntime
+let runtime: PluginProvider
 let root: string
 let project: string
 let ledger: LedgerPort
@@ -42,7 +42,6 @@ let selectors: Selectors
 let actions: FleetActions
 let problems: Map<string, string>
 let budget: { calls: number; refuse: boolean }
-let adopted: string[]
 let snapshot: WorkSnapshot[]
 /** The host's sessions: id → parent. */
 let hostSessions: Map<string, string | undefined>
@@ -60,15 +59,13 @@ beforeEach(async () => {
   guest.prompts.length = 0
   guest.switches.length = 0
   counter = await startSpawnCounter({ guestPort: guest.port, version: VERSION })
-  runtime = createRuntime({ boxdBin: counter.boxdBin, opencodeBin: counter.opencodeBin })
+  runtime = createProvider({ boxdBin: counter.boxdBin, opencodeBin: counter.opencodeBin })
   root = tempRoot("boxd-c2-")
   project = join(root, "project")
   mkdirSync(project)
-  const complete = { state: "complete" as const, works: 0, blocked: [] }
-  ledger = ledgerPort(new Ledger(join(root, "ledger")), { state: () => complete, run: async () => complete })
+  ledger = ledgerPort(new Ledger(join(root, "ledger")))
   problems = new Map()
   budget = { calls: 0, refuse: false }
-  adopted = []
   snapshot = []
   hostSessions = new Map([["ses_coord", undefined]])
   const cost: CostPort = {
@@ -83,22 +80,11 @@ beforeEach(async () => {
       if (budget.refuse) throw boxdError("BUDGET_REACHED", "Today's machine cost reached the budget.", { today: 10, daily: 5, currency: "EUR" })
     },
   }
-  const importV0 = {
-    state: () => complete,
-    run: async () => complete,
-    readPhase: async () => {
-      throw new Error("not used")
-    },
-    adopt: async (target: ChangeTarget) => void adopted.push(target.name),
-    dispose: async () => {},
-  } satisfies ImportV0Port
   services = {
     options: parseOptions({}),
     hostVersion: VERSION,
     projectDirectory: project,
     ledgerRoot: join(root, "ledger"),
-    boxdBin: counter.boxdBin,
-    opencodeBin: counter.opencodeBin,
     clock: { now: () => new Date() },
     sessions: {
       get: (async (input: { sessionID: string }) => {
@@ -116,7 +102,6 @@ beforeEach(async () => {
     laptop: runtime.laptop,
     dispose: () => runtime.dispose(),
     ledger,
-    importV0,
     watch: { subscribe: () => () => {}, snapshot: () => ({ asOf: new Date().toISOString(), works: snapshot }), sessionGone: () => {} },
     cost,
   }
@@ -181,7 +166,6 @@ async function openWork(workId: string, over: Partial<WorkRecord> = {}): Promise
     laptopDirectory: project,
     guestDirectory: guestDir(workId),
     createdAt: new Date(Date.now() - 60_000).toISOString(),
-    guestHelper: "v1",
     ...over,
   }
   await ledger.update([workId], async () => ({ write: [value], value: undefined }), op())
@@ -368,13 +352,6 @@ describe("boxd_submit", () => {
     expect(counter.spawns()).toEqual([])
   })
 
-  test("a v0 guest is taken over once, by its first change", async () => {
-    await openWork("old", { guestHelper: "v0" })
-    guest.next("ses_old")
-    await runs.boxd_submit({ workId: "old", text: "Go." }, call())
-    expect(adopted).toEqual(["oc-old"])
-    expect((await record("old"))!.guestHelper).toBe("v1")
-  })
 })
 
 // ── boxd_harvest ──────────────────────────────────────────────────────────────────────────────────────────────────
@@ -572,23 +549,6 @@ describe("boxd_drop", () => {
     expect(await runs.boxd_drop({ workId: "detached" }, call())).toMatchObject({ state: "dropped" })
   })
 
-  test("refuses a v0-imported work whose laptop copy is unverified, with next boxd_harvest; a harvest verifies it, and drop then removes it (F1)", async () => {
-    const machine = await savedWork("imported")
-    await ledger.update(["imported"], async (current) => ({ write: [{ ...current.get("imported")!, importedFrom: "v0" as const, laptopCopy: "unverified" as const }], value: undefined }), op())
-    expect(ledger.saved((await record("imported"))!)).toBe("fresh")
-
-    const refused = await errorOf(runs.boxd_drop({ workId: "imported" }, call()))
-    expect([refused.code, refused.what]).toEqual(["NOT_SAVED", "The work was imported from an earlier release, and no harvest since has verified the copy of its transcript here."])
-    expect(refused.next).toStartWith("boxd_harvest(")
-    expect(machineState(machine).status).toBe("running")
-    expect(counter.fake.calls().some((line: string) => line.startsWith("machine remove "))).toBe(false)
-
-    const harvested = await runs.boxd_harvest({ workId: "imported" }, call())
-    expect(harvested).toMatchObject({ state: "saved", next: expect.stringMatching(/^Saved\. /) })
-    expect((await record("imported"))!.laptopCopy).toBeUndefined()
-    expect(await runs.boxd_drop({ workId: "imported" }, call())).toEqual({ state: "dropped", workId: "imported", machine: "oc-imported" })
-    expect(machineState(machine).status).toBe("destroyed")
-  })
 
   test("refuses when the guest's session moved on since the harvest, or has a new session; a new title alone does not refuse (M3, L-d)", async () => {
     const machine = await savedWork("moved")
@@ -722,10 +682,11 @@ describe("boxd_exec", () => {
 
   test("keeps stdout and stderr apart, keeps their tails, and redacts token shapes", async () => {
     await openWork("streams")
-    const answer = (await runs.boxd_exec({ workId: "streams", command: ["sh", "-c", "echo out; echo ghp_abcdefghijklmnop123456 >&2; exit 3"] }, call())) as { exitCode: number; stdout: string; stderr: string }
+    const TOKEN = "ghp_abcdefghijklmnop123456"
+    const answer = (await runs.boxd_exec({ workId: "streams", command: ["sh", "-c", `echo out; echo ${TOKEN} >&2; exit 3`] }, call())) as { exitCode: number; stdout: string; stderr: string }
     expect(answer).toMatchObject({ exitCode: 3, stdout: "out\n" })
     expect(answer.stderr).toContain("[redacted]")
-    expect(answer.stderr).not.toContain("ghp_abcdefghijklmnop123456")
+    expect(answer.stderr).not.toContain(TOKEN)
   })
 
   test("refuses a hibernated machine unless wake is true, and the wake is budget-checked", async () => {
@@ -793,11 +754,6 @@ describe("boxd_read", () => {
     expect((await errorOf(runs.boxd_read({ workId: "dark" }, call()))).code).toBe("NAME_INVALID")
   })
 
-  test("a v0 guest has no read action, and nothing is uploaded to it", async () => {
-    await openWork("legacy", { guestHelper: "v0" })
-    expect((await errorOf(runs.boxd_read({ workId: "legacy", log: "server" }, call()))).code).toBe("GUEST_FAILED")
-    expect(counter.spawns()).toEqual([])
-  })
 })
 
 // ── List forms, Stop, selectors and package E's actions ───────────────────────────────────────────────────────────
@@ -862,56 +818,6 @@ describe("selectors and dryRun (§C.4)", () => {
     expect((await record("done-saved"))!.slept).toBeUndefined()
   })
 
-  test("the review's probe: 120 imported, hibernated, saved works whose laptop copy is unverified; drop's dry run matches none, and harvest's select takes them all (F1)", async () => {
-    const at = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString()
-    const ids = Array.from({ length: 120 }, (_, index) => `imp-${String(index).padStart(3, "0")}`)
-    const records = ids.map((workId, index): WorkRecord => {
-      const machine = counter.fake.machine({ name: `oc-${workId}`, region: index % 2 ? "nyc" : "fra", status: "hibernated", labels: { role: "session", work: workId } })
-      return {
-        format: 1,
-        workId,
-        state: "open",
-        region: machine.region,
-        machine: `oc-${workId}`,
-        machineId: machine.id as MachineId,
-        size: "2x8",
-        image: { name: "opencode-golden", opencode: null },
-        laptopDirectory: project,
-        guestDirectory: guestDir(workId),
-        createdAt: at(600),
-        session: { rootId: sid(workId) },
-        lastSubmit: { at: at(300), delivery: "steer" },
-        saved: { at: at(200), complete: true, guestVersion: VERSION, sessions: [{ id: sid(workId), parentId: null, sha256: "0".repeat(64), bytes: 10, lastMessageId: "msg_1", messages: 2, updated: Date.parse(at(250)) }] },
-        run: { outcome: "completed", at: at(250) },
-        slept: { at: at(100), by: "boxd_sleep" },
-        guestHelper: "v0",
-        importedFrom: "v0",
-        laptopCopy: "unverified",
-      }
-    })
-    await ledger.update(ids, async () => ({ write: records, value: undefined }), op())
-    // A v1 work saved and asleep beside them still matches drop's select.
-    const own = await savedWork("own-saved")
-    await setMachine(own, (item) => void (item.status = "hibernated"))
-    counter.reset()
-
-    const context = call()
-    const matched = await selectors.boxd_drop("saved-finished", context)
-    expect(matched).toEqual(["own-saved"])
-    const dry = await runs.boxd_drop({ select: "saved-finished", dryRun: true }, { ...context, matched })
-    expect(dry).toMatchObject({ state: "done", dryRun: true, counts: { matched: 1 }, results: [{ workId: "own-saved" }] })
-    expect(await selectors.boxd_harvest("unsaved-finished", call())).toEqual(ids)
-    expect(counter.fake.calls().filter((line: string) => /^machine (remove|wake|resume|start)/.test(line))).toEqual([])
-  })
-
-  test("automation never drops: FleetActions.drop by automation is refused before anything runs", async () => {
-    const machine = await savedWork("never-auto")
-    const context = { by: "automation" as const, call: { callId: "automation_drop", source: "automation" as const } }
-    await expect(actions.drop(["never-auto"], context)).rejects.toThrow(/never run by automation/)
-    expect(machineState(machine).status).toBe("running")
-    expect((await record("never-auto"))!.state).toBe("open")
-  })
-
   test("a select run without the ids the registry matched and asserted throws, and resolves nothing again (L-3)", async () => {
     await savedWork("unasserted")
     counter.reset()
@@ -937,8 +843,6 @@ describe("selectors and dryRun (§C.4)", () => {
     expect(await actions.match("boxd_sleep", "finished", context)).toEqual(["auto", "auto-saved"])
     expect(await actions.sleep(["auto"], context)).toMatchObject({ state: "done", results: [{ state: "asleep", warning: "UNHARVESTED_SLEEP" }] })
     expect((await record("auto"))!.slept?.by).toBe("automation")
-    const cleanup = { by: "cleanup-command" as const, call: { callId: "cleanup_1", source: "cleanup-command" as const } }
-    expect(await actions.drop(["auto", "auto-saved"], cleanup)).toMatchObject({ state: "partial", results: [{ state: "refused", error: "NOT_SAVED" }, { state: "dropped" }] })
     expect(await actions.harvest(["auto"], context)).toMatchObject({ state: "done", results: [{ state: "saved" }] })
   })
 })

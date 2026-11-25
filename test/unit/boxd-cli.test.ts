@@ -8,9 +8,9 @@
 import { afterAll, afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { createBoxdCli, isChangeTarget } from "../../src/boxd/cli.js"
+import { createBoxdCli, isChangeTarget } from "../../src/provider/boxd/cli.js"
 import { BoxdError } from "../../src/errors.js"
-import { createRunner } from "../../src/exec/runner.js"
+import { createRunner } from "../../src/provider/runner.js"
 import type { BoxdPort, ChangeTarget, MachineId, OpContext, ReadTarget } from "../../src/ports.js"
 import { startFakeCli, type FakeCli } from "../host/fake-cli.js"
 
@@ -62,11 +62,11 @@ describe("reads", () => {
 
   test("get hands back a change target only for a machine whose labels show the plugin owns it", async () => {
     const ours = fake.machine({ name: "oc-a", region: "fra", labels: { role: "session", owner: "opencode-boxd", work: "a" } })
-    const v0 = fake.machine({ name: "oc-b", region: "fra", labels: { role: "session", work: "b" } })
+    fake.machine({ name: "oc-b", region: "fra", labels: { role: "session", work: "b" } })
     fake.machine({ name: "oc-c", region: "fra", labels: { role: "session", work: "other" } })
     fake.machine({ name: "oc-d", region: "fra" })
     expect((await boxd.get("fra", "oc-a", context())).owned).toMatchObject({ target: { region: "fra", name: "oc-a", machineId: ours.id }, status: "running" })
-    expect((await boxd.get("fra", "oc-b", context())).owned?.target).toMatchObject({ machineId: v0.id })
+    expect((await boxd.get("fra", "oc-b", context())).owned).toBeUndefined()
     expect((await boxd.get("fra", "oc-c", context())).owned).toBeUndefined()
     expect((await boxd.get("fra", "oc-d", context())).owned).toBeUndefined()
   })

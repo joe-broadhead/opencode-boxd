@@ -211,17 +211,6 @@ export const CODES = {
   // The ledger.
   LEDGER_FAILED: { state: "failed", message: "The ledger could not be read or written.", next: "Check that the ledger folder is writable, then restart OpenCode." },
   LEDGER_LOCKED: { state: "busy", message: "Another OpenCode process holds this work's lock.", next: "The same call again in a few seconds." },
-  LEDGER_IMPORTING: {
-    state: "busy",
-    message: "The v0 import is not complete yet, here or in another OpenCode process; progress says how far. No tool reads a partial ledger.",
-    next: "The same call again in a few seconds.",
-  },
-  IMPORT_V0_FAILED: {
-    state: "failed",
-    message:
-      "The v0 import could not run (the all-region listing failed, so no v1 ledger was made), or one v0 record could not be read (that work id is blocked; the v0 file is untouched).",
-    next: "Sign the boxd CLI in and call again; for one record, fix or remove that v0 file and restart OpenCode.",
-  },
 
   // Cost (design §C.5).
   BUDGET_REACHED: {
@@ -246,7 +235,7 @@ export type Code = keyof typeof CODES
  * refusal. Each has its own next step.
  */
 export const WARNINGS = {
-  /** A work was slept before its last prompt was saved; carried unchanged from v0 records. */
+  /** A work was slept before its last prompt was saved. */
   UNHARVESTED_SLEEP: {
     message: "The machine was hibernated before its last prompt was harvested.",
     next: "boxd_resume({ workId }), then boxd_harvest({ workId }).",

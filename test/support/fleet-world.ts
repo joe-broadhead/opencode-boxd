@@ -3,18 +3,17 @@
 import { cpSync } from "node:fs"
 import { join } from "node:path"
 import { createCost } from "../../src/cost/index.js"
-import { createImportV0 } from "../../src/import-v0.js"
 import { createLedger } from "../../src/ledger/index.js"
 import type { WorkRecord } from "../../src/ledger/types.js"
 import { parseOptions } from "../../src/options.js"
-import { createRuntime, type PluginRuntime } from "../../src/exec/runtime.js"
+import { createProvider, type PluginProvider } from "../../src/provider/index.js"
 import type { ChangeTarget, CallTag, LedgerPort, MachineId, MachineName, OpContext } from "../../src/ports.js"
 import { notBuilt } from "./not-built.js"
 import type { CoreServices, CostPort, FleetServices, SessionAccess } from "../../src/services.js"
 import { createWatch, type Watcher } from "../../src/watch.js"
 import { startFakeGuest, type FakeGuest } from "../host/fake-guest.js"
 import { startSpawnCounter, type CountingFake } from "../host/spawn-counter.js"
-import { fakeImportBoxd, removeRoot, tempRoot } from "./ledger-fakes.js"
+import { removeRoot, tempRoot } from "./temp.js"
 
 export interface Posted {
   readonly sessionID: string
@@ -54,7 +53,7 @@ export interface World {
   readonly root: string
   readonly guest: FakeGuest
   readonly counter: CountingFake
-  readonly runtime: PluginRuntime
+  readonly runtime: PluginProvider
   readonly ledger: LedgerPort
   readonly sessions: FakeSessions
   readonly services: FleetServices
@@ -83,7 +82,7 @@ export async function startWorld(
   const root = tempRoot("boxd-fleet-")
   const guest = startFakeGuest({ version: "2.2.6" })
   const counter = await startSpawnCounter({ guestPort: guest.port, ...(options.latencyMs ? { latencyMs: options.latencyMs } : {}) })
-  const runtime = createRuntime({ boxdBin: counter.boxdBin, opencodeBin: counter.opencodeBin })
+  const runtime = createProvider({ boxdBin: counter.boxdBin, opencodeBin: counter.opencodeBin })
   const sessions = new FakeSessions()
   const clock = { now: new Date("2026-11-16T10:00:00.000Z") }
   const host = {
@@ -91,17 +90,12 @@ export async function startWorld(
     hostVersion: "2.2.6",
     projectDirectory: root,
     ledgerRoot: root,
-    boxdBin: counter.boxdBin,
-    opencodeBin: counter.opencodeBin,
     clock: { now: () => clock.now },
     sessions: sessions.api,
     report: () => {},
   }
-  // An empty published ledger: the import finds no v0 records and publishes v1/ once.
-  const importV0 = createImportV0({ ...host, ...runtime, boxd: { ...runtime.boxd, ...fakeImportBoxd([]) } })
-  for (let index = 0; index < 200 && importV0.state().state !== "complete"; index++) await importV0.run({ call: { callId: "import", source: "import-v0" } })
-  const ledger = createLedger({ ...host, ...runtime, importV0 })
-  const core: CoreServices = { ...host, ...runtime, importV0, ledger }
+  const ledger = createLedger({ ...host, ...runtime })
+  const core: CoreServices = { ...host, ...runtime, ledger }
   const watcher = createWatch(core, { autoStart: false })
   const cost = options.cost === "real" ? createCost({ ...core, watch: watcher.watch }) : (options.cost ?? notBuilt<CostPort>("cost"))
   const services: FleetServices = { ...core, watch: watcher.watch, cost }
@@ -134,7 +128,6 @@ export async function startWorld(
       createdAt: at,
       session: { rootId: `ses_${workId.replace(/-/g, "_")}` },
       lastSubmit: { at, delivery: "steer" },
-      guestHelper: "v1",
     }
   }
 
@@ -209,7 +202,6 @@ export async function startWorld(
     async dispose() {
       await watcher.dispose()
       await ledger.dispose()
-      await importV0.dispose()
       await runtime.dispose()
       await counter.dispose()
       await guest.close()

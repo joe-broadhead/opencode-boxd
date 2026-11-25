@@ -1,7 +1,6 @@
 /**
  * The laptop ledger, format 1 (design §2.2): the record of every work, the event log and the index. Types and fixed
- * names only; the store, the cross-process locks, the index refresh, `events.jsonl` and the v0 import are package B's
- * (`src/ledger/*`, `src/import-v0.ts`).
+ * names only; the store, the cross-process locks, the index refresh and `events.jsonl` are package B's (`src/ledger/*`).
  *
  * Rules every writer keeps:
  *
@@ -23,28 +22,12 @@ export const LEDGER_FORMAT = 1
 
 /** The paths under `~/.local/share/opencode-boxd/`, relative to it. */
 export const LEDGER_PATHS = {
-  /** The published v1 ledger: present only once complete (published by one rename). */
   v1: "v1",
   works: "v1/works",
   events: "v1/events.jsonl",
   index: "v1/index.json",
-  importReport: "v1/import-v0.json",
-  /** The import's marker, present in every published `v1/`. */
-  complete: "v1/complete",
-  /** An import run's own staging folder: `v1.importing-<pid>-<rand>/`. */
-  stagingPrefix: "v1.importing-",
-  importLock: "import.lock",
   /** The automation owner's lock (design §C.3): only its holder auto-harvests, auto-sleeps and renews leases. */
   automationLock: "automation.lock",
-  /** The v0 ledger, read by the import and never changed, apart from the note below. */
-  v0Works: "works",
-  /**
-   * The note for people: a **folder** `works/README-MOVED-TO-v1/` holding only `README.md`. A folder, not a file:
-   * v0.0.6's `list()` reads `works/<entry>/work.json` for every entry, so a file there fails with ENOTDIR and breaks
-   * every v0 tool after a rollback, while a folder with no `work.json` is skipped. Never put a `work.json` in it.
-   */
-  v0Note: "works/README-MOVED-TO-v1",
-  v0NoteFile: "works/README-MOVED-TO-v1/README.md",
 } as const
 
 /** A work's files, relative to `v1/works/<workId>/`. */
@@ -128,13 +111,13 @@ export interface WorkRecord {
   readonly workId: string
   readonly state: "open" | "closed"
   readonly closed?: { readonly at: string; readonly how: "dropped" | "gone" | "reassigned"; readonly to?: string }
-  /** Null only for an imported work whose machine was found in no region (design §6.1 step 5). */
+  /** Null until a machine is recorded for the work. */
   readonly region: Region | null
   readonly machine: MachineName
-  /** Every change acts on it (design §4.1); null until a `get` answered for an imported work. */
+  /** Every change acts on it (design §4.1); null until a `get` answers. */
   readonly machineId: MachineId | null
   readonly size: Size
-  /** `opencode` is null for an imported v0 snapshot. */
+  /** `opencode` is null until a read has learned the guest's version. */
   readonly image: { readonly name: string; readonly opencode: string | null }
   readonly laptopDirectory: string
   readonly guestDirectory: string
@@ -165,11 +148,6 @@ export interface WorkRecord {
   /** The `leaseDays` delete-after timer, when the option set one: renewed at most once per 6 hours (§C.2). */
   readonly lease?: { readonly days: number; readonly renewedAt: string; readonly expiresAt: string }
   readonly warnings?: readonly WorkWarning[]
-  /** "v0" until a v1 helper adopted an imported work (§6.3). */
-  readonly guestHelper: "v1" | "v0"
-  readonly importedFrom?: "v0"
-  /** An imported work whose laptop transcript may be older than the stored export (F1); its next harvest fixes it. */
-  readonly laptopCopy?: "unverified"
 }
 
 /** One line of `index.json`: a cache, rebuilt from `work.json` when its `mtimeMs` changed. */
@@ -189,19 +167,11 @@ export interface LedgerIndex {
 /** One line of `events.jsonl`: exactly one `WorkEvent` (`src/ports.ts`), the one event shape, as JSON. */
 export type EventLine = WorkEvent
 
-/** `import-v0.json`: each v0 record's result, and the blocked ids. */
-export interface ImportReport {
-  readonly at: string
-  readonly works: number
-  readonly results: ReadonlyArray<{ readonly workId: string; readonly result: "imported" | "blocked"; readonly reason?: string }>
-  readonly blocked: readonly string[]
-}
-
 /** The `complete` marker's body. */
 export interface CompleteMarker {
   readonly at: string
   readonly works: number
   readonly blocked: number
-  /** sha256 of the sorted list of v0 input files. */
+  /** sha256 of the sorted list of input files. */
   readonly inputDigest: string
 }

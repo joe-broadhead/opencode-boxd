@@ -1,0 +1,197 @@
+{
+  "$comment": "Recorded from the plugin's own handlers: one local account, the works source's page and probe, the works list snapshot, the status answer, and the inputs each non-read method is refused with over RPC.",
+  "plugin": "@we-the-rebel-alliance/boxd-plugin",
+  "namespace": "Parallel OpenCode sessions on private boxd machines, one work per machine; harvest brings each transcript and git back here. Load the boxd-sessions skill first. Not for a helper on this machine: use the subagent tool.",
+  "accounts": {
+    "aliases": [
+      "default"
+    ]
+  },
+  "sources": {
+    "boxd.works": {
+      "cases": [
+        {
+          "name": "the works of this machine",
+          "input": {
+            "source": "works",
+            "since": "2026-11-16T00:00:00Z",
+            "limit": 10
+          },
+          "expect": "page",
+          "answer": {
+            "source": "works",
+            "account": "default",
+            "owner": {
+              "id": "os-user:ana@studio",
+              "label": "ana on studio"
+            },
+            "events": [
+              {
+                "source": "works",
+                "account": "default",
+                "external_id": "review-api:1",
+                "kind": "x-boxd/work",
+                "occurred_at": "2026-11-16T09:30:00.000Z",
+                "thread": "boxd-work:review-api",
+                "actors": [],
+                "title": "Work review-api: it is ready",
+                "text": "",
+                "url": null,
+                "labels": [
+                  "phase:ready"
+                ],
+                "hash": "sha256:800516442e020da43c00d60c3a3e6768eab09e9683a2579014b00b79a12f7118"
+              },
+              {
+                "source": "works",
+                "account": "default",
+                "external_id": "review-api:2",
+                "kind": "x-boxd/work",
+                "occurred_at": "2026-11-16T09:40:00.000Z",
+                "thread": "boxd-work:review-api",
+                "actors": [],
+                "title": "Work review-api: it is running a prompt",
+                "text": "",
+                "url": null,
+                "labels": [
+                  "phase:busy"
+                ],
+                "hash": "sha256:0af97c4d8d05fc485083b6fb97a04ba5f48ab78a6222f75023be74863b5838eb"
+              },
+              {
+                "source": "works",
+                "account": "default",
+                "external_id": "review-api:3",
+                "kind": "x-boxd/work",
+                "occurred_at": "2026-11-16T09:50:00.000Z",
+                "thread": "boxd-work:review-api",
+                "actors": [],
+                "title": "Work review-api: its run completed",
+                "text": "",
+                "url": null,
+                "labels": [
+                  "phase:idle",
+                  "outcome:completed"
+                ],
+                "hash": "sha256:a37ee68e8220e11cb06fe115d752a3555d8887f5b74e015996b42fbae4c2a63c"
+              }
+            ],
+            "cursor": "eyJ2IjoyLCJzIjoid29ya3MiLCJiIjoiNmYxYzlmZWFiOWIzNjgwYSIsInEiOjMsInQiOiIyMDI2LTExLTE2VDA5OjUwOjAwLjAwMFoifQ",
+            "more": false,
+            "trust": "untrusted",
+            "plugin": "@we-the-rebel-alliance/boxd-plugin",
+            "asOf": "2026-11-16T10:00:00.000Z"
+          }
+        }
+      ],
+      "probe": {
+        "answer": {
+          "source": "works",
+          "account": "default",
+          "owner": {
+            "id": "os-user:ana@studio",
+            "label": "ana on studio"
+          },
+          "trust": "untrusted"
+        }
+      }
+    },
+    "boxd.works.list": {
+      "probe": {
+        "answer": {
+          "source": "works",
+          "account": "default",
+          "owner": {
+            "id": "os-user:ana@studio",
+            "label": "ana on studio"
+          },
+          "trust": "untrusted"
+        }
+      },
+      "snapshot": {
+        "answer": {
+          "data": {
+            "items": [
+              {
+                "id": "review-api",
+                "text": "idle, completed",
+                "note": "fresh"
+              },
+              {
+                "id": "docs",
+                "text": "asleep",
+                "note": "stale"
+              }
+            ],
+            "editable": false
+          },
+          "asOf": "2026-11-16T10:00:00.000Z",
+          "trust": "untrusted"
+        }
+      }
+    }
+  },
+  "events": {
+    "emitted": [
+      "changed"
+    ],
+    "status": {
+      "name": "boxd",
+      "version": "0.0.0",
+      "host": {
+        "version": "2.4.1",
+        "range": ">=2.4.1 <2.5.0",
+        "tested": [
+          "2.4.1"
+        ]
+      },
+      "state": "ready",
+      "accounts": [
+        {
+          "alias": "default",
+          "state": "ready",
+          "owner": {
+            "id": "os-user:ana@studio",
+            "label": "ana on studio"
+          }
+        }
+      ],
+      "unguardedAgents": [],
+      "nextStep": null
+    }
+  },
+  "rpc": {
+    "inputs": {
+      "ensure": {
+        "workId": "review-api"
+      },
+      "submit": {
+        "workId": "review-api",
+        "text": "Check the tests."
+      },
+      "harvest": {
+        "workId": "review-api"
+      },
+      "sleep": {
+        "workId": "review-api"
+      },
+      "resume": {
+        "workId": "review-api"
+      },
+      "reassign": {
+        "from": "review-api",
+        "to": "review-api-2"
+      },
+      "golden": {},
+      "exec": {
+        "workId": "review-api",
+        "command": [
+          "true"
+        ]
+      },
+      "drop": {
+        "workId": "review-api"
+      }
+    }
+  }
+}

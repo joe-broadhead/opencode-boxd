@@ -2,7 +2,7 @@
 // against its row of the budget (design §4.4).
 import { describe, expect, test } from "bun:test"
 import { budgetProblems, SPAWN_BUDGETS, verbOf } from "../support/spawn-count.js"
-import { TOOLS } from "../../src/tools.js"
+import { manifest } from "../../src/manifest.js"
 
 describe("the spawn budget", () => {
   test("names each verb from its argv, flags and values aside", () => {
@@ -16,7 +16,7 @@ describe("the spawn budget", () => {
   })
 
   test("every row is a real tool, and each row's verbs add up to no more than its total", () => {
-    const ids = new Set(TOOLS.map((tool) => tool.id))
+    const ids = new Set(Object.keys(manifest.methods).map((method) => `boxd_${method}`))
     for (const row of SPAWN_BUDGETS) {
       expect(ids.has(row.call as never)).toBe(true)
       expect(Object.values(row.max).reduce((sum, value) => sum + (value ?? 0), 0)).toBeGreaterThanOrEqual(row.total)

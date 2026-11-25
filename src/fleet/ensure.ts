@@ -7,7 +7,7 @@
  *
  * - **Known work:** its recorded region and machine id. The name is resolved to the id (`checkOwned`) under the
  *   machine lock before anything changes. Asleep: woken (after the budget check). Another size: resized only when the
- *   session is idle (`SESSION_BUSY`). An imported v0 guest: adopted once. Then `setup`, an upgrade in place when the
+ *   session is idle (`SESSION_BUSY`). Then `setup`, an upgrade in place when the
  *   guest's OpenCode differs and the session is idle, and the wait.
  * - **No machine id yet:** one all-region listing taken in this call. **A work's machine is only ever made in one
  *   region:** the region the listing shows `oc-<id>` in, else the region the record holds (a create that may have
@@ -18,7 +18,7 @@
  *   converges. In a known region, one `machine get oc-<id>` under the name's machine lock comes first, and a machine
  *   that landed there is adopted. A create boxd refuses because the name is taken is adopted the same way. Since boxd
  *   keeps names unique per region, no path makes a second `oc-<id>`. Adoption needs the plugin's labels
- *   (`owner=opencode-boxd`, or v0's `role=session` with `work=<id>`), or `adopt: true`; two regions holding the name are
+ *   (`owner=opencode-boxd` with `work=<id>`), or `adopt: true`; two regions holding the name are
  *   `NOT_OURS`.
  * - **The VM agent** (#14 §6): `cannot connect to VM agent` on a machine this plugin created, resized or renamed in the
  *   last 10 minutes and has not rebooted since is rebooted once, and the step retried. Otherwise `AGENT_UNREACHABLE`,
@@ -58,7 +58,7 @@ import type { Phase, WorkRecord } from "../ledger/types.js"
 import { LEDGER_FORMAT } from "../ledger/types.js"
 import type { EnsureResult, ListResult } from "../results.js"
 import type { FleetServices } from "../services.js"
-import type { CallContext } from "../tools.js"
+import type { CallContext } from "../call.js"
 import { imageName, STILL_BUILDING, type Golden } from "./golden.js"
 import { runList, runOne, type ItemContext } from "./list.js"
 import { pause } from "./sessions-common.js"
@@ -201,7 +201,7 @@ export function roomFor(context: ItemContext, stepMs: number, state: "creating" 
 }
 
 /**
- * A machine carries the plugin's labels for this work: v1's owner or v0's `role=session`, with `work=<id>` (L-b). The
+ * A machine carries the plugin's labels for this work: the owner and `work=<id>` (L-b). The
  * same rule as the boxd port's `ownsLabels`, for the work being adopted.
  */
 export function carriesLabels(labels: Readonly<Record<string, string>>, workId: string): boolean {
@@ -299,9 +299,9 @@ export async function readTarget(machines: Machines, region: Region, name: Machi
 }
 
 /**
- * The work's session now, from one phase read (through v0's own helper for an unadopted v0 guest), made again once when
- * the read rule did not make it: `none` without a recorded session, `unknown` when it still could not be read. A read
- * that was not made is never taken for busy, missing or failed.
+ * The work's session now, from one phase read, made again once when the read rule did not make it: `none` without a
+ * recorded session, `unknown` when it still could not be read. A read that was not made is never taken for busy,
+ * missing or failed.
  */
 export async function sessionState(machines: Machines, record: WorkRecord, target: ChangeTarget, op: OpContext): Promise<"none" | "busy" | "idle" | "missing" | "unknown"> {
   const sessionId = record.session?.rootId
@@ -309,7 +309,7 @@ export async function sessionState(machines: Machines, record: WorkRecord, targe
   try {
     const answer = await readOnce(async () => {
       const read = await readTarget(machines, target.region, target.name, target.machineId, op)
-      return record.guestHelper === "v0" ? machines.services.importV0.readPhase(read, { sessionId }, op) : machines.services.guest.phase(read, { sessionId }, op)
+      return machines.services.guest.phase(read, { sessionId }, op)
     })
     return answer === undefined ? "unknown" : answer.phase
   } catch (error) {
@@ -412,7 +412,6 @@ export function newRecord(machines: Machines, input: { readonly workId: string; 
     ...(input.title ? { title: input.title } : {}),
     createdAt: at,
     touchedAt: at,
-    guestHelper: "v1",
   }
 }
 
@@ -590,7 +589,7 @@ async function resizeIfIdle(machines: Machines, record: WorkRecord, target: Chan
   machines.changed.set(target.machineId, machines.now())
 }
 
-/** After an adoption: the labels, a wake, a v0 guest's takeover and the size asked for, under the machine's lock. */
+/** After an adoption: the labels, a wake and the size asked for, under the machine's lock. */
 async function settleAdopted(machines: Machines, landed: Landed, record: WorkRecord, item: EnsureItem, context: ItemContext, op: OpContext): Promise<Converged> {
   const { boxd, runner } = machines.services
   const target = landed.owned.target
@@ -604,11 +603,9 @@ async function settleAdopted(machines: Machines, landed: Landed, record: WorkRec
       roomFor(context, TIMEOUTS.helperChange, "starting", "there is not enough time left in this call to wake the machine")
       await boxd.wake(target, op)
     }
-    // An imported work whose v0 guest still runs: its password is taken over once (§6.3).
-    if (record.guestHelper === "v0") await machines.services.importV0.adopt(target, op)
     if (resizeTo) await resizeIfIdle(machines, record, target, resizeTo, context, op)
   })
-  const settled = record.guestHelper === "v0" || resizeTo ? await patch(machines, item.workId, op, (now) => ({ ...(now ?? record), guestHelper: "v1", ...(resizeTo ? { size: resizeTo } : {}) })) : record
+  const settled = resizeTo ? await patch(machines, item.workId, op, (now) => ({ ...(now ?? record), size: resizeTo! })) : record
   return { target, record: settled, created: false, adopted: true, woke: asleep }
 }
 
@@ -725,18 +722,13 @@ async function known(machines: Machines, record: WorkRecord & { readonly region:
       await boxd.wake(target, op)
       woke = true
     }
-    // An imported work whose v0 guest still runs: its password is taken over once (§6.3).
-    if (record.guestHelper === "v0") await machines.services.importV0.adopt(target, op)
     // Another size: only for an idle session, because a resize reboots.
     const resized = item.size !== undefined && item.size !== record.size
     if (resized) await resizeIfIdle(machines, record, target, item.size!, context, op)
     return { target, woke, resized }
   })
   // The ledger after the machine's lock is given back: work locks are always taken first (§4.1).
-  let current: WorkRecord = record
-  if (record.guestHelper === "v0" || checked.resized) {
-    current = await patch(machines, record.workId, op, (now) => ({ ...(now ?? record), guestHelper: "v1", ...(checked.resized ? { size: item.size! } : {}) }))
-  }
+  const current: WorkRecord = checked.resized ? await patch(machines, record.workId, op, (now) => ({ ...(now ?? record), size: item.size! })) : record
   return { target: checked.target, record: current, created: false, adopted: false, woke: checked.woke }
 }
 
@@ -776,7 +768,7 @@ export async function ensureOne(machines: Machines, item: EnsureItem, context: I
   if (record?.state === "open" && finishRename) record = await finishRename(record, op)
   const open = record?.state === "open" ? record : undefined
   const notify = call.via === "model" ? await rootSession(machines, call.sessionID) : undefined
-  if (open && open.region === null) throw boxdError("MACHINE_GONE", `${open.machine} was found in no region when the v0 ledger was imported.`)
+  if (open && open.region === null) throw boxdError("MACHINE_GONE", `${open.machine} was found in no region.`)
 
   let converged: Converged | undefined
   try {
@@ -890,7 +882,6 @@ export async function runEnsure(machines: Machines, input: Record<string, unknow
   const settings = listSettings(machines)
   if (input.works === undefined) {
     const item = await parseItem(input, services, "ready")
-    await services.ledger.ready(opOf(call, "boxd_ensure"))
     return runOne({ signal: call.signal, ...settings }, (context) => ensureOne(machines, item, context, call, finishRename))
   }
   const works = input.works
@@ -905,7 +896,6 @@ export async function runEnsure(machines: Machines, input: Record<string, unknow
     if (seen.has(item.workId)) throw invalid(`works[${index}].workId`, `works[${index}].workId "${item.workId}" appears twice; name each work once.`)
     seen.add(item.workId)
   }
-  await services.ledger.ready(opOf(call, "boxd_ensure"))
   return runList(
     items,
     {

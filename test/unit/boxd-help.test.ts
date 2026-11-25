@@ -26,7 +26,7 @@ import {
   snapshotsArgs,
   usageArgs,
   wakeArgs,
-} from "../../src/boxd/argv.js"
+} from "../../src/provider/boxd/argv.js"
 import type { ChangeTarget, CreateBuilder, CreateWork } from "../../src/ports.js"
 
 const fixture = JSON.parse(readFileSync(fileURLToPath(new URL("../fixtures/boxd-cli-help.json", import.meta.url)), "utf8")) as {
@@ -132,7 +132,7 @@ describe("the external boxd CLI's recorded help", () => {
     expect(fixture.provenance.sha256).toMatch(/^[0-9a-f]{64}$/)
     expect(fixture.provenance.surface).toContain("not the in-VM CLI")
     expect(Object.keys(HELP)).toHaveLength(19)
-    const source = readFileSync(fileURLToPath(new URL("../../src/boxd/argv.ts", import.meta.url)), "utf8")
+    const source = readFileSync(fileURLToPath(new URL("../../src/provider/boxd/argv.ts", import.meta.url)), "utf8")
     expect(source).toContain("laptop boxd CLI (0.3.8)")
   })
 

@@ -80,7 +80,7 @@ export function fakeWatch(works: WorkSnapshot[] = []): FakeWatch {
 }
 
 export interface ActionCall {
-  readonly method: "match" | "harvest" | "sleep" | "drop"
+  readonly method: "match" | "harvest" | "sleep"
   readonly ids: readonly string[]
   readonly context: ActionContext
   readonly select?: string
@@ -91,7 +91,7 @@ export interface FakeActions extends FleetActions {
   readonly calls: ActionCall[]
   matches: Partial<Record<keyof SelectorValues, readonly string[]>>
   /** Per method, the ids whose item is refused with this code. */
-  failing: Partial<Record<"harvest" | "sleep" | "drop", Record<string, string>>>
+  failing: Partial<Record<"harvest" | "sleep", Record<string, string>>>
 }
 
 function envelope<T extends { state: string }>(ids: readonly string[], success: (id: string) => T, failing: Record<string, string> = {}): ListResult<T> {
@@ -122,10 +122,6 @@ export function fakeActions(): FakeActions {
       calls.push({ method: "sleep", ids, context })
       return envelope(ids, (workId) => ({ state: "asleep", workId, machine: `oc-${workId}`, region: "fra", next: "" }) as never, actions.failing.sleep)
     },
-    async drop(ids, context) {
-      calls.push({ method: "drop", ids, context })
-      return envelope(ids, (workId) => ({ state: "dropped", workId, machine: `oc-${workId}` }) as never, actions.failing.drop)
-    },
   }
   return actions
 }
@@ -144,7 +140,6 @@ export function record(workId: string, over: Partial<WorkRecord> = {}): WorkReco
     guestDirectory: `/home/boxd/work/${workId}`,
     createdAt: minutesAgo(T0, 600),
     session: { rootId: `ses_${workId}`, notify: "ses_coord" },
-    guestHelper: "v1",
     ...over,
   }
 }
@@ -261,13 +256,6 @@ export function fakes(input: { options?: Record<string, unknown>; works?: WorkSn
         const answer = phase(workOf(target.name))
         if (answer.throws) throw boxdError("GUEST_UNRESPONSIVE")
         return answer
-      },
-    },
-    importV0: {
-      state: () => ({ state: "complete", works: records.size, blocked: [] }),
-      readPhase: async (target: { name: string }) => {
-        calls.push(`v0-phase ${target.name}`)
-        return phase(workOf(target.name))
       },
     },
     ledger: {

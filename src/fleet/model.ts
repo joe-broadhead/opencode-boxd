@@ -5,7 +5,7 @@
  * The rules it keeps:
  *
  * - **A read never wakes a machine.** A guest read runs only for a machine that a listing at most 2 s old shows
- *   `running` (the runner enforces it), uses only the helper already on the machine (a v0 guest through v0's own
+ *   `running` (the runner enforces it), uses only the helper already on the machine
  *   `phase`), and never uploads anything or writes the ledger.
  * - **Status and the watcher never read an idle guest:** an inbound exec resets the machine's idle clock, so polling an
  *   idle or ready work would keep it awake. Only `busy`, `starting`, `creating` or unknown works are read, and a work a
@@ -127,11 +127,10 @@ export function readTarget(record: WorkRecord, listing: Listing): ReadTarget {
 }
 
 /**
- * One guest read: the v1 helper's `phase`, or v0's own for an imported work its first change has not adopted yet.
- * Under the read rule; never uploads anything and never writes the ledger.
+ * One guest read: the helper's `phase`, under the read rule; never uploads anything and never writes the ledger.
  */
 export function readGuest(
-  services: Pick<CoreServices, "guest" | "importV0">,
+  services: Pick<CoreServices, "guest">,
   record: WorkRecord,
   listing: Listing,
   input: { readonly tail?: number; readonly full?: boolean },
@@ -139,8 +138,6 @@ export function readGuest(
 ): Promise<PhaseAnswer> {
   const sessionId = record.session!.rootId!
   const target = readTarget(record, listing)
-  // A v0 guest's `phase` has no `full` field: it answers with its own cap either way.
-  if (record.guestHelper === "v0") return services.importV0.readPhase(target, { sessionId, ...(input.full ? { full: true } : {}) }, context)
   return services.guest.phase(target, { sessionId, ...(input.tail ? { tail: input.tail } : {}), ...(input.full ? { full: true } : {}) }, context)
 }
 

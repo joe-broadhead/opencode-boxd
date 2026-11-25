@@ -3,7 +3,7 @@
 // The steady-state sequences below are the port calls each row of SPAWN_BUDGETS is built from: every one fits its row,
 // and every tool's owner asserts its own row against its run.
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
-import { createRuntime, type PluginRuntime } from "../../src/exec/runtime.js"
+import { createProvider, type PluginProvider } from "../../src/provider/index.js"
 import { CAPS, type ChangeTarget, type MachineId, type OpContext, type ReadTarget } from "../../src/ports.js"
 import { startFakeGuest, type FakeGuest } from "../host/fake-guest.js"
 import { startSpawnCounter, type CountingFake } from "../host/spawn-counter.js"
@@ -12,7 +12,7 @@ import { budgetProblems, SPAWN_BUDGETS, type BudgetRow } from "../support/spawn-
 
 let guestServer: FakeGuest
 let counter: CountingFake
-let runtime: PluginRuntime
+let runtime: PluginProvider
 const DIRECTORY = "/home/boxd/work/review-api"
 
 beforeAll(() => {
@@ -27,7 +27,7 @@ beforeEach(async () => {
   await runtime?.dispose()
   await counter?.dispose()
   counter = await startSpawnCounter({ guestPort: guestServer.port })
-  runtime = createRuntime({ boxdBin: counter.boxdBin, opencodeBin: counter.opencodeBin })
+  runtime = createProvider({ boxdBin: counter.boxdBin, opencodeBin: counter.opencodeBin })
 })
 
 const context = (callId: string, source: `boxd_${string}` = "boxd_submit"): OpContext => ({ call: { callId, source } })

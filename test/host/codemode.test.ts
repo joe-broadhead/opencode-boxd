@@ -2,12 +2,10 @@
 // model reaches a plugin's tools. A read and a change run by default, a change asks under an agent that asks and runs
 // nothing when declined, and an unknown method is denied. The tools RPC path is `boxd.test.ts`; this file is the other half of that proof.
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test"
-import { startHost, until } from "./harness.js"
+import { cleanup, startHost, until } from "./harness.js"
 
 setDefaultTimeout(120_000)
-afterAll(async () => {
-  // The harness's `close` stops the mock model and the fake guest; the temp root is removed by the isolate module.
-})
+afterAll(cleanup)
 
 /** One turn in its own session: the program runs inside Code Mode, and the model's answer is returned. */
 async function code(host: Awaited<ReturnType<typeof startHost>>, program: string, expected: string, permissions?: { action: string; resource: string; effect: "allow" | "ask" | "deny" }[]) {
@@ -26,7 +24,7 @@ describe("the Code Mode path", () => {
   test("a read and a change run inside a program by default, and a change asks under an agent that asks", async () => {
     const host = await startHost({ model: true })
     try {
-      const read = await code(host, 'const r = await tools.boxd.status({}); return "status:" + r.state', "status:ok")
+      const read = await code(host, 'const r = await tools.boxd.status({}); return "status:" + r.state', "status:ready")
       expect(read.text).toContain("after-tool:")
       expect(await host.probe().permission.list({ sessionID: read.sessionID })).toEqual([])
 
@@ -37,12 +35,12 @@ describe("the Code Mode path", () => {
 
       // An agent that asks for the tool still asks, and a decline runs nothing.
       const since = Date.now()
-      const asking = await host.client.session.create({ location: { directory: host.location.directory }, agent: "build", permissions: [{ action: "boxd_drop", resource: "*", effect: "ask" }] })
+      const asking = await host.client.session.create({ location: { directory: host.location.directory }, agent: "build", permissions: [{ action: "boxd.drop", resource: "*", effect: "ask" }] })
       await host.client.session.prompt({
         sessionID: asking.id,
         text: `[[mock:tool:execute:${JSON.stringify({ code: 'return await tools.boxd.drop({ workId: "review-api" })' })}]]`,
       })
-      const question = await until("the drop asks", async () => (await host.probe().permission.list({ sessionID: asking.id })).find((entry) => entry.action === "boxd_drop"), 30_000)
+      const question = await until("the drop asks", async () => (await host.probe().permission.list({ sessionID: asking.id })).find((entry) => entry.action === "boxd.drop"), 30_000)
       await host.probe().permission.reply({ sessionID: asking.id, requestID: question.id, decision: "reject", message: "not now" })
       await until("the turn ends", async () => (await host.client.session.get({ sessionID: asking.id })).outcome !== undefined, 30_000)
       // The declined drop ran nothing. The watcher's own reads of the work ensure made are its, tagged as such.

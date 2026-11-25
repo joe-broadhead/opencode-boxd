@@ -1,9 +1,9 @@
 // Review of #23, round 2: the read refresh in the runner and the CLI port (M-1, no stampede, Stop and dispose during a refresh, a refresh whose listing fails).
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { createBoxdCli } from "../../src/boxd/cli.js"
+import { createBoxdCli } from "../../src/provider/boxd/cli.js"
 import { BoxdError } from "../../src/errors.js"
-import { createRunner } from "../../src/exec/runner.js"
+import { createRunner } from "../../src/provider/runner.js"
 import { notRead } from "../../src/fleet/model.js"
 import type { BoxdPort, OpContext, ReadTarget } from "../../src/ports.js"
 import { startFakeCli, type FakeCli } from "../host/fake-cli.js"

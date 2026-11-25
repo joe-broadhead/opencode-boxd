@@ -2,10 +2,11 @@
 
 This package is MIT licensed; see LICENSE.
 
-## @we-the-rebel-alliance/source-contract 0.3.0
+## @we-the-rebel-alliance/plugin-contract 0.0.0
 
-`dist/index.js` bundles **source-contract** (https://github.com/we-the-rebel-alliance/source-contract), the plugin
-family's tools RPC transport, events and cursor modules, MIT, Copyright (c) 2026 Joe Broadhead. Its licence:
+`dist/index.js` bundles **plugin-contract** (https://github.com/we-the-rebel-alliance/plugin-contract), the plugin
+family's manifest, accounts, access, register, events, cursor and bus modules, MIT, Copyright (c) 2026 Joe Broadhead. Its
+licence:
 
 ```
 MIT License

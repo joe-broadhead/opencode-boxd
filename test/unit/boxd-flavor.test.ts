@@ -5,8 +5,8 @@ import { afterAll, describe, expect, test } from "bun:test"
 import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { assertLaptopCli as check } from "../../src/boxd/flavor.js"
-import { createRunner } from "../../src/exec/runner.js"
+import { assertLaptopCli as check } from "../../src/provider/boxd/flavor.js"
+import { createRunner } from "../../src/provider/runner.js"
 import { BoxdError } from "../../src/errors.js"
 
 const runner = createRunner()

@@ -6,29 +6,25 @@ import { createHash } from "node:crypto"
 import { existsSync, linkSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, utimesSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { BoxdError } from "../../src/errors.js"
-import { runImport } from "../../src/import-v0.js"
 import { acquireLock, readOwner } from "../../src/ledger/lock.js"
 import { Ledger, savedState, withoutUserinfo } from "../../src/ledger/store.js"
 import type { WorkRecord } from "../../src/ledger/types.js"
 import type { MachineId } from "../../src/ports.js"
-import { fakeImportBoxd, removeRoot, tempRoot } from "../support/ledger-fakes.js"
+import { removeRoot, tempRoot } from "../support/ledger-fakes.js"
 
 const roots: string[] = []
 afterEach(() => {
   for (const root of roots.splice(0)) removeRoot(root)
 })
 
-/** A published, empty v1 ledger: the import's own path with no v0 ledger. */
+/** An empty ledger root. */
 async function emptyLedger(options: ConstructorParameters<typeof Ledger>[1] = {}): Promise<Ledger> {
   const root = tempRoot("boxd-ledger-")
   roots.push(root)
-  expect(await runImport({ root, boxd: fakeImportBoxd() })).toEqual({ state: "published" })
   return new Ledger(root, options)
 }
 
 /**
- * Every test that calls `emptyLedger` runs a full `runImport`, with its fsyncs: bun's 5 s default is too short on a
- * loaded machine, and a test cut short leaves its import running into the root `afterEach` deletes.
  */
 const LEDGER_TEST_TIMEOUT_MS = 30_000
 
@@ -44,7 +40,7 @@ const record = (workId: string, over: Partial<WorkRecord> = {}): WorkRecord => (
   laptopDirectory: "/work/projects/api",
   guestDirectory: `/home/boxd/work/${workId}`,
   createdAt: "2026-11-15T10:00:00.000Z",
-  guestHelper: "v1",
+
   ...over,
 })
 
@@ -71,21 +67,13 @@ describe("saved is computed", () => {
   })
 
   test("a remote loses its userinfo, and only that", () => {
-    expect(withoutUserinfo("https://x-access-token:ghs_abc@github.com/o/r.git")).toBe("https://github.com/o/r.git")
+    expect(withoutUserinfo(`https://x-access-token:ghs_abc@github.com/o/r.git`)).toBe("https://github.com/o/r.git")
     expect(withoutUserinfo("https://github.com/o/r")).toBe("https://github.com/o/r")
     expect(withoutUserinfo("git@github.com:o/r.git")).toBe("git@github.com:o/r.git")
   })
 })
 
 describe("records", () => {
-  test("the import publishes v1 whole, with its complete marker", async () => {
-    const root = tempRoot("boxd-ledger-")
-    roots.push(root)
-    await runImport({ root, boxd: fakeImportBoxd() })
-    expect(existsSync(join(root, "v1", "complete"))).toBe(true)
-    expect(new Ledger(root).dir).toBe(join(root, "v1"))
-  }, LEDGER_TEST_TIMEOUT_MS)
-
   test("mutate writes a new file each time, 0600 in 0700 folders, and leaves no temp file", async () => {
     const ledger = await emptyLedger()
     const first = await ledger.mutate("alpha", () => record("alpha"))

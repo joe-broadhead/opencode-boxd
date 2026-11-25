@@ -262,9 +262,8 @@ export function automation(services: CostServices, seam: AutomationSeam = {}): A
     await Promise.all(Array.from({ length: ACT_CONCURRENCY }, worker))
   }
 
-  /** The open records holding a lease; none until the v0 import is complete, so the loop never starts the import. */
+  /** The open records holding a lease. */
   async function leased(): Promise<readonly WorkRecord[]> {
-    if (services.importV0.state().state !== "complete") return []
     try {
       return (await ledger.list({}, op(tag()))).filter((record) => record.lease !== undefined)
     } catch {

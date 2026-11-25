@@ -1,10 +1,10 @@
 // Review of #20 cases re-run on #23's runner: M-1 (fresh), M-2 joined flights, M-3 flight order, and stdout drain.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { spawn } from "node:child_process"
-import { createBoxdCli } from "../../src/boxd/cli.js"
+import { createBoxdCli } from "../../src/provider/boxd/cli.js"
 import { BoxdError } from "../../src/errors.js"
-import { createRunner, type Launch } from "../../src/exec/runner.js"
-import { createGuestPort } from "../../src/guest/port.js"
+import { createRunner, type Launch } from "../../src/provider/runner.js"
+import { createGuestPort } from "../../src/provider/guest/port.js"
 import type { BoxdPort, MachineId, OpContext, ReadTarget } from "../../src/ports.js"
 import { startFakeCli, type FakeCli } from "../host/fake-cli.js"
 

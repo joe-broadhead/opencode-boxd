@@ -58,9 +58,8 @@ describe("boxd_status", () => {
   test("300 works in trouble: at most limit items, more, and repeated causes folded into groups, under 15 KB", async () => {
     const authFailed = Array.from({ length: 140 }, (_, index) => idle(`auth-${index}`, { run: { outcome: "failed", error: "provider.auth: 401 Unauthorized", at: "2026-11-16T10:00:01.000Z" } }))
     const unsaved = Array.from({ length: 100 }, (_, index) => idle(`unsaved-${index}`))
-    const copies = Array.from({ length: 3 }, (_, index) => idle(`copy-${index}`, { laptopCopy: "unverified", saved: { at: "2026-11-16T10:00:02.000Z", complete: true, guestVersion: "2.2.6", sessions: [] } }))
     const asleep = Array.from({ length: 57 }, (_, index) => ({ workId: `asleep-${index}`, status: "hibernated" }))
-    await world.bulk([...authFailed, ...unsaved, ...copies, ...asleep])
+    await world.bulk([...authFailed, ...unsaved, ...asleep])
     const answer = await status({ limit: 25 })
     expect(answer.groups.map(({ why, error, count }) => ({ why, error, count }))).toEqual([
       { why: "failed", error: "GUEST_AUTH_FAILED", count: 140 },
@@ -68,12 +67,11 @@ describe("boxd_status", () => {
       { why: "asleep-unsaved", error: undefined, count: 57 },
     ])
     expect(answer.groups[0]!.workIds).toHaveLength(10)
-    expect(answer.attention!.map((item) => item.why)).toEqual(["laptop-copy", "laptop-copy", "laptop-copy"])
+    expect(answer.attention!.map((item) => item.why)).toEqual([])
     expect(answer.fleet.authFailures?.count).toBe(140)
     expect(JSON.stringify(answer).length).toBeLessThan(15 * 1024)
-    const narrow = await status({ limit: 2, workIds: copies.map((item) => item.workId) })
+    const narrow = await status({ limit: 2, workIds: unsaved.slice(0, 3).map((item) => item.workId) })
     expect(narrow.attention).toHaveLength(2)
-    expect(narrow.more).toBe(1)
   }, 60_000)
 
   test("since answers only the works that changed; an unknown cursor is expired and answers the full view", async () => {

@@ -1,5 +1,5 @@
 /**
- * What cost, automation and the hooks share inside one plugin instance (design §C.3, §C.4): whether this process is the
+ * What cost and automation share inside one plugin instance (design §C.3, §C.4): whether this process is the
  * automation owner, and the works whose automatic harvest or sleep failed. (A coordinator that was deleted or archived
  * is the watcher's `WorkSnapshot.orphaned`.) Kept beside the `CostPort` it belongs to, so the contract in `src/services.ts` stays as it is. Package E
  * owns this file.

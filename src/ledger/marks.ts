@@ -1,7 +1,7 @@
 /**
  * A stored transcript's own marks, read by streaming the file: its session id, its parent, `info.time.updated`, the
- * message count and the last message's id. These are what drop compares with the guest (design §3.9), and what the v0
- * import reads from each stored export (§6.2). The file is scanned in chunks and never parsed whole, so a large
+ * message count and the last message's id. These are what drop compares with the guest (design §3.9). The file is
+ * scanned in chunks and never parsed whole, so a large
  * transcript never sits on the server's thread (design §4.3, F8).
  */
 import { createReadStream } from "node:fs"

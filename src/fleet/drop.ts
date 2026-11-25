@@ -2,7 +2,7 @@
  * `boxd_drop` (design §3.9): destroy a work's machine, by its recorded id, and close the work. Destructive, so its
  * guard runs per work whatever asked (a tool call, a `select`, or `/boxd-cleanup`), and nothing automatic calls it.
  *
- * The guard: `saved: fresh` here, and for a v0-imported work a copy a v1 harvest verified; then, in one `git` exec on
+ * The guard: `saved: fresh` here; then, in one `git` exec on
  * the guest, a known git tree, no commit on a local ref or HEAD that no remote ref contains (`UNPUSHED`, #39), and a
  * count that must be known (`UNPUSHED_UNKNOWN`) rather than guessed, every
  * untracked or ignored path harvested at the digest the guest still has, tracked changes stored as the same patch, and
@@ -21,7 +21,7 @@ import type { WorkRecord } from "../ledger/types.js"
 import { digestFile } from "../paths.js"
 import { REGIONS, type ChangeTarget, type GitAnswer, type MachineId, type MachineName, type OpContext } from "../ports.js"
 import type { DropResult } from "../results.js"
-import { adoptIfV0, assertWorkIdInput, nowIso, openRecord, optionalBoolean, type WorkContext, type Services } from "./sessions-common.js"
+import { assertWorkIdInput, nowIso, openRecord, optionalBoolean, type WorkContext, type Services } from "./sessions-common.js"
 
 /** The most paths a refusal names for a program (`paths`); `count` has them all. */
 const LISTED_PATHS = 20
@@ -49,7 +49,6 @@ export async function dropWork(services: Services, item: DropItem, context: Work
       let machineId = record.machineId
       let gone = record.region === null
       if (!gone && machineId === null) {
-        // An imported work whose `get` failed at import: the name is resolved now, or the gone rule decides.
         try {
           machineId = (await services.boxd.get(record.region!, record.machine, op)).id
         } catch (error) {
@@ -102,11 +101,6 @@ async function guard(services: Services, record: WorkRecord, target: ChangeTarge
   if (saved !== "fresh") {
     throw boxdError("NOT_SAVED", saved === "none" ? "This laptop has no harvest of the work." : "The last harvest is older than the last prompt, or was partial.")
   }
-  if (record.laptopCopy === "unverified") {
-    // F1: v0 may have left an older transcript in this laptop's OpenCode; only a v1 harvest replaces and verifies it.
-    throw boxdError("NOT_SAVED", "The work was imported from an earlier release, and no harvest since has verified the copy of its transcript here.")
-  }
-  await adoptIfV0(services, record, target, op)
   const rootId = record.session?.rootId
   const git = await services.guest.git(target, { directory: record.guestDirectory, ...(rootId ? { rootId } : {}) }, op)
   if (rootId) sessionsMatch(record, git)

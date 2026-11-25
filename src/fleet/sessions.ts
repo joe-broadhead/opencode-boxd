@@ -8,9 +8,9 @@
  */
 import type { Phase, SavedState, WorkRecord } from "../ledger/types.js"
 import type { MachineRow, OpContext, RunOutcome } from "../ports.js"
-import type { DropResult, HarvestResult, ListResult, SelectMatch, SleepResult } from "../results.js"
+import type { HarvestResult, ListResult, SelectMatch, SleepResult } from "../results.js"
 import type { ActionContext, FleetActions, FleetServices, Run, SelectorValues, Selectors, ToolRuns } from "../services.js"
-import type { CallContext } from "../tools.js"
+import type { CallContext } from "../call.js"
 import { checkDrop, dropWork } from "./drop.js"
 import { checkExec, execWork } from "./exec.js"
 import { checkHarvest, harvestWork } from "./harvest.js"
@@ -128,8 +128,6 @@ export function sessionRuns(services: FleetServices): { readonly runs: SessionRu
       listOf("boxd_harvest", workIds.map((workId) => checkHarvest({ workId })), context.signal, (item) => harvestWork(services, item, actionContext(context))),
     sleep: (workIds, context): Promise<ListResult<SleepResult>> =>
       listOf("boxd_sleep", workIds.map((workId) => sleepCheck({ workId })), context.signal, (item) => sleepWork(services, item, actionContext(context))),
-    drop: (workIds, context): Promise<ListResult<DropResult>> =>
-      listOf("boxd_drop", workIds.map((workId) => checkDrop({ workId })), context.signal, (item) => dropWork(services, item, actionContext(context))),
   }
 
   return { runs, selectors, actions }
@@ -191,9 +189,8 @@ function ledgerPhase(record: WorkRecord): Phase {
 const MATCHERS: { readonly [K in SelectTool]: (select: SelectorValues[K], facts: Facts) => boolean } = {
   boxd_sleep: (select, facts) =>
     select === "idle" ? facts.row?.status === "running" && (facts.phase === "idle" || facts.phase === "ready") && !facts.needsInput : facts.row?.status === "running" && facts.phase === "idle" && facts.outcome !== null,
-  // A v0-imported work whose laptop copy no v1 harvest has verified (F1) is harvested, and never dropped, until one has.
-  boxd_harvest: (_select, facts) => (facts.phase === "idle" || facts.phase === "asleep") && facts.outcome !== null && (facts.saved !== "fresh" || facts.record.laptopCopy === "unverified"),
-  boxd_drop: (_select, facts) => (facts.phase === "idle" || facts.phase === "asleep") && facts.saved === "fresh" && facts.outcome === "completed" && facts.record.laptopCopy !== "unverified",
+  boxd_harvest: (_select, facts) => (facts.phase === "idle" || facts.phase === "asleep") && facts.outcome !== null && facts.saved !== "fresh",
+  boxd_drop: (_select, facts) => (facts.phase === "idle" || facts.phase === "asleep") && facts.saved === "fresh" && facts.outcome === "completed",
 }
 
 /** The ids a selector matches in these facts, in work-id order. */

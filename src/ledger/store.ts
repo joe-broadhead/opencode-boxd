@@ -76,7 +76,7 @@ export interface LedgerOptions {
   readonly lock?: { readonly heartbeatMs?: number; readonly staleMs?: number }
 }
 
-/** The published ledger. The import gate opens it only once its `complete` marker exists: a partial ledger is never read. */
+/** The laptop ledger. Every record is written copy-on-write under its work lock. */
 export class Ledger {
   /** `~/.local/share/opencode-boxd`. */
   readonly root: string
@@ -376,7 +376,7 @@ export class Ledger {
     }
   }
 
-  /** Copies a file into the work's folder, copy-on-write and fenced: the blocked-id rerun of the v0 import. */
+  /** Copies a file into the work's folder, copy-on-write and fenced. */
   async copyIn(workId: string, source: string, relative: LedgerFile): Promise<Digest> {
     const target = this.ledgerFile(workId, relative)
     return this.withWork(workId, () => copyFileAtomic(source, target, () => this.fence(workId)))

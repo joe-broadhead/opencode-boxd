@@ -22,7 +22,7 @@
 import { BoxdError } from "../errors.js"
 import { CALL_BOUND_MS, CAPS, LIST_ITEM_CONCURRENCY, POLL_INTERVAL_MS, type MachineName } from "../ports.js"
 import type { ListResult, Refusal } from "../results.js"
-import { refusal } from "../tools.js"
+import { refusalResult } from "../call.js"
 
 /** What an item's run gets beside its input. */
 export interface ItemContext {
@@ -242,7 +242,7 @@ export async function runList<I, T extends { readonly state: string }>(
     try {
       return { kind: "result", value: await run(item, context) }
     } catch (error) {
-      if (error instanceof BoxdError) return { kind: "refusal", value: refusal(error, { workId }) }
+      if (error instanceof BoxdError) return { kind: "refusal", value: refusalResult(error, { workId }) }
       return { kind: "bug", error }
     } finally {
       if (held) slots.release()

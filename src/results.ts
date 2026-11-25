@@ -3,7 +3,6 @@
  * object with a `state`. A refusal or failure keeps a `state` beside `error`, `message` and `next`, plus the facts its
  * code carries. A list call returns `{ state, counts, results }`, one single-work result per item, in input order.
  */
-import type { EventsListResult } from "@we-the-rebel-alliance/source-contract/events"
 import type { Code, ErrorState, WarningCode } from "./errors.js"
 import type { Phase, SavedState } from "./ledger/types.js"
 import type { RegionChoice } from "./options.js"
@@ -25,8 +24,6 @@ export interface ErrorFacts {
   readonly limit?: ReadonlyArray<{ readonly region: Region; readonly limit: number; readonly inUse: number; readonly free: number }>
   /** The regions the option `regions` allows, when a placement was refused (`REGION_NOT_ALLOWED`). */
   readonly allowed?: readonly Region[]
-  /** How far the v0 import is (`LEDGER_IMPORTING`). */
-  readonly progress?: { readonly done: number; readonly total: number }
   /** A write was in flight when the call was stopped (`CANCELLED`). */
   readonly uncertain?: boolean
   /** A list item the bound reached before it started. */
@@ -75,7 +72,6 @@ export type AttentionReason =
   | "stuck"
   | "orphan"
   | "version"
-  | "laptop-copy"
   | "idle-running"
   | "needs-input"
   | "lease-expiring"
@@ -90,7 +86,6 @@ export const ATTENTION_ORDER: readonly AttentionReason[] = [
   "stuck",
   "orphan",
   "version",
-  "laptop-copy",
   "idle-running",
   "needs-input",
   "lease-expiring",
@@ -139,7 +134,7 @@ export interface CostBlock {
   /** The org's billing currency, from boxd. */
   readonly currency: string
   readonly perHour: { readonly estimate: number; readonly running: number; readonly asleep: number; readonly basis: string; readonly ratesSource: "usage" | "public" }
-  /** boxd machine cost only: model spend is not measured in v0.1.0. */
+  /** boxd machine cost only: model spend is not measured. */
   readonly today: {
     /** `manage usage` since local midnight, boxd's estimate until `complete`; it lags up to 25 minutes. */
     readonly machines: number | null
@@ -206,10 +201,7 @@ export interface StatusResult {
     readonly children: { readonly now: number; readonly cap: number }
     readonly notices?: ReadonlyArray<{ readonly session: string; readonly dropped: string; readonly at: string }>
     readonly watcher?: string
-    /** Session hooks a host refused to register (§C.6). */
-    readonly hooks?: readonly string[]
   }
-  readonly import?: { readonly works: number; readonly errors: number }
 }
 
 export interface JobResult extends WorkFields {
@@ -341,13 +333,8 @@ export interface ListResult<T extends { readonly state: string }> {
   readonly dryRun?: boolean
 }
 
-/** A page from `boxd_events_list`: the source's page, with the one `state` every tool answer carries. */
-export type EventsToolResult = EventsListResult & { readonly state: "ok" }
-
 /** Each tool's success result, by tool id: the registry's output contract. */
 export interface ToolResults {
-  readonly boxd_status: StatusResult
-  readonly boxd_events_list: EventsToolResult
   readonly boxd_job: JobResult
   readonly boxd_read: ReadResult
   readonly boxd_ensure: EnsureResult

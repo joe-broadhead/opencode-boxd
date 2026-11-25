@@ -10,7 +10,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { PassThrough, Writable } from "node:stream"
 import { BoxdError } from "../../src/errors.js"
-import { createRunner, type ChildLike, type Launch } from "../../src/exec/runner.js"
+import { createRunner, type ChildLike, type Launch } from "../../src/provider/runner.js"
 import { stillRunning } from "../support/processes.js"
 import { CALL_TAG_ENV, CAPS, type MachineId, type OpContext, type Pool, type ReadTarget } from "../../src/ports.js"
 
