@@ -83,9 +83,11 @@ describe("the plugin on a stock host", () => {
         { region: "fra", limit: 300, inUse: 0, free: 300 },
         { region: "nyc", limit: 300, inUse: 0, free: 300 },
       ])
+      expect(status).toMatchObject({ region: "auto", allowedRegions: ["fra", "nyc"] })
 
       const text = await statusText(host, await session(host))
       expect(text).toContain("- Connection: connected (the ledger is readable; 0 open works)")
+      expect(text).toContain('- Regions: default "auto"; allowed "fra", "nyc"')
       expect(text).toContain("- Cost: ")
       expect(text.split("\n").filter((line) => line.startsWith("- Next step:"))).toHaveLength(1)
     } finally {
@@ -317,6 +319,37 @@ describe("the access option (OD-29)", () => {
 
   test("an unknown option stops the plugin with OPTIONS_INVALID", async () => {
     await expect(startHost({ options: { regionn: "fra" } })).rejects.toThrow(/OPTIONS_INVALID/)
+  })
+})
+
+describe("the regions option on a stock host", () => {
+  test("status shows the allowlist, and boxd_ensure refuses a region outside it without a create", async () => {
+    const host = await startHost({ options: { regions: ["fra"], region: "auto" } })
+    try {
+      const status = await statusThroughRpc(host)
+      expect(status).toMatchObject({ region: "auto", allowedRegions: ["fra"] })
+      const text = await statusText(host, await session(host))
+      expect(text).toContain('- Regions: default "auto"; allowed "fra"')
+
+      const build = await session(host)
+      const refused = (await rpcCall(host, "boxd_ensure", { sessionID: build, input: { workId: "abroad", region: "nyc" } })).output as Record<string, any>
+      expect(refused).toMatchObject({ state: "refused", error: "REGION_NOT_ALLOWED", region: "nyc", allowed: ["fra"] })
+      expect(host.boxd.calls().filter((call) => call.startsWith("machine new"))).toEqual([])
+      expect(host.boxd.machines().filter((machine) => machine.region === "nyc")).toEqual([])
+
+      // A read filter is not placement: status may still name a region outside the allowlist.
+      expect((await rpcCall(host, "boxd_status", { sessionID: build, input: { region: "nyc" } })).output).toMatchObject({ state: "ok" })
+      // Its own golden builds are pinned too.
+      expect((await rpcCall(host, "boxd_golden", { sessionID: build, input: { region: "nyc" } })).output).toMatchObject({ state: "refused", error: "REGION_NOT_ALLOWED" })
+
+      // auto places the work in the allowed region, and the fake CLI records the create there.
+      const made = (await rpcCall(host, "boxd_ensure", { sessionID: build, input: { workId: "pinned", wait: "none" } })).output as Record<string, any>
+      expect(made).toMatchObject({ region: "fra", created: true })
+      expect(host.boxd.calls().find((call) => call.startsWith("machine new oc-pinned"))).toContain("--region fra")
+      expect(host.boxd.machines().filter((machine) => machine.region === "nyc")).toEqual([])
+    } finally {
+      await host.close()
+    }
   })
 })
 

@@ -13,6 +13,8 @@ export function fleet(overrides: Partial<StatusResult> = {}): StatusResult {
     cursor: 0,
     asOf: "2026-11-16T10:00:00.000Z",
     counts: {},
+    region: "auto",
+    allowedRegions: ["fra", "nyc"],
     regions: [
       { region: "fra", limit: 300, inUse: 2, free: 298, keepFree: 0, works: 0 },
       { region: "nyc", limit: 300, inUse: 0, free: 300, keepFree: 0, works: 0 },
@@ -38,6 +40,8 @@ export function statusFacts(overrides: Partial<StatusFacts> = {}): StatusFacts {
     host: HOST,
     image: "oc-golden-2.2.6-2x8",
     buildGolden: "auto",
+    region: "auto",
+    allowedRegions: ["fra", "nyc"],
     guestVersion: "2.2.6",
     notices: "wake",
     fleet: fleet(),

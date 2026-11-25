@@ -23,6 +23,9 @@ export interface Options {
   readonly allowedRoots: readonly string[]
   /** Run on an OpenCode version outside the supported range, with a warning in status. */
   readonly allowUntestedHost: boolean
+  /** The regions a new work, or a golden image, may be placed in; every region by default. */
+  readonly regions: readonly Region[]
+  /** Where a new work goes within `regions`: `auto` (the most free), or one region. */
   readonly region: RegionChoice
   /** Machines `auto` leaves free in each region, for the organisation's CI pool. */
   readonly keepFree: Readonly<Record<Region, number>>
@@ -58,6 +61,7 @@ export const DEFAULT_OPTIONS: Options = {
   access: "all",
   allowedRoots: [],
   allowUntestedHost: false,
+  regions: [...REGIONS],
   region: "auto",
   keepFree: { fra: 0, nyc: 0 },
   size: "2x8",
@@ -88,7 +92,8 @@ const ACCEPTED = {
   access: '"all" (the default), "ask-changes" or "read-only"',
   allowedRoots: "an array of absolute folders here that work files may use besides the project (empty by default)",
   allowUntestedHost: "true or false (the default)",
-  region: `${quoted(REGION_CHOICES)} ("auto" by default)`,
+  regions: `a non-empty array of unique regions from ${quoted(REGIONS)}, where new works and golden images may be placed (${quoted(REGIONS)} by default)`,
+  region: `${quoted(REGION_CHOICES)} ("auto" by default); a named region must be one of "regions"`,
   keepFree: `an object with a whole number of machines, 0 or more, for each of ${quoted(REGIONS)} (0 by default)`,
   size: `${quoted(SIZES)} ("2x8" by default)`,
   git: "an object with a non-empty name and an email address",
@@ -140,7 +145,21 @@ export function parseOptions(raw: unknown): Options {
   const access = oneOf("access", input.access, ACCESS_VALUES)
   const { allowedRoots } = input
   if (!Array.isArray(allowedRoots) || allowedRoots.some((root) => typeof root !== "string" || !root.startsWith("/"))) throw wrong("allowedRoots", allowedRoots)
+  const { regions: listed } = input
+  if (!Array.isArray(listed)) throw wrong("regions", listed)
+  if (listed.length === 0) throw invalid(`The option "regions" must list at least one region, from ${quoted(REGIONS)}`)
+  const chosen: Region[] = []
+  for (const value of listed) {
+    if (typeof value !== "string" || !(REGIONS as readonly string[]).includes(value)) throw invalid(`The option "regions" lists ${describe(value)}, which is not a region; list ${quoted(REGIONS)}`)
+    if (chosen.includes(value as Region)) throw invalid(`The option "regions" lists "${value}" twice; name each region once`)
+    chosen.push(value as Region)
+  }
+  // The one order every pick, message and status row uses: boxd's own region order, not the order the option wrote them.
+  const regions = REGIONS.filter((region) => chosen.includes(region))
   const region = oneOf("region", input.region, REGION_CHOICES)
+  if (region !== "auto" && !regions.includes(region)) {
+    throw invalid(`The option "region" is "${region}", which the option "regions" does not list (${quoted(regions)}); add "${region}" to "regions" or set "region" to one it lists`)
+  }
   const size = oneOf("size", input.size, SIZES)
 
   const { keepFree } = input
@@ -179,6 +198,7 @@ export function parseOptions(raw: unknown): Options {
     access,
     allowedRoots: allowedRoots as readonly string[],
     allowUntestedHost: input.allowUntestedHost as boolean,
+    regions,
     region,
     keepFree: free as Record<Region, number>,
     size,

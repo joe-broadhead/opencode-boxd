@@ -18,6 +18,10 @@ plugin-contract v0.
   synthetic notice. The one session hook is the end-of-turn idle check.
 - `boxd_drop` refuses with `UNPUSHED` while a local branch holds a commit that no remote ref contains, so a machine is
   never destroyed with commits that were never pushed. The harvest reports the count and the next step.
+- The option `regions` is the placement allowlist: with `"regions": ["fra"]` no new machine or golden image is made
+  elsewhere, `auto` chooses only there, and any other region answers `REGION_NOT_ALLOWED`. It pins new placement only;
+  a work that already lives in another region still converges, resumes and drops there, and `/boxd-status` shows the
+  allowlist beside the default region.
 - Text that meant the machine running OpenCode says "here" rather than "the laptop", since OpenCode may run on a boxd
   machine.
 - The old design and legacy-declaration docs are gone; the README and `AGENTS.md` describe the current direction. The full

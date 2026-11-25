@@ -6,6 +6,7 @@
 import type { EventsListResult } from "@we-the-rebel-alliance/source-contract/events"
 import type { Code, ErrorState, WarningCode } from "./errors.js"
 import type { Phase, SavedState } from "./ledger/types.js"
+import type { RegionChoice } from "./options.js"
 import type { MachineId, MachineName, Region, RunOutcome, SecretInfo, Size } from "./ports.js"
 
 /** The facts a refusal can carry beside its code (§3, §5). Plain JSON values only. */
@@ -22,6 +23,8 @@ export interface ErrorFacts {
   readonly unknown?: boolean
   /** Per region (`MACHINE_LIMIT`). */
   readonly limit?: ReadonlyArray<{ readonly region: Region; readonly limit: number; readonly inUse: number; readonly free: number }>
+  /** The regions the option `regions` allows, when a placement was refused (`REGION_NOT_ALLOWED`). */
+  readonly allowed?: readonly Region[]
   /** How far the v0 import is (`LEDGER_IMPORTING`). */
   readonly progress?: { readonly done: number; readonly total: number }
   /** A write was in flight when the call was stopped (`CANCELLED`). */
@@ -174,6 +177,10 @@ export interface StatusResult {
   readonly cursor: number
   readonly asOf: string
   readonly counts: Readonly<Partial<Record<Phase, number>>>
+  /** The default for a new work: `auto`, or the region the option `region` names. */
+  readonly region: RegionChoice
+  /** The option `regions`: a new work or golden image is placed only in these. */
+  readonly allowedRegions: readonly Region[]
   readonly regions: ReadonlyArray<{ readonly region: Region; readonly limit: number; readonly inUse: number; readonly free: number; readonly keepFree: number; readonly works: number }>
   /** Works sharing a reason and a code, folded when more than 3. */
   readonly groups: ReadonlyArray<{ readonly why: AttentionReason; readonly error?: Code; readonly count: number; readonly workIds: readonly string[]; readonly next: string }>

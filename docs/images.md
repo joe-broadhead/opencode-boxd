@@ -7,10 +7,13 @@ plugin builds these images itself, from a fixed recipe; you do not build one by 
 - `boxd_ensure` builds the image it needs when it is missing (option `buildGolden: "auto"`, the default). A build for
   one region and size is shared by every call that needs it at once. With `buildGolden: "never"`, `boxd_ensure` answers
   `GOLDEN_MISSING` and names the `boxd_golden` call instead.
-- `boxd_golden` builds, lists or prunes images. With no input it builds the default size in every region that lacks
-  one; `region`, `size` and `from` choose; an image that exists answers `present` unless `rebuild: true`.
+- `boxd_golden` builds, lists or prunes images. With no input it builds the default size in every region the option
+  `regions` allows that lacks one; `region`, `size` and `from` choose; an image that exists answers `present` unless
+  `rebuild: true`. A region outside `regions` answers `REGION_NOT_ALLOWED`, and no builder is made there.
 - The size comes from the image, so a work machine never needs a resize, and nothing reboots after a create.
-- Snapshots do not cross regions, so each region has its own images.
+- Snapshots do not cross regions, so each region has its own images. The plugin builds only in the regions the option
+  `regions` allows; an image that already exists in another region is left alone, and a work that lives there keeps
+  using it.
 
 ## The recipe
 
