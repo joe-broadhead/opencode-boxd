@@ -26,7 +26,7 @@ All options go in the plugin entry in `opencode.json`, and every one is optional
 | `goldenBase` | `"stock"` | What a golden build starts from: stock boxd, or a snapshot name in the region it lives in. A base that holds model credentials is refused; [images.md](images.md) gives the recipe. |
 | `goldenSetup` | none | An absolute path here to a script, inside the project or an allowed root, run on every golden builder before the scrub. |
 | `buildGolden` | `"auto"` | `"auto"` builds a missing golden image when a work needs it; `"never"` answers `GOLDEN_MISSING` instead. |
-| `notices` | `"wake"` | How a work's change reaches its coordinator: `"wake"` posts a notice that starts an idle coordinator's turn, `"queue"` posts one that waits for its next turn, `"off"` posts nothing. At most one notice a minute per coordinator. |
+| `notices` | `"wake"` | How a work's change reaches its coordinator: `"wake"` posts a notice that starts an idle coordinator's turn, `"queue"` posts one that waits for its next turn, `"off"` posts nothing. At most one notice a minute per coordinator, and each change at most once. |
 | `autoHibernateMinutes` | `120` | The platform's idle bound, set on every new work machine at creation (30 to 1440). Auto-suspend is always off: standby bills resident memory too. |
 | `automation` | `"auto"` | Whether the plugin harvests and then hibernates finished and orphaned works by itself: `"auto"` is on at `access: "all"` and off otherwise; `"on"` is your standing consent at every access level; `"off"` is never. It never drops anything. Consent is per OpenCode process, and the ledger is one per machine: a process at `access: "all"` (or with `automation: "on"`) also harvests and hibernates the finished works another project created at `"ask-changes"`. |
 | `autoSleepMinutes` | `10` | Idle minutes before automation harvests and hibernates a finished work; `0` turns that step off. Setting it is not consent. |
@@ -53,6 +53,8 @@ does not start unless `allowUntestedHost` is `true`.
 - `works/<work id>/patch.diff` and `untracked/`: the tracked changes and the untracked files at the last harvest.
 - `events.jsonl`: every phase change, one line each, with a sequence number that is `boxd_status`'s cursor. It keeps at
   least the last 5 MiB.
+- `notice-cursors.json`: per coordinator session, the highest event sequence a delivered notice covered, so a restart
+  or a replay never announces the same change twice. Session ids and numbers only.
 - `index.json`: a cache of each record's state, region, phase and `saved`, refreshed by modification time.
 
 Every write is a temp file beside the old one, verified, fsynced and renamed over it; nothing is written in place, so a

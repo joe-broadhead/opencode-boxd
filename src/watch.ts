@@ -11,7 +11,8 @@
  *   idle, ready or asleep guest, because an inbound exec resets the machine's idle clock, and it never uploads anything.
  *   The sweep runs every 60 s, or every twice its own duration when that is longer.
  * - **A phase change is appended** to `events.jsonl` (`unreachable` after two failed reads in a row, `gone` after two
- *   listings in a row without the machine), handed to every subscriber in `seq` order, and queued as a notice.
+ *   listings in a row without the machine), handed to every subscriber in `seq` order, and queued as a notice; the
+ *   queue's durable cursor per coordinator (`src/notice-cursors.ts`) keeps each change to one delivery.
  * - **It stops** sweeping when nothing is busy, when the plugin is disposed, and after three failed sweeps in a row
  *   (`boxd_status`'s `health.watcher` says why; the next status call starts it again).
  */
@@ -20,6 +21,7 @@ import { join } from "node:path"
 import { BoxdError } from "./errors.js"
 import { LEDGER_PATHS, type Phase, type WorkRecord } from "./ledger/types.js"
 import { base, codeOf, notRead, observe, observeFailure, outcomeOf, phaseOf, promptedSince, readGuest, recordPhase, STATUS_TEXT_LIMIT, wantsRead, type Observed } from "./fleet/model.js"
+import { FileNoticeCursors } from "./notice-cursors.js"
 import { checkTarget, NoticeQueue, type DroppedNotice, type GoneCause } from "./notices.js"
 import type { FleetSnapshot, FleetWatch, Listing, OpContext, WorkEvent, WorkSnapshot } from "./ports.js"
 import { TIMEOUTS } from "./ports.js"
@@ -108,7 +110,9 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
     mode: () => core.options.notices,
     sessions: core.sessions,
     now,
+    cursors: new FileNoticeCursors(core.ledgerRoot),
     unsubscribe: (session, cause) => orphan(session, cause),
+    report: (problem) => core.report("notices", problem),
   })
 
   /**

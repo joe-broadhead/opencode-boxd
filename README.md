@@ -58,9 +58,9 @@ returns `{ state, counts, results }` with the results in input order. Read a too
 2. `boxd_submit` admits a prompt and returns; it does not wait for the model. `mode` decides how it reaches a running
    session: `"steer"` (the default) at its next step boundary, `"queue"` after the run, `"interrupt"` at once. `files`
    copies files from here into the work tree first.
-3. A **notice** says when works change: one line in the coordinating session, naming the works and the cursor to read
-   the rest with. `boxd_job` reads one work or many live, `boxd_status` the whole fleet, and `boxd_events_list` the
-   ledger's phase changes as events.
+3. A **notice** says when works change, once per change per coordinating session: one line naming the works and the
+   cursor to read the rest with. `boxd_job` reads one work or many live, `boxd_status` the whole fleet, and
+   `boxd_events_list` the ledger's phase changes as events.
 4. `boxd_harvest` brings the work's transcript and git back here. Each session is copied, verified, and then replaces
    this machine's copy; the last good copy is never overwritten before the new one is verified. `files` brings outputs
    back, and `git` reports a commit no remote ref holds.
@@ -235,7 +235,7 @@ and notices, health, tools, agents without the default rules, the OpenCode versi
 - **Model credentials stay out of images.** A guest gets its key from a sealed, host-bound `boxd env` secret, or from a
   person's `opencode auth login` on that one machine.
 - **Notices wake the coordinator.** With `notices: "wake"` (the default), an idle coordinator starts a turn at most
-  once a minute; `"queue"` waits for its next turn instead.
+  once a minute, and each change is announced once even across a restart; `"queue"` waits for its next turn instead.
 
 ## Uninstall
 

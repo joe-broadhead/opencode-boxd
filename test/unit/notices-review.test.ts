@@ -5,17 +5,21 @@
 import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test"
 import { CODES } from "../../src/errors.js"
 import { PHASES } from "../../src/ledger/types.js"
+import { FileNoticeCursors } from "../../src/notice-cursors.js"
 import { isNotFound, NoticeQueue, noticeItem, noticeText } from "../../src/notices.js"
 import type { WorkEvent } from "../../src/ports.js"
 import { startWorld, type World } from "../support/fleet-world.js"
+import { removeRoot, tempRoot } from "../support/ledger-fakes.js"
 
 // A world is real processes on a shared machine: give each test room beyond bun's 5 s default.
 setDefaultTimeout(30_000)
 
 let world: World | undefined
+const roots: string[] = []
 afterEach(async () => {
   await world?.dispose()
   world = undefined
+  for (const root of roots.splice(0)) removeRoot(root)
 })
 const later = (w: World, ms: number) => void (w.clock.now = new Date(w.clock.now.getTime() + ms))
 const event = (seq: number, workId: string, over: Partial<WorkEvent> = {}): WorkEvent => ({ seq, at: "2026-11-16T10:00:00.000Z", workId, from: "busy", to: "idle", outcome: "completed", ...over })
@@ -48,9 +52,12 @@ describe("the rate limit and the session check", () => {
     const posted: Array<{ at: number; text: string }> = []
     const unsubscribed: string[] = []
     const clock = { at: 1_000_000 }
+    const root = tempRoot("boxd-notices-")
+    roots.push(root)
     const notices = new NoticeQueue({
       mode: () => "wake",
       now: () => new Date(clock.at),
+      cursors: new FileNoticeCursors(root),
       unsubscribe: async (session) => void unsubscribed.push(session),
       sessions: {
         get: get as never,
