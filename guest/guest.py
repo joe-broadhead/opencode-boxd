@@ -26,6 +26,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 PROTOCOL = 1
@@ -65,6 +66,8 @@ TEXT_LIMIT = 2000
 FULL_TEXT_LIMIT = 64000
 TAIL_LIMIT = 20
 LIST_LIMIT = 1000
+# The server pages /api/session (50 a page by default). A work's whole tree is every page; this is the sane cap.
+SESSION_PAGES = 100
 
 
 class GuestError(Exception):
@@ -148,8 +151,8 @@ def read_password():
         return ""
 
 
-def http(request, method, path, body=None, timeout=5):
-    """One call to the guest server. The password goes to the guest's own server only."""
+def http_raw(request, method, path, body=None, timeout=5):
+    """One call to the guest server, with the whole JSON envelope (its `data` and, for a list, its `cursor`)."""
     base = base_url(request)
     data = None if body is None else json.dumps(body).encode()
     headers = {"content-type": "application/json", "accept": "application/json"}
@@ -164,9 +167,14 @@ def http(request, method, path, body=None, timeout=5):
     except (urllib.error.URLError, OSError) as error:
         raise GuestError("GUEST_SERVER_DOWN", str(getattr(error, "reason", error))[:200]) from None
     try:
-        payload = json.loads(raw) if raw else None
+        return json.loads(raw) if raw else None
     except ValueError:
         return None
+
+
+def http(request, method, path, body=None, timeout=5):
+    """One call to the guest server, unwrapped to its `data`."""
+    payload = http_raw(request, method, path, body, timeout)
     return payload["data"] if isinstance(payload, dict) and "data" in payload else payload
 
 
@@ -310,17 +318,39 @@ def session_info(request, sid):
 
 
 def all_sessions(request):
-    listed = http(request, "GET", "/api/session") or []
-    return [item for item in listed if isinstance(item, dict) and isinstance(item.get("id"), str)]
+    """Every session the server lists, newest first, following `cursor.next` through every page.
+
+    The server pages `/api/session` (50 a page by default), so one page is not a work's tree. A page that fails, or a
+    listing that repeats a cursor or outlives SESSION_PAGES, fails the read: a partial tree must never read as idle.
+    """
+    listed, seen, cursors = [], set(), set()
+    path = "/api/session"
+    for _ in range(SESSION_PAGES):
+        payload = http_raw(request, "GET", path)
+        if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+            fail("GUEST_FAILED", "the session listing did not answer a data list")
+        for item in payload["data"]:
+            if isinstance(item, dict) and isinstance(item.get("id"), str) and item["id"] not in seen:
+                seen.add(item["id"])
+                listed.append(item)
+        cursor = payload.get("cursor")
+        following = cursor.get("next") if isinstance(cursor, dict) else None
+        if following is None:
+            return listed
+        if not isinstance(following, str) or not following or following in cursors:
+            fail("GUEST_FAILED", "the session listing did not answer a usable cursor")
+        cursors.add(following)
+        path = "/api/session?" + urllib.parse.urlencode({"cursor": following})
+    fail("GUEST_FAILED", f"the session listing did not finish within {SESSION_PAGES} pages")
 
 
-def tree(request, root_id):
-    """The root session and every session under it, parents first."""
-    listed = all_sessions(request)
+def tree(request, root_id, listed=None):
+    """The root session and every session under it, parents first. `listed` reuses the /api/session pages already read."""
+    sessions = all_sessions(request) if listed is None else listed
     children = {}
-    for item in listed:
+    for item in sessions:
         children.setdefault(item.get("parentID"), []).append(item["id"])
-    if not any(item["id"] == root_id for item in listed) and session_info(request, root_id) is None:
+    if not any(item["id"] == root_id for item in sessions) and session_info(request, root_id) is None:
         fail("SESSION_MISSING", root_id)
     order, queue = [], [(root_id, None)]
     while queue:
@@ -370,6 +400,12 @@ def newest(request, sid, kind, limit=1):
 
 def stamp(value):
     return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def session_times(session):
+    """One session's own time stamps: the last change, and when its current or last run started and ended."""
+    time_info = session.get("time") if isinstance(session, dict) and isinstance(session.get("time"), dict) else {}
+    return [stamp(time_info.get(key)) for key in ("updated", "busy", "idle")]
 
 
 def iso(ms):
@@ -449,6 +485,7 @@ def action_serve(request):
 
 
 def action_phase(request):
+    """The work's phase over its whole session tree; lastText, tail, waiting and needsInput are the root coordinator's."""
     sid = session_id(request.get("sessionId"))
     full = request.get("full")
     if full is not None and not isinstance(full, bool):
@@ -462,10 +499,31 @@ def action_phase(request):
     tail = request.get("tail")
     tail = min(tail, TAIL_LIMIT) if isinstance(tail, int) and not isinstance(tail, bool) and tail > 0 else 0
     active = http(request, "GET", "/api/session/active") or {}
+    # The work is its root coordinator's tree: the root and every subagent session under it. The /api/session pages
+    # carry each session's time stamps; every page is read, and a listing that cannot finish fails the read, so a busy
+    # tree can never read as idle.
+    listed = all_sessions(request)
+    if not any(item["id"] == sid for item in listed):
+        listed = listed + [info]
+    sessions = tree(request, sid, listed)
+    records = {item["id"]: item for item in listed}
+    records[sid] = info
     time_info = info.get("time") if isinstance(info.get("time"), dict) else {}
     answer = {**base, "waiting": waiting(request, sid)}
-    stamps = [stamp(time_info.get(key)) for key in ("updated", "busy", "idle")]
-    if sid in active:
+    stamps = []
+    present = []
+    for tree_id, _parent in sessions:
+        record = records.get(tree_id)
+        times = session_times(record)
+        if tree_id != sid and not any(value is not None for value in times):
+            # A listing without times leaves one read per such session; one gone in between is skipped, not failed.
+            record = session_info(request, tree_id)
+            if not isinstance(record, dict):
+                continue
+            times = session_times(record)
+        present.append(tree_id)
+        stamps += times
+    if any(tree_id in active for tree_id in present):
         answer["phase"] = "busy"
     else:
         answer["phase"] = "idle"
@@ -484,6 +542,7 @@ def action_phase(request):
                 failure = last[0].get("error")
                 if answer["outcome"] == "failed" and isinstance(failure, dict):
                     answer["error"] = {"type": str(failure.get("type") or "error")[:60], "message": str(failure.get("message") or "")[:400]}
+    # The coordinator's own report stays the root's: lastText, tail, waiting and needsInput are not widened to children.
     try:
         recent = newest(request, sid, "assistant", max(1, tail))
     except GuestError:
