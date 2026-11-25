@@ -14,7 +14,8 @@ plugin builds these images itself, from a fixed recipe; you do not build one by 
 - The size comes from the image, so a work machine never needs a resize, and nothing reboots after a create.
 - Snapshots do not cross regions, so each region has its own images. The plugin builds new images only in the regions
   the option `regions` allows; an image that already exists in another region is left alone, and a work that lives there
-  keeps using it. A resume of such a work rebuilds its image there when it is missing, as part of recovery.
+  keeps using it. A resume of such a work rebuilds its image there when it is missing, as part of recovery (unless
+  `buildGolden` is `"never"`, which refuses as everywhere).
 
 ## The recipe
 

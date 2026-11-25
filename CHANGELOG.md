@@ -21,8 +21,8 @@ plugin-contract v0.
 - The option `regions` is the placement allowlist: with `"regions": ["fra"]` no new work's machine or new golden image
   is made elsewhere, `auto` chooses only there, and any other region answers `REGION_NOT_ALLOWED`. It pins new placement
   only; a work that already lives in another region still converges, resumes and drops there, a resume rebuilds it in
-  its own region (image included) and a prune covers every region. `/boxd-status` shows the allowlist beside the
-  default region.
+  its own region (image included, unless `buildGolden` is "never") and a prune covers every region. `/boxd-status`
+  shows the allowlist beside the default region.
 - Text that meant the machine running OpenCode says "here" rather than "the laptop", since OpenCode may run on a boxd
   machine.
 - The old design and legacy-declaration docs are gone; the README and `AGENTS.md` describe the current direction. The full
