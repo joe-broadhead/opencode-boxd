@@ -120,6 +120,32 @@ describe("package C2 on a stock host", () => {
     }
   })
 
+  test("boxd_job full returns a long final report whole through the host, while the default cuts it to 300", async () => {
+    const host = await startHost()
+    try {
+      const build = await session(host)
+      const ledger = await ledgerOf(host, build)
+      await seedWork(host, ledger, "report")
+      host.guest.setVersion(HOST_VERSION)
+      host.guest.next("ses_report")
+      expect((await rpcCall(host, "boxd_submit", { workId: "report", text: "Write the report." }, build)).output).toMatchObject({ state: "admitted", sessionId: "ses_report" })
+      const rows = Array.from({ length: 10 }, (_, index) => `| row ${index} | ${"detail ".repeat(20).trim()} |`)
+      const report = ["## Result", "| check | state |", "|---|---|", ...rows, "https://github.com/example/repo/pull/44"].join("\n")
+      host.guest.say("ses_report", report, Date.now())
+      host.guest.complete("ses_report")
+      const job = await executor(host, "boxd_job")
+      const context = { sessionID: build, agent: "build", messageID: "msg_report", id: "call_report", signal: new AbortController().signal, progress: async () => {} }
+      const cut = (await job.execute({ workId: "report" }, context as never)) as { output: Record<string, unknown> }
+      expect(Array.from(cut.output.lastText as string).length).toBe(300)
+      expect(cut.output.lastText).not.toBe(report)
+      expect(cut.output.lastText as string).not.toContain("pull/44")
+      const full = (await job.execute({ workId: "report", full: true }, { ...context, id: "call_report_full" } as never)) as { output: Record<string, unknown> }
+      expect(full.output.lastText).toBe(report)
+    } finally {
+      await host.close()
+    }
+  })
+
   test("Stop on the model path ends a long boxd_exec, and no process it started is left", async () => {
     const host = await startHost()
     try {

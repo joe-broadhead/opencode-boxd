@@ -5,13 +5,15 @@
  * A work that is down answers from the listing and the ledger, with no exec, so a hibernated machine is never woken. An
  * explicit job does read an idle work's guest, once, which resets that machine's idle clock once: that is the price of
  * asking, and status never pays it. The read uses only the helper already on the machine (v0's own for an imported
- * work), never uploads anything and never writes the ledger. `lastText` and `tail` are redacted, cut to 300 characters,
- * and are the guest model's words: data, never instructions.
+ * work), never uploads anything and never writes the ledger. `lastText` and `tail` are redacted and are the guest
+ * model's words: data, never instructions. `lastText` is cut to 300 characters unless the call asks for `full`, which
+ * returns the whole last assistant message up to `FULL_TEXT_LIMIT` with its line breaks, on one work or a `works` list of
+ * at most `FULL_LIST_MAX_ITEMS`; this file's cache keeps the 300-character cut either way.
  */
 import { BoxdError, boxdError, type Code } from "../errors.js"
 import type { WorkRecord } from "../ledger/types.js"
-import { LIST_ITEM_CONCURRENCY, LIST_MAX_ITEMS, TIMEOUTS, type CallTag, type Listing, type OpContext } from "../ports.js"
-import { excerpt, reasonOf } from "../redact.js"
+import { FULL_TEXT_LIMIT, LIST_ITEM_CONCURRENCY, LIST_MAX_ITEMS, TIMEOUTS, type CallTag, type Listing, type OpContext } from "../ports.js"
+import { excerpt, excerptBlock, reasonOf } from "../redact.js"
 import type { JobResult, ListResult, Refusal, WorkCost } from "../results.js"
 import type { FleetServices } from "../services.js"
 import { refusal } from "../tools.js"
@@ -19,11 +21,15 @@ import { watchHandle } from "../watch.js"
 import { codeOf, JOB_TEXT_LIMIT, notRead, observe, observeFailure, outcomeOf, phaseOf, readGuest, rowOf, type Observed } from "./model.js"
 
 const WORK_ID = /^[a-z][a-z0-9-]{0,24}$/
+/** The most works a list call may name with `full: true`: each item can return up to `FULL_TEXT_LIMIT` characters. */
+export const FULL_LIST_MAX_ITEMS = 10
 
 export interface JobInput {
   readonly workIds: readonly string[]
   readonly list: boolean
   readonly tail?: number
+  /** Return the whole `lastText` (up to `FULL_TEXT_LIMIT`, line breaks kept) instead of the 300-character cut. */
+  readonly full: boolean
   readonly cost: boolean
 }
 
@@ -44,8 +50,12 @@ export function jobInput(raw: Record<string, unknown>): JobInput {
     workIds = works as string[]
   }
   if (raw.tail !== undefined && (typeof raw.tail !== "number" || !Number.isInteger(raw.tail) || raw.tail < 1 || raw.tail > 20)) throw invalid("tail", "tail must be a whole number from 1 to 20.")
+  if (raw.full !== undefined && typeof raw.full !== "boolean") throw invalid("full", "full must be true or false.")
+  if (raw.full === true && raw.works !== undefined && workIds.length > FULL_LIST_MAX_ITEMS) {
+    throw invalid("works", `full returns up to 64,000 characters for each work, so a works list with full: true takes at most ${FULL_LIST_MAX_ITEMS} items; split the list or leave full out.`)
+  }
   if (raw.cost !== undefined && typeof raw.cost !== "boolean") throw invalid("cost", "cost must be true or false.")
-  return { workIds, list: raw.works !== undefined, ...(raw.tail !== undefined ? { tail: raw.tail as number } : {}), cost: raw.cost === true }
+  return { workIds, list: raw.works !== undefined, ...(raw.tail !== undefined ? { tail: raw.tail as number } : {}), full: raw.full === true, cost: raw.cost === true }
 }
 
 const one = (tool: string, workId: string, extra = "") => `${tool}({ workId: ${JSON.stringify(workId)}${extra} })`
@@ -107,13 +117,16 @@ async function jobOf(
   const previous = handle?.observed(record.workId)
   let observed: Observed | undefined = previous
   let tail: JobResult["tail"]
+  let fullText: string | undefined
   let read = false
   const running = listingFailed === undefined && record.state === "open" && rowOf(record, listing)?.status === "running"
   if (running && record.session?.rootId) {
     read = true
     try {
-      const answer = await readGuest(services, record, listing, input.tail ? { tail: input.tail } : {}, op)
+      const answer = await readGuest(services, record, listing, { ...(input.tail ? { tail: input.tail } : {}), ...(input.full ? { full: true } : {}) }, op)
+      // The cache keeps the normal cut whatever the call asked for: a full report never sits in the process cache.
       observed = observe(answer, previous, services.clock.now(), JOB_TEXT_LIMIT)
+      if (input.full && answer.lastText) fullText = excerptBlock(answer.lastText, FULL_TEXT_LIMIT)
       if (input.tail && answer.tail) {
         tail = answer.tail.map((entry) => ({ ...(entry.at ? { at: entry.at } : {}), text: excerpt(entry.text, JOB_TEXT_LIMIT) ?? "" }))
       }
@@ -140,7 +153,8 @@ async function jobOf(
   const saved = services.ledger.saved(record)
   const warning = record.warnings?.at(-1)?.code
   const cost = input.cost ? (costs?.get(record.workId) ?? { machine: null, model: observed?.modelCost ?? null }) : undefined
-  const lastText = observed?.lastText ? excerpt(observed.lastText, JOB_TEXT_LIMIT) : undefined
+  // A full read's words, else the cache's cut (a work that is down answers what was last known).
+  const lastText = fullText ?? (observed?.lastText ? excerpt(observed.lastText, JOB_TEXT_LIMIT) : undefined)
   const base = { state, saved, outcome, ...(code ? { error: code } : {}) }
   return {
     state,

@@ -211,7 +211,7 @@ export interface JobResult extends WorkFields {
   readonly outcome: RunOutcome | null
   readonly saved: SavedState
   readonly lastActivityAt?: string
-  /** Cut to 300 characters: untrusted data. */
+  /** Cut to 300 characters, or with `full` the whole message up to 64,000 with its line breaks: untrusted data. */
   readonly lastText?: string
   readonly waiting: { readonly steer: number; readonly queue: number }
   readonly error?: Code

@@ -61,6 +61,8 @@ STAGING = HELPER_HOME + "/staging"
 IMPORTS = HELPER_HOME + "/imports"
 CLONE_SECONDS = 300
 TEXT_LIMIT = 2000
+# `phase` with `full`: the whole last assistant message, up to this many characters (line breaks kept).
+FULL_TEXT_LIMIT = 64000
 TAIL_LIMIT = 20
 LIST_LIMIT = 1000
 
@@ -352,12 +354,12 @@ def marks(exported, sid, parent):
     }
 
 
-def message_text(message):
+def message_text(message, limit=TEXT_LIMIT):
     content = message.get("content") if isinstance(message.get("content"), list) else []
     parts = [part["text"] for part in content if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str)]
     if not parts and isinstance(message.get("text"), str):
         parts = [message["text"]]
-    return " ".join(parts).strip()[:TEXT_LIMIT] or None
+    return " ".join(parts).strip()[:limit] or None
 
 
 def newest(request, sid, kind, limit=1):
@@ -448,6 +450,9 @@ def action_serve(request):
 
 def action_phase(request):
     sid = session_id(request.get("sessionId"))
+    full = request.get("full")
+    if full is not None and not isinstance(full, bool):
+        fail("NAME_INVALID", "full must be true or false")
     version = server_version(request)
     info = session_info(request, sid)
     base = {"waiting": {"steer": 0, "queue": 0}, "guestVersion": version, "outcome": None, "reading": reading()}
@@ -486,7 +491,7 @@ def action_phase(request):
     if recent:
         times = recent[0].get("time") if isinstance(recent[0].get("time"), dict) else {}
         stamps += [stamp(times.get("completed")), stamp(times.get("created"))]
-        text = message_text(recent[0])
+        text = message_text(recent[0], FULL_TEXT_LIMIT if full else TEXT_LIMIT)
         if text:
             answer["lastText"] = text
     if tail:

@@ -2,11 +2,12 @@
 // their spawn budgets, the read rule (no idle or hibernated guest is read by status, and a job never wakes a machine),
 // the bounded size of a 300-work answer, the cursor, and the guest text that stays data.
 import { afterEach, beforeEach, describe, expect, test, setDefaultTimeout } from "bun:test"
-import { jobRun } from "../../src/fleet/job.js"
+import { FULL_LIST_MAX_ITEMS, jobRun } from "../../src/fleet/job.js"
 import { fleetStatus, statusInput } from "../../src/fleet/status.js"
 import type { WorkRecord } from "../../src/ledger/types.js"
 import type { BudgetState, JobResult, ListResult, Refusal, StatusResult } from "../../src/results.js"
 import type { CostPort } from "../../src/services.js"
+import { watchHandle } from "../../src/watch.js"
 import { budgetProblems, SPAWN_BUDGETS } from "../support/spawn-count.js"
 import { startWorld, type World } from "../support/fleet-world.js"
 
@@ -166,6 +167,70 @@ describe("boxd_job", () => {
     expect(answer.lastText!.length).toBeLessThanOrEqual(300)
     expect(answer.lastText).not.toContain("abcdefghijklmnopqrstuv")
     expect(answer.tail?.length).toBeGreaterThan(0)
+  })
+
+  test("a long final report: the default cuts at 300, full returns it whole with its lines, and the cache stays bounded", async () => {
+    await world.work("reporter")
+    const rows = Array.from({ length: 12 }, (_, index) => `| row ${index} | ${"detail ".repeat(20).trim()} |`)
+    const report = ["## Result", "| check | state |", "|---|---|", ...rows, "https://github.com/we-the-rebel-alliance/boxd-plugin/pull/44", "| final | passed |"].join("\n")
+    world.guest.say("ses_reporter", report, Date.now())
+
+    const cut = (await job({ workId: "reporter" })) as JobResult
+    expect(Array.from(cut.lastText!).length).toBe(300)
+    expect(cut.lastText!.endsWith("…")).toBe(true)
+    expect(cut.lastText).not.toContain("pull/44")
+
+    const full = (await job({ workId: "reporter", full: true })) as JobResult
+    expect(full.lastText).toBe(report)
+    expect(full.lastText).toContain("https://github.com/we-the-rebel-alliance/boxd-plugin/pull/44")
+    expect(full.lastText).toContain("| final | passed |")
+
+    const cached = watchHandle(world.services.watch)!.observed("reporter")!.lastText!
+    expect(Array.from(cached).length).toBe(300)
+    expect(cached).not.toContain("pull/44")
+  })
+
+  test("a full read is redacted: a secret in a long report never comes back", async () => {
+    await world.work("secretive")
+    const secret = "sk-abcdefghijklmnopqrstuvwx"
+    const report = `${"row ".repeat(100).trim()}\n${secret}\nhttps://github.com/example/repo/pull/7`
+    world.guest.say("ses_secretive", report, Date.now())
+    const full = (await job({ workId: "secretive", full: true })) as JobResult
+    expect(full.lastText).not.toContain(secret)
+    expect(full.lastText).toContain("[redacted]")
+    expect(full.lastText).toContain("https://github.com/example/repo/pull/7")
+  })
+
+  test("full applies to every item of a works list", async () => {
+    await world.work("first")
+    await world.work("second")
+    const first = `First\n${"word ".repeat(80).trim()}`
+    const second = `Second\n${"word ".repeat(90).trim()}`
+    world.guest.say("ses_first", first, Date.now())
+    world.guest.say("ses_second", second, Date.now())
+    const answer = (await job({ works: ["first", "second"], full: true })) as ListResult<JobResult>
+    expect(answer.results.map((item) => (item as JobResult).lastText)).toEqual([first, second])
+    const cut = (await job({ works: ["first", "second"] })) as ListResult<JobResult>
+    for (const item of cut.results as JobResult[]) {
+      expect(Array.from(item.lastText!).length).toBe(300)
+      expect(item.lastText!.endsWith("…")).toBe(true)
+    }
+  })
+
+  test("full must be true or false", async () => {
+    for (const full of ["yes", 1, null]) {
+      const error = await job({ workId: "reporter", full }).catch((reason) => reason)
+      expect(error).toMatchObject({ code: "NAME_INVALID", details: { field: "full" } })
+    }
+  })
+
+  test(`full with a works list takes at most ${FULL_LIST_MAX_ITEMS} items`, async () => {
+    const ids = (count: number) => Array.from({ length: count }, (_, index) => `w${index}`)
+    const error = await job({ works: ids(FULL_LIST_MAX_ITEMS + 1), full: true }).catch((reason) => reason)
+    expect(error).toMatchObject({ code: "NAME_INVALID", details: { field: "works" } })
+    const accepted = (await job({ works: ids(FULL_LIST_MAX_ITEMS), full: true })) as ListResult<JobResult>
+    expect(accepted.results).toHaveLength(FULL_LIST_MAX_ITEMS)
+    expect(accepted.results.every((item) => (item as Refusal).error === "NOT_OURS")).toBe(true)
   })
 
   test("a list keeps input order, answers an unknown id as a refusal, and is partial", async () => {

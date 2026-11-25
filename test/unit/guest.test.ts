@@ -203,6 +203,28 @@ describe("sessions", () => {
     expect(await runtime.guest.phase(await readTarget(), { sessionId: "ses_none" }, context())).toMatchObject({ phase: "missing", outcome: null })
   })
 
+  test("phase: full returns a message over the helper's 2,000-character cap whole, with its lines; the default still cuts to 300", async () => {
+    await setup()
+    guestServer.next("ses_report")
+    await change((target) => runtime.guest.prompt(target, { directory: DIRECTORY, sessionId: null, title: "t", text: "go", delivery: "steer" }, context()))
+    const report = Array.from({ length: 300 }, (_, index) => `row ${index}: ${"value ".repeat(3).trim()}`).join("\n")
+    expect(report.length).toBeGreaterThan(2000)
+    guestServer.say("ses_report", report, 1_763_200_000_000)
+    guestServer.complete("ses_report")
+    const target = await readTarget()
+    const cut = await runtime.guest.phase(target, { sessionId: "ses_report" }, context())
+    expect(Array.from(cut.lastText!).length).toBe(300)
+    expect(cut.lastText!.endsWith("…")).toBe(true)
+    const full = await runtime.guest.phase(target, { sessionId: "ses_report", full: true }, context())
+    expect(full.lastText).toBe(report)
+    // The helper's own cap: a message over it comes back cut at 64,000 characters.
+    const huge = `start\n${"word ".repeat(14000).trim()}`
+    expect(huge.length).toBeGreaterThan(64_000)
+    guestServer.say("ses_report", huge, 1_763_200_001_000)
+    const capped = await runtime.guest.phase(target, { sessionId: "ses_report", full: true }, context())
+    expect(Array.from(capped.lastText!).length).toBe(64_000)
+  })
+
   test("export writes each session of the tree on the guest with its marks; the copy back matches its digest", async () => {
     await setup()
     guestServer.next("ses_parent")

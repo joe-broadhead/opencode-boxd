@@ -124,7 +124,14 @@ export function createGuestPort(options: GuestPortOptions): GuestPort {
 
   return {
     serve: (target, input, context) => read("serve", target, input.directory !== undefined ? { directory: input.directory } : {}, context, readServe),
-    phase: (target, input, context) => read("phase", target, { sessionId: input.sessionId, ...(input.tail ? { tail: input.tail } : {}) }, context, readPhase),
+    phase: (target, input, context) =>
+      read(
+        "phase",
+        target,
+        { sessionId: input.sessionId, ...(input.tail ? { tail: input.tail } : {}), ...(input.full ? { full: true } : {}) },
+        context,
+        (answer) => readPhase(answer, input.full === true),
+      ),
     read: (target, input, context) =>
       read(
         "read",
