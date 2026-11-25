@@ -18,7 +18,8 @@ All options go in the plugin entry in `opencode.json`, and every one is optional
 | `access` | `"all"` | What the plugin's own tools may do without asking: `"all"` allows everything, `"ask-changes"` allows the reads and asks for every change, `"read-only"` allows the reads and denies every change. A later rule of the user's still wins. |
 | `allowedRoots` | `[]` | Absolute folders here that a work may read and write besides the project. A path outside both is refused. |
 | `allowUntestedHost` | `false` | Run on an OpenCode outside `>=2.4.1 <2.5.0`. Status then says the host is untested. |
-| `region` | `"auto"` | Where a new work goes: `"auto"` picks the region with the most free machines after `keepFree`, preferring one that already has the golden image; or `"fra"` or `"nyc"`. |
+| `regions` | `["fra", "nyc"]` | The regions a new work or a new golden image may be placed in: a non-empty list of unique known regions, in any order. Every new placement is filtered to it, including `auto`; any other region is refused `REGION_NOT_ALLOWED` and nothing is created. It pins new placement only: works that already live elsewhere still converge, are harvested, resumed and dropped, a resume rebuilds a gone machine in the work's own region (building its image there when it is missing, unless `buildGolden` is `"never"`), and a prune covers every region. |
+| `region` | `"auto"` | Where a new work goes within `regions`: `"auto"` picks the region with the most free machines after `keepFree`, preferring one that already has the golden image; or `"fra"` or `"nyc"`. A named region must be one of `regions` (checked even for an existing work, where it is otherwise ignored), and setting both to disagree is `OPTIONS_INVALID`. |
 | `keepFree` | `{ "fra": 0, "nyc": 0 }` | Machines `"auto"` leaves free in each region, such as the organisation's CI pool. |
 | `size` | `"2x8"` | A new work's size: `"1x4"`, `"2x8"`, `"4x16"` or `"8x32"` (vCPU x GiB). |
 | `git` | none | `{ "name", "email" }`: the guest's git identity for every new work. Never a token. |
@@ -36,6 +37,17 @@ All options go in the plugin entry in `opencode.json`, and every one is optional
 | `idleCheck` | `true` | The end-of-turn check that speaks only when money burns and automation will not act; `false` turns it off. |
 
 An unknown option or a value out of its range stops the plugin with `OPTIONS_INVALID`; OpenCode's plugin list shows why.
+
+`regions` is the placement allowlist for new work. With `"regions": ["fra"]`, no new work's machine is made in `nyc`:
+`boxd_ensure` with `region: "nyc"` answers `REGION_NOT_ALLOWED`, `region: "auto"` chooses only `fra` (a full or kept
+`fra` answers `MACHINE_LIMIT` with `fra` alone, never `nyc`), and `boxd_golden` builds only `fra`. Reads are not
+pinned: `boxd_status({ region: "nyc" })` still filters works there, and a prune deletes images in every region, because
+deleting is not placement. A work that already lives in `nyc` keeps working: `boxd_ensure` (a named `region` is checked
+against `regions` even then, and otherwise ignored), `boxd_harvest`, `boxd_sleep`, `boxd_drop` and `boxd_resume` act on
+its own machine, and a resume rebuilds a destroyed machine in `nyc` rather than stranding the work, building its image
+there when it is missing (unless `buildGolden` is `"never"`, which answers `GOLDEN_MISSING` as it does elsewhere): that
+is recovery, not new placement. Only a create that has not landed yet is new placement, and it is refused outside the
+list.
 
 The plugin is tested on 2.4.1. Inside `>=2.4.1 <2.5.0` a release that was not tested, such as 2.4.2, still starts:
 status marks the version `untested` and the next step is the same as on a tested release. Outside the range the plugin
@@ -379,7 +391,8 @@ reads the same parts the model does. No error, log or status line contains a tok
 | `FILE_CONFLICT` | refused | The file here changed since the last harvest. | Keep the local edit and leave that path out, or restore the harvested copy and harvest again. |
 | `NOT_OURS` | refused | No open work has this id; or oc-<id> now has another id than the recorded machineId; or the recorded machine lives under another name; or two regions hold oc-<id>; or the machine to adopt is one another open work records (even with adopt: true). Nothing was changed. | For an unknown id, boxd_ensure({ workId }). Otherwise look at the machines the message names with boxd machine get, and rename them back or boxd_reassign. |
 | `NOT_REASSIGNABLE` | refused | from has a session, uploaded files or a dirty tree, or to is an open work. | boxd_drop it after a harvest, or reassign a work with no prompt yet. |
-| `MACHINE_LIMIT` | refused | No region has room for another machine; limit, inUse and free are given per region. | Pass region: "<other region>" when it has room; otherwise free machines with boxd_drop or boxd_reassign, or have the owner raise the limit with boxd manage machine-limit request --max-vms <n>. |
+| `MACHINE_LIMIT` | refused | No allowed region has room for another machine; limit, inUse and free are given per region, and the option "regions" is named when it excludes one. | Pass region: "<another allowed region>" when it has room; otherwise free machines with boxd_drop or boxd_reassign, or have the owner raise the limit with boxd manage machine-limit request --max-vms <n>. |
+| `REGION_NOT_ALLOWED` | refused | A new machine or golden image would be placed in a region the plugin option "regions" does not allow. | Pass region: "<an allowed region>" ("fra" or "nyc" by default; the message lists the ones this project allows, and /boxd-status shows them), or add this region to "regions" and restart OpenCode. |
 | `SIZE_UNAVAILABLE` | refused | The organisation's quota does not allow this size. | Pick a smaller size. |
 | `GOLDEN_MISSING` | refused | No golden image for this region, size and OpenCode version, and the option buildGolden is "never". | boxd_golden({ region, size }), then call again. |
 | `GOLDEN_BUILD_FAILED` | failed | A golden image build failed at the step the message names, or its base holds an OpenCode session. | Read the message; fix goldenSetup or the base, then boxd_golden again. |

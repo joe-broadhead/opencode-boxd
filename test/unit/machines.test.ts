@@ -433,6 +433,200 @@ describe("boxd_golden (design §2.3, §3.11)", () => {
   })
 })
 
+describe("the regions option pins new placement", () => {
+  test("an explicit region outside the allowlist is refused REGION_NOT_ALLOWED before any call, and nothing is created", async () => {
+    const k = await kit({ options: { regions: ["fra"] } })
+    k.counter.fake.snapshot({ region: "nyc", name: IMAGE })
+    k.reset()
+    const error = await errorOf(k.runs.boxd_ensure({ workId: "abroad", region: "nyc" }, k.call()))
+    expect(error).toMatchObject({ code: "REGION_NOT_ALLOWED", details: { region: "nyc", allowed: ["fra"] } })
+    expect(error.what).toContain('allows only "fra"')
+    expect(k.calls()).toEqual([])
+    expect(k.counter.fake.read().machines).toEqual([])
+  })
+
+  test("auto considers only allowed regions, even when another region has more free machines", async () => {
+    const k = await kit({ options: { regions: ["fra"] } })
+    await k.golden("fra")
+    // nyc has far more free machines and already holds the image; the allowlist does not consider it.
+    k.counter.fake.snapshot({ region: "nyc", name: IMAGE })
+    const result = (await k.runs.boxd_ensure({ workId: "pinned" }, k.call())) as EnsureResult
+    expect(result).toMatchObject({ state: "ready", region: "fra", created: true })
+    expect(k.counter.fake.read().machines.filter((machine) => machine.region === "nyc")).toEqual([])
+  })
+
+  test("a full allowed region answers MACHINE_LIMIT with allowed rows only: no fallback to nyc", async () => {
+    const k = await kit({ options: { regions: ["fra"] } })
+    await k.golden("fra")
+    k.counter.fake.snapshot({ region: "nyc", name: IMAGE })
+    k.counter.fake.update((state) => void (state.limits = { fra: 1, nyc: 300 }))
+    k.counter.fake.machine({ name: "oc-one", region: "fra" })
+    k.reset()
+    const error = await errorOf(k.runs.boxd_ensure({ workId: "three", wait: "none" }, k.call()))
+    expect(error).toMatchObject({ code: "MACHINE_LIMIT", details: { limit: [{ region: "fra", limit: 1, inUse: 1, free: 0 }] } })
+    expect(error.what).toContain('The option "regions" allows only "fra", so no other region is tried')
+    expect(k.calls().some((entry) => entry.startsWith("machine new"))).toBe(false)
+    expect(k.counter.fake.read().machines.filter((machine) => machine.region === "nyc")).toEqual([])
+  })
+
+  test("keepFree applies inside the allowlist: an unlisted region with room is never the fallback", async () => {
+    const k = await kit({ options: { regions: ["fra"], keepFree: { fra: 300 } } })
+    await k.golden("fra")
+    k.counter.fake.snapshot({ region: "nyc", name: IMAGE })
+    k.reset()
+    const error = await errorOf(k.runs.boxd_ensure({ workId: "kept" }, k.call()))
+    expect(error.code).toBe("MACHINE_LIMIT")
+    expect(error.what).toContain("keepFree holds back 300 in fra")
+    expect(k.calls().some((entry) => entry.startsWith("machine new"))).toBe(false)
+  })
+
+  test("golden builds only in the allowlist, and an explicit region outside it answers REGION_NOT_ALLOWED", async () => {
+    const k = await kit({ options: { regions: ["fra"] } })
+    const built = (await k.runs.boxd_golden({}, k.call())) as GoldenResult
+    expect(built.state).toBe("built")
+    expect(built.images.map((image) => image.region)).toEqual(["fra"])
+    expect(k.counter.fake.read().snapshots.filter((snapshot) => snapshot.name === IMAGE).map((snapshot) => snapshot.region)).toEqual(["fra"])
+    k.reset()
+    const error = await errorOf(k.runs.boxd_golden({ region: "nyc" }, k.call()))
+    expect(error).toMatchObject({ code: "REGION_NOT_ALLOWED", details: { region: "nyc", allowed: ["fra"] } })
+    expect(k.calls().some((entry) => entry.startsWith("machine new"))).toBe(false)
+  })
+
+  test("a work that already lives outside the allowlist still converges and resumes", async () => {
+    const k = await kit({ options: { regions: ["fra"] } })
+    const machine = await known(k, "abroad", {}, { region: "nyc" })
+    k.reset()
+    const ensured = (await k.runs.boxd_ensure({ workId: "abroad" }, k.call())) as EnsureResult
+    expect(ensured).toMatchObject({ state: "ready", region: "nyc", created: false, machineId: machine.id })
+    expect(k.calls().some((entry) => /^machine (new|wake)/.test(entry))).toBe(false)
+    // Asleep: resume wakes it by id, in its own region, with no create.
+    k.counter.fake.update((state) => void (state.machines.find((entry) => entry.id === machine.id)!.status = "hibernated"))
+    k.reset()
+    const resumed = (await k.runs.boxd_resume({ workId: "abroad" }, k.call())) as ResumeResult
+    expect(resumed).toMatchObject({ state: "ready", rebuilt: false, region: "nyc" })
+    expect(k.calls()).toContain(`machine wake ${machine.id} --region nyc --json`)
+    expect(k.calls().some((entry) => entry.startsWith("machine new"))).toBe(false)
+  })
+
+  test("a work whose machine is gone is rebuilt in its recorded region from its image there, even outside the allowlist", async () => {
+    const k = await kit({ options: { regions: ["fra"] } })
+    await k.golden("fra")
+    k.counter.fake.snapshot({ region: "nyc", name: IMAGE })
+    const machine = await known(k, "restored", {}, { region: "nyc" })
+    k.counter.fake.update((state) => void (state.machines.find((entry) => entry.id === machine.id)!.status = "destroyed"))
+    k.reset()
+    const result = (await k.runs.boxd_resume({ workId: "restored" }, k.call())) as ResumeResult
+    expect(result).toMatchObject({ state: "ready", rebuilt: true, region: "nyc" })
+    const created = k.calls().find((entry) => entry.startsWith("machine new"))
+    expect(created).toContain("--region nyc")
+    expect(created).toContain(`--from-snapshot ${IMAGE}`)
+    // The image was there: no builder ran.
+    expect(k.calls().some((entry) => entry.startsWith("machine new oc-gb-"))).toBe(false)
+  })
+
+  test("a gone machine outside the allowlist is rebuilt there even when its image is missing: the build is recovery", async () => {
+    const k = await kit({ options: { regions: ["fra"] } })
+    const machine = await known(k, "recovered", {}, { region: "nyc" })
+    k.counter.fake.update((state) => void (state.machines.find((entry) => entry.id === machine.id)!.status = "destroyed"))
+    k.reset()
+    const result = (await k.runs.boxd_resume({ workId: "recovered" }, k.call())) as ResumeResult
+    expect(result).toMatchObject({ state: "ready", rebuilt: true, region: "nyc" })
+    // A builder and its image in the work's own region, then the work's machine: not a REGION_NOT_ALLOWED refusal.
+    expect(k.calls().find((entry) => entry.startsWith("machine new"))).toMatch(/^machine new oc-gb-nyc-2x8-[0-9a-f]{6} --region nyc /)
+    expect(k.counter.fake.read().snapshots.filter((snapshot) => snapshot.name === IMAGE).map((snapshot) => snapshot.region)).toEqual(["nyc"])
+    expect(k.calls().find((entry) => entry.startsWith("machine new oc-recovered"))).toContain("--region nyc")
+    expect(k.counter.fake.read().machines.filter((entry) => entry.name.startsWith("oc-gb-") && entry.status !== "destroyed")).toEqual([])
+  })
+
+  test("a landed work outside the allowlist with no image and buildGolden never answers GOLDEN_MISSING, not REGION_NOT_ALLOWED", async () => {
+    const k = await kit({ options: { regions: ["fra"], buildGolden: "never" } })
+    const machine = await known(k, "bare", {}, { region: "nyc" })
+    k.counter.fake.update((state) => void (state.machines.find((entry) => entry.id === machine.id)!.status = "destroyed"))
+    k.reset()
+    const error = await errorOf(k.runs.boxd_resume({ workId: "bare" }, k.call()))
+    expect(error.code).toBe("GOLDEN_MISSING")
+    expect(error.what).toContain('Set it to "auto" so a resume builds the image there')
+    expect(k.calls().some((entry) => entry.startsWith("machine new"))).toBe(false)
+  })
+
+  test("an explicit region on an existing work is checked against the allowlist, and otherwise ignored", async () => {
+    const k = await kit({ options: { regions: ["fra"] } })
+    const machine = await known(k, "settled")
+    k.reset()
+    const refused = await errorOf(k.runs.boxd_ensure({ workId: "settled", region: "nyc" }, k.call()))
+    expect(refused).toMatchObject({ code: "REGION_NOT_ALLOWED", details: { region: "nyc", allowed: ["fra"] } })
+    expect(k.calls()).toEqual([])
+    const converged = (await k.runs.boxd_ensure({ workId: "settled", region: "fra" }, k.call())) as EnsureResult
+    expect(converged).toMatchObject({ state: "ready", created: false, machineId: machine.id, region: "fra" })
+  })
+
+  test("a full recorded region on a resume rebuild names a next step resume can take, with its own row", async () => {
+    const k = await kit({ options: { regions: ["fra"] } })
+    k.counter.fake.snapshot({ region: "nyc", name: IMAGE })
+    const machine = await known(k, "packed", {}, { region: "nyc" })
+    k.counter.fake.update((state) => void (state.limits = { nyc: 1 }))
+    k.counter.fake.machine({ name: "oc-occupant", region: "nyc" })
+    k.counter.fake.update((state) => void (state.machines.find((entry) => entry.id === machine.id)!.status = "destroyed"))
+    k.reset()
+    const error = await errorOf(k.runs.boxd_resume({ workId: "packed" }, k.call()))
+    expect(error).toMatchObject({
+      code: "MACHINE_LIMIT",
+      details: {
+        limit: [
+          { region: "fra", limit: 300, inUse: 0, free: 300 },
+          // This call's own create is still in flight, so the row counts it on top of the listing's occupant.
+          expect.objectContaining({ region: "nyc", limit: 1, free: 0 }),
+        ],
+      },
+    })
+    expect(error.what).toContain("This work is rebuilt in nyc")
+    expect(error.what).toContain("free a machine there with boxd_drop or boxd_reassign")
+    expect(error.what).not.toContain('pass region: "fra"')
+    expect(k.counter.fake.read().machines.filter((entry) => entry.name === "oc-packed" && entry.status !== "destroyed")).toEqual([])
+  })
+
+  test("a prune covers a region outside the allowlist: deleting is not placement", async () => {
+    const k = await kit({ options: { regions: ["fra"] } })
+    k.counter.fake.snapshot({ region: "nyc", name: "oc-golden-2.2.4-2x8" })
+    k.counter.fake.snapshot({ region: "fra", name: "oc-golden-2.2.3-2x8" })
+    const one = (await k.runs.boxd_golden({ region: "nyc", prune: true }, k.call())) as GoldenResult
+    expect(one.state).toBe("pruned")
+    expect(one.removed?.map((image) => image.name)).toEqual(["oc-golden-2.2.4-2x8"])
+    k.counter.fake.snapshot({ region: "nyc", name: "oc-golden-2.2.2-2x8" })
+    k.reset()
+    const all = (await k.runs.boxd_golden({ prune: true }, k.call())) as GoldenResult
+    expect(all.state).toBe("pruned")
+    expect(all.removed?.map((image) => `${image.region}/${image.name}`).sort()).toEqual(["fra/oc-golden-2.2.3-2x8", "nyc/oc-golden-2.2.2-2x8"])
+    expect(k.calls().some((entry) => entry.startsWith("machine new"))).toBe(false)
+  })
+
+  test("a work with no recorded region picks its rebuild region from the allowlist", async () => {
+    const k = await kit({ options: { regions: ["nyc"] } })
+    await k.golden("nyc")
+    await k.write(workRecord("homeless", { region: null, machineId: null, laptopDirectory: k.project, pendingCreate: { at: new Date().toISOString(), image: IMAGE } }))
+    k.reset()
+    const result = (await k.runs.boxd_resume({ workId: "homeless" }, k.call())) as ResumeResult
+    expect(result).toMatchObject({ state: "ready", rebuilt: true, region: "nyc" })
+    expect(k.calls().find((entry) => entry.startsWith("machine new"))).toContain("--region nyc")
+    expect(k.counter.fake.read().machines.filter((entry) => entry.region === "fra")).toEqual([])
+  })
+
+  test("a claim that never landed outside the allowlist is refused: it is still new placement", async () => {
+    const k = await kit({ options: { regions: ["fra"] } })
+    k.counter.fake.snapshot({ region: "nyc", name: IMAGE })
+    await k.write(workRecord("claimed", { region: "nyc", laptopDirectory: k.project, pendingCreate: { at: new Date().toISOString(), image: IMAGE } }))
+    k.reset()
+    const error = await errorOf(k.runs.boxd_ensure({ workId: "claimed" }, k.call()))
+    expect(error).toMatchObject({ code: "REGION_NOT_ALLOWED", details: { region: "nyc", allowed: ["fra"] } })
+    expect(k.calls().some((entry) => entry.startsWith("machine new"))).toBe(false)
+    expect(k.counter.fake.read().machines.filter((machine) => machine.region === "nyc")).toEqual([])
+    // Resume refuses it the same way: no machine ever landed there.
+    const resumed = await errorOf(k.runs.boxd_resume({ workId: "claimed" }, k.call()))
+    expect(resumed).toMatchObject({ code: "REGION_NOT_ALLOWED", details: { region: "nyc", allowed: ["fra"] } })
+    expect(k.calls().some((entry) => entry.startsWith("machine new"))).toBe(false)
+  })
+})
+
 describe("boxd_reassign (design §3.10)", () => {
   test("moves an unstarted work's machine to a new id by its machine id, closes from, and sets the new work up", async () => {
     const k = await kit()

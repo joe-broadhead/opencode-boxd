@@ -11,7 +11,10 @@
  * - **Rebuild,** only when the machine is gone by the rule drop uses (H2): a fresh all-region listing with no
  *   `oc-<id>`, and a `get` of the recorded id that answers boxd's exact not-found words in every region. A failed read
  *   is never "gone". The new machine comes from the recorded image when it is this laptop's OpenCode's, otherwise from
- *   the current golden image for the work's size (built when it is missing), with the creation flags of §C.2.
+ *   the current golden image for the work's size (built when it is missing), with the creation flags of §C.2. A work
+ *   whose machine landed in a region is rebuilt there even when that region is outside the option `regions`, and its
+ *   golden image is built there when it is missing: that is recovery, not new placement. A claim that never landed, and
+ *   a work with no region, are new placement, and only allowed regions take them.
  * - **Import:** a work with saved sessions whose guest has no session (a rebuilt machine, or `SESSION_MISSING`) gets
  *   each stored export copied up with `machine cp` and imported by the helper, parents first, as one tree. The guest's
  *   OpenCode is upgraded to this laptop's first, because a transcript moves only between matching versions.
@@ -43,7 +46,7 @@ import {
 } from "./ensure.js"
 import { imageName, STILL_BUILDING } from "./golden.js"
 import { listCall, runList, runOne, type ItemContext } from "./list.js"
-import { inUseOf, pickRegion } from "./regions.js"
+import { inUseOf, pickRegion, regionsText } from "./regions.js"
 
 const WORK_ID = /^[a-z][a-z0-9-]{0,24}$/
 /** Where the helper's `import` reads exports from: beside the helper, under its own folder. */
@@ -128,6 +131,14 @@ async function wakeHere(machines: Machines, record: WorkRecord, owned: Owned, co
 
 const sleeping = (status: string) => status === "hibernated" || status === "standby" || status === "stopped"
 
+/** A record's claimed region never hosted a machine, and it is outside the option `regions`: placement is refused. */
+function refuseClaim(region: Region, allowed: readonly Region[]): never {
+  throw boxdError("REGION_NOT_ALLOWED", `This work's record claims region "${region}", where no machine landed, and the plugin option "regions" allows only ${regionsText(allowed)}; nothing was created. Add "${region}" to "regions" and call again.`, {
+    region,
+    allowed,
+  })
+}
+
 /** Creates the work's machine again, in its region (or the picked one), from the right image. */
 async function rebuild(
   machines: Machines,
@@ -140,16 +151,25 @@ async function rebuild(
   const current = imageName(options.goldenPrefix, hostVersion, record.size)
   const snapshots = await machines.golden.images(op)
   const used = inUseOf(gone.listing.machines, gone.asked)
+  const allowed = options.regions
+  const claimed = record.region
+  // A work whose machine landed somewhere is rebuilt in its own region, even outside the allowlist: the option pins new
+  // placement, and a resume restores a work that already lives there. A claim that never landed is placement, refused
+  // outside the allowlist; a work with no region at all picks among the allowed ones.
   const want =
-    record.region ??
-    pickRegion({
-      choice: options.region,
-      limits: await boxd.machineLimit(op),
-      keepFree: options.keepFree,
-      inFlight: machines.inFlight,
-      used,
-      withImage: new Set(REGIONS.filter((where) => snapshots.some((row) => row.region === where && row.name === current))),
-    })
+    claimed !== null && (record.machineId !== null || allowed.includes(claimed))
+      ? claimed
+      : claimed !== null
+        ? refuseClaim(claimed, allowed)
+        : pickRegion({
+            choice: options.region,
+            limits: await boxd.machineLimit(op),
+            keepFree: options.keepFree,
+            inFlight: machines.inFlight,
+            used,
+            withImage: new Set(REGIONS.filter((where) => allowed.includes(where) && snapshots.some((row) => row.region === where && row.name === current))),
+            allowed,
+          })
   // The recorded image only while it is this laptop's OpenCode's: the transcript must import into the same version.
   const recorded = record.image.opencode === hostVersion && snapshots.some((row) => row.region === want && row.name === record.image.name)
   const image = recorded ? record.image.name : current
@@ -166,7 +186,14 @@ async function rebuild(
       reserved = undefined
     }
     if (!snapshots.some((row) => row.region === region && row.name === image)) {
-      if (options.buildGolden === "never") throw boxdError("GOLDEN_MISSING", `No golden image ${image} in ${region}, and buildGolden is "never".`)
+      // A landed work is rebuilt in its own region even outside the allowlist: building the image there is part of that
+      // recovery, not new placement. A claim that never landed was refused above, before anything was claimed here.
+      if (options.buildGolden === "never") {
+        throw boxdError("GOLDEN_MISSING", `No golden image ${image} in ${region}, where this work was recorded, and buildGolden is "never". Set it to "auto" so a resume builds the image there, or add "${region}" to "regions" and build it with boxd_golden({ region: "${region}", size: "${record.size}" }).`, {
+          region,
+          size: record.size,
+        })
+      }
       const built = await context.waiting(() => machines.golden.build({ region, size: record.size, base: options.goldenBase, name: image }, { signal: context.signal, until: context.deadline }))
       if (built === STILL_BUILDING) return { building: image }
     }

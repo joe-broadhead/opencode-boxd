@@ -7,6 +7,7 @@ const DEFAULTS: Options = {
   access: "all",
   allowedRoots: [],
   allowUntestedHost: false,
+  regions: ["fra", "nyc"],
   region: "auto",
   keepFree: { fra: 0, nyc: 0 },
   size: "2x8",
@@ -31,7 +32,10 @@ describe("plugin options", () => {
 
   test("takes every documented value", () => {
     for (const access of ["all", "ask-changes", "read-only"]) expect(parseOptions({ access })).toMatchObject({ access })
+    for (const regions of [["fra"], ["nyc"], ["nyc", "fra"]]) expect(parseOptions({ regions })).toMatchObject({ regions: ["fra", "nyc"].filter((region) => regions.includes(region)) })
     for (const region of ["auto", "fra", "nyc"]) expect(parseOptions({ region })).toMatchObject({ region })
+    expect(parseOptions({ regions: ["fra"], region: "fra" })).toMatchObject({ regions: ["fra"], region: "fra" })
+    expect(parseOptions({ regions: ["nyc"], region: "auto" })).toMatchObject({ regions: ["nyc"], region: "auto" })
     for (const size of ["1x4", "2x8", "4x16", "8x32"]) expect(parseOptions({ size })).toMatchObject({ size })
     for (const notices of ["wake", "queue", "off"]) expect(parseOptions({ notices })).toMatchObject({ notices })
     for (const buildGolden of ["auto", "never"]) expect(parseOptions({ buildGolden })).toMatchObject({ buildGolden })
@@ -53,6 +57,12 @@ describe("plugin options", () => {
     const bad = [
       { regionn: "fra" },
       { region: "ams" },
+      { regions: [] },
+      { regions: ["ams"] },
+      { regions: ["fra", "fra"] },
+      { regions: "fra" },
+      { regions: ["fra", 2] },
+      { regions: ["fra"], region: "nyc" },
       { size: "16x64" },
       { size: 4 },
       { keepFree: { ams: 1 } },
@@ -86,6 +96,19 @@ describe("plugin options", () => {
       "x",
     ]
     for (const raw of bad) expect(() => parseOptions(raw)).toThrow(/^OPTIONS_INVALID: .*Next step: /)
+  })
+
+  test("the regions allowlist defaults to every region, and names the accepted values when it refuses", () => {
+    expect(parseOptions({})).toMatchObject({ regions: ["fra", "nyc"] })
+    expect(parseOptions({ regions: ["fra"] })).toMatchObject({ regions: ["fra"] })
+    expect(parseOptions({ regions: ["fra", "nyc"] })).toMatchObject({ regions: ["fra", "nyc"] })
+    // "fra", "nyc", the accepted values, and the options example are all in the refusal.
+    expect(() => parseOptions({ regions: ["ams"] })).toThrow(/^OPTIONS_INVALID: .*lists "ams", which is not a region; list "fra", "nyc"\..*"plugins": \[\{ "package": "github:we-the-rebel-alliance\/boxd-plugin#v<version>"/)
+    expect(() => parseOptions({ regions: [] })).toThrow(/^OPTIONS_INVALID: .*at least one region, from "fra", "nyc"/)
+    expect(() => parseOptions({ regions: ["fra"], region: "nyc" })).toThrow(/^OPTIONS_INVALID: .*option "region" is "nyc", which the option "regions" does not list \("fra"\)/)
+    // The default region is inside the allowlist whenever both are set, and "auto" never contradicts it.
+    expect(() => parseOptions({ regions: ["fra"], region: "auto" })).not.toThrow()
+    expect(() => parseOptions({ regions: ["fra", "nyc"], region: "nyc" })).not.toThrow()
   })
 
 })

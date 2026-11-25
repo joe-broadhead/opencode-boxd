@@ -1,6 +1,9 @@
 /**
- * Golden images (design §2.3, §3.11), owned by package C1: `<prefix>-<opencode version>-<size>` in each region, built
- * by the plugin from a fixed recipe on a short-lived builder machine, never saved from a work's machine.
+ * Golden images (design §2.3, §3.11), owned by package C1: `<prefix>-<opencode version>-<size>` in each region the
+ * option `regions` allows, built by the plugin from a fixed recipe on a short-lived builder machine, never saved from a
+ * work's machine. `boxd_golden` never builds in a region outside the allowlist, and a build request there is refused; a
+ * prune deletes images, so it is not pinned and covers every region. A resume of a work that landed in another region
+ * may rebuild that work's image there as part of recovery (see `resume.ts`), not as new placement.
  *
  * The recipe, one build per region and size at a time (a flight every caller joins):
  *
@@ -38,6 +41,7 @@ import type { GoldenImage, GoldenResult } from "../results.js"
 import type { FleetServices } from "../services.js"
 import type { CallContext } from "../tools.js"
 import { runOne, type ItemContext } from "./list.js"
+import { regionsText } from "./regions.js"
 
 /** Where `goldenSetup` lands on the builder, in boxd's home; it is removed by the same exec that runs it. */
 const SETUP_FILE = ".opencode-boxd-golden-setup.sh"
@@ -247,12 +251,22 @@ export function createGolden(services: FleetServices, settings: { readonly bound
   async function run(input: Record<string, unknown>, call: CallContext): Promise<GoldenResult> {
     const region = input.region ?? "all"
     if (region !== "all" && !(REGIONS as readonly unknown[]).includes(region)) throw boxdError("NAME_INVALID", `region must be one of ${REGIONS.join(", ")} or all.`, { field: "region" })
+    const allowed = options.regions
+    // A prune deletes images: that is not placement, so it covers any region, including one outside the option `regions`.
+    const pruning = input.prune === true
+    if (!pruning && region !== "all" && !allowed.includes(region as Region)) {
+      throw boxdError("REGION_NOT_ALLOWED", `boxd_golden was asked to build in region "${region}", and the plugin option "regions" allows only ${regionsText(allowed)}; nothing was built.`, {
+        field: "region",
+        region,
+        allowed,
+      })
+    }
     const size = input.size ?? options.size
     if (!(SIZES as readonly unknown[]).includes(size)) throw boxdError("NAME_INVALID", `size must be one of ${SIZES.join(", ")}.`, { field: "size" })
     const from = input.from ?? options.goldenBase
     if (typeof from !== "string" || (from !== "stock" && !safeSnapshot(from))) throw boxdError("NAME_INVALID", 'from must be "stock" or a boxd snapshot name.', { field: "from" })
     for (const flag of ["rebuild", "prune"] as const) if (input[flag] !== undefined && typeof input[flag] !== "boolean") throw boxdError("NAME_INVALID", `${flag} must be true or false.`, { field: flag })
-    const regions = region === "all" ? REGIONS : [region as Region]
+    const regions = region === "all" ? (pruning ? [...REGIONS] : [...allowed]) : [region as Region]
     const context: OpContext = { call: { callId: call.id, source: "boxd_golden" }, signal: call.signal }
     await services.ledger.ready(context)
     if (input.prune === true) return prune(regions, context)

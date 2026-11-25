@@ -12,8 +12,8 @@ import { isSupportedHost, type HostCheck } from "./host-version.js"
 import { defaultRules, unguardedAgents, type Access, type Rule } from "./permissions.js"
 import { cut, shortReason } from "./redact.js"
 import { PHASES, type Phase } from "./ledger/types.js"
-import type { Notices } from "./options.js"
-import { CAPS } from "./ports.js"
+import type { Notices, RegionChoice } from "./options.js"
+import { CAPS, REGIONS, type Region } from "./ports.js"
 import type { StatusResult } from "./results.js"
 import { TOOLS } from "./tools.js"
 import type { FleetServices } from "./services.js"
@@ -55,6 +55,10 @@ export interface StatusFacts {
   /** The image a new work in the default size boots from. */
   readonly image: string
   readonly buildGolden: "auto" | "never"
+  /** Where a new work goes within `allowedRegions`; `auto` by default. */
+  readonly region: RegionChoice
+  /** The option `regions`: a new work or golden image is placed only in these. */
+  readonly allowedRegions: readonly Region[]
   /** This laptop's OpenCode version, which a guest must match to move a transcript. */
   readonly guestVersion: string | null
   readonly notices: Notices
@@ -77,6 +81,10 @@ export interface Status {
   readonly signedIn: boolean | null
   readonly image: string
   readonly buildGolden: "auto" | "never"
+  /** Where a new work goes within `allowedRegions`; `auto` by default. */
+  readonly region: RegionChoice
+  /** The regions the option `regions` allows: a new work or golden image is placed only in these. */
+  readonly allowedRegions: readonly Region[]
   /** The OpenCode version a guest must run to move a transcript: this laptop's own. */
   readonly guestVersion: string | null
   readonly openWorks: number
@@ -165,6 +173,8 @@ export function buildStatus(facts: StatusFacts): Status {
     signedIn: fleet ? fleet.cli.signedIn : null,
     image: facts.image,
     buildGolden: facts.buildGolden,
+    region: facts.region,
+    allowedRegions: facts.allowedRegions,
     guestVersion: facts.guestVersion,
     openWorks: Object.entries(counts).reduce((sum, [phase, count]) => (phase === "closed" ? sum : sum + (count ?? 0)), 0),
     counts,
@@ -275,6 +285,12 @@ function machinesText({ regions }: Status) {
   return regions.map((region) => `${region.region} ${region.inUse} of ${region.limit} in use, ${region.free} free`).join("; ")
 }
 
+/** Where a new work may go: the default region, and the option `regions` that pins placement. */
+function regionsRow({ region, allowedRegions }: Status) {
+  const allowed = allowedRegions.map((value) => `"${value}"`).join(", ")
+  return `default ${JSON.stringify(region)}; allowed ${allowed || "no region: nothing new is placed"}`
+}
+
 const SYMBOLS: Readonly<Record<string, string>> = { EUR: "€", USD: "$", GBP: "£" }
 const money = (amount: number, currency: string) => (SYMBOLS[currency] ? `${SYMBOLS[currency]}${amount.toFixed(2)}` : `${amount.toFixed(2)} ${currency}`)
 
@@ -339,6 +355,7 @@ export function formatStatus(status: Status) {
     `- Guest: OpenCode ${status.guestVersion ?? "unknown"}, the version here, to move a transcript; reads work across versions`,
     `- Works: ${worksText(status)}`,
     `- Attention: ${attentionText(status)}`,
+    `- Regions: ${regionsRow(status)}`,
     `- Machines: ${machinesText(status)}`,
     `- Cost: ${costText(status)}`,
     `- Automation: ${automationText(status)}`,
@@ -400,6 +417,8 @@ export function statusReader(
       // The image a new work in the default size boots from: <prefix>-<this laptop's OpenCode>-<size>.
       image: `${options.goldenPrefix}-${hostVersion ?? "unknown"}-${options.size}`,
       buildGolden: options.buildGolden,
+      region: options.region,
+      allowedRegions: options.regions,
       guestVersion: hostVersion,
       notices: options.notices,
       problems: input.problems(),
@@ -435,6 +454,8 @@ export const StatusRpc = {
           "signedIn",
           "image",
           "buildGolden",
+          "region",
+          "allowedRegions",
           "guestVersion",
           "openWorks",
           "counts",
@@ -467,6 +488,8 @@ export const StatusRpc = {
           signedIn: { type: ["boolean", "null"] },
           image: { type: "string" },
           buildGolden: { enum: ["auto", "never"] },
+          region: { enum: ["auto", ...REGIONS] },
+          allowedRegions: { type: "array", items: { type: "string", enum: [...REGIONS] } },
           guestVersion: nullableString,
           openWorks: count,
           counts: { type: "object", additionalProperties: count },

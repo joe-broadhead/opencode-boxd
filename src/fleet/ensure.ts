@@ -12,11 +12,14 @@
  * - **No machine id yet:** one all-region listing taken in this call. **A work's machine is only ever made in one
  *   region:** the region the listing shows `oc-<id>` in, else the region the record holds (a create that may have
  *   landed, `pendingCreate`), else a new pick that is claimed in the record under the work's lock before anything is
- *   built or created, so a second call, here or in another process, takes the same region. In a known region, one
- *   `machine get oc-<id>` under the name's machine lock comes first, and a machine that landed there is adopted. A
- *   create boxd refuses because the name is taken is adopted the same way. Since boxd keeps names unique per region,
- *   no path makes a second `oc-<id>`. Adoption needs the plugin's labels (`owner=opencode-boxd`, or v0's
- *   `role=session` with `work=<id>`), or `adopt: true`; two regions holding the name are `NOT_OURS`.
+ *   built or created, so a second call, here or in another process, takes the same region. A new pick considers only
+ *   the regions the option `regions` allows, and a create for a claim outside it is refused `REGION_NOT_ALLOWED`: the
+ *   allowlist pins placement, while a machine that landed there is still adopted and a work that lives there still
+ *   converges. In a known region, one `machine get oc-<id>` under the name's machine lock comes first, and a machine
+ *   that landed there is adopted. A create boxd refuses because the name is taken is adopted the same way. Since boxd
+ *   keeps names unique per region, no path makes a second `oc-<id>`. Adoption needs the plugin's labels
+ *   (`owner=opencode-boxd`, or v0's `role=session` with `work=<id>`), or `adopt: true`; two regions holding the name are
+ *   `NOT_OURS`.
  * - **The VM agent** (#14 §6): `cannot connect to VM agent` on a machine this plugin created, resized or renamed in the
  *   last 10 minutes and has not rebooted since is rebooted once, and the step retried. Otherwise `AGENT_UNREACHABLE`,
  *   unless the input says `repair: "reboot"`.
@@ -59,7 +62,7 @@ import type { CallContext } from "../tools.js"
 import { imageName, STILL_BUILDING, type Golden } from "./golden.js"
 import { runList, runOne, type ItemContext } from "./list.js"
 import { pause } from "./sessions-common.js"
-import { inUseOf, limitAtCreate, pickRegion, type InFlight, type InUse } from "./regions.js"
+import { inUseOf, limitAtCreate, pickRegion, regionsText, type InFlight, type InUse } from "./regions.js"
 
 /** A machine the plugin created, resized or renamed this recently may be rebooted once on its own (#14 §6). */
 export const AGENT_REBOOT_WINDOW_MS = 10 * 60_000
@@ -125,6 +128,13 @@ export async function parseItem(raw: unknown, services: FleetServices, defaultWa
     return value as string | undefined
   }
   const region = choice("region", ["auto", ...REGIONS]) as RegionChoice | undefined
+  if (region !== undefined && region !== "auto" && !services.options.regions.includes(region)) {
+    throw boxdError("REGION_NOT_ALLOWED", `The input region "${region}" is outside the plugin option "regions", which allows only ${regionsText(services.options.regions)}; nothing was created.`, {
+      field: field("region"),
+      region,
+      allowed: services.options.regions,
+    })
+  }
   const size = choice("size", SIZES) as Size | undefined
   const wait = (choice("wait", ["ready", "created", "none"]) as Wait | undefined) ?? defaultWait
   const repair = choice("repair", ["reboot"]) === "reboot"
@@ -530,7 +540,7 @@ export async function createAt(
         // Taken, but not shown yet: the same call again finds it (never BOXD_FAILED for a machine that is there).
         throw new NotNow("creating", `boxd refused ${name} in ${input.region} because the name is taken, but its machine get does not show that machine yet`)
       }
-      if (error instanceof BoxdError && error.code === "MACHINE_LIMIT") throw limitAtCreate(error, input.region, await boxd.machineLimit(op).catch(() => []), input.used, machines.inFlight)
+      if (error instanceof BoxdError && error.code === "MACHINE_LIMIT") throw limitAtCreate(error, input.region, await boxd.machineLimit(op).catch(() => []), input.used, machines.inFlight, options.regions)
       throw error
     } finally {
       end(landed)
@@ -646,10 +656,11 @@ async function createOrAdopt(machines: Machines, item: EnsureItem, context: Item
   await checkBudget(machines, op)
   const used = inUseOf(listing.machines, asked)
   const snapshots = await machines.golden.images(op)
-  const withImage = new Set(REGIONS.filter((region) => snapshots.some((row) => row.region === region && row.name === image)))
+  const allowed = options.regions
+  const withImage = new Set(REGIONS.filter((region) => allowed.includes(region) && snapshots.some((row) => row.region === region && row.name === image)))
   const limits = where ? [] : await boxd.machineLimit(op)
   // The pick and its reservation in one step, with nothing awaited between: items picking at once count each other.
-  const want = where ?? pickRegion({ choice: item.region ?? options.region, limits, keepFree: options.keepFree, inFlight: machines.inFlight, used, withImage })
+  const want = where ?? pickRegion({ choice: item.region ?? options.region, limits, keepFree: options.keepFree, inFlight: machines.inFlight, used, withImage, allowed })
   let reserved: ((landed: boolean) => void) | undefined = where ? undefined : machines.inFlight.reserve(want)
   try {
     const claim = await claimRegion(machines, item.workId, want, fresh, image, op)
@@ -662,6 +673,14 @@ async function createOrAdopt(machines: Machines, item: EnsureItem, context: Item
       // Another call claimed a region first: its machine may have landed there.
       const there = await adoptAt(machines, { workId: item.workId, region, adopt: item.adopt }, op)
       if (there) return await adopted(there)
+    }
+    if (!allowed.includes(region)) {
+      // The pick and the image set are both filtered to the allowlist, so this is a region an earlier call claimed in
+      // the record while it was allowed: finishing that claim is new placement, and it stays refused.
+      throw boxdError("REGION_NOT_ALLOWED", `This work's record claims region "${region}", where no machine landed, and the plugin option "regions" allows only ${regionsText(allowed)}; the create would be new placement outside it, so nothing was built or created. Add "${region}" to "regions" and call again.`, {
+        region,
+        allowed,
+      })
     }
     if (!withImage.has(region)) {
       if (options.buildGolden === "never") throw boxdError("GOLDEN_MISSING", `No golden image ${image} in ${region}, and buildGolden is "never".`, { region, size })

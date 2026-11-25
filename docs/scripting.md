@@ -23,8 +23,9 @@ tool itself returns, with a `state` on every answer. `text` is what the model pa
 
 ## Watching a fleet
 
-`boxd_status` answers for the whole fleet in one call: `counts` by phase, each region's machine headroom, the works that
-need a decision (`attention`, worst first, at most `limit`, with `more` for the rest), repeated causes folded into
+`boxd_status` answers for the whole fleet in one call: `counts` by phase, the default region and the option `regions`
+that pins new placement, each region's machine headroom, the works that need a decision (`attention`, worst first, at
+most `limit`, with `more` for the rest), repeated causes folded into
 `groups`, and the `cost` and `cleanup` blocks. It never wakes a machine and never reads an idle guest. Its `cursor`,
 passed back as `since`, answers only the works that changed since; a cursor older than the kept event log answers the
 full view with `cursorExpired: true`, so a gap is never mistaken for "nothing changed".
@@ -219,7 +220,8 @@ A call the RPC refuses before the method runs is the RPC error `failed`, with `d
 A method that ran and refused answers with its output, not an RPC error, in the same shape as a success: `{ "state":
 "<state>", "error": "<code>", "message": "<what happened>", "next": "<the one next call>" }`, with `workId`, `machine`
 and `region` when the call named a valid work, and the facts its code carries: `field` (`NAME_INVALID`), `paths`,
-`count` and `kind` (`UNTRACKED`), `limit` per region (`MACHINE_LIMIT`), `progress` (`LEDGER_IMPORTING`), `uncertain`
+`count` and `kind` (`UNTRACKED`), `limit` per region (`MACHINE_LIMIT`), `region` and `allowed` (`REGION_NOT_ALLOWED`),
+`progress` (`LEDGER_IMPORTING`), `uncertain`
 (`CANCELLED`), and `today`, `daily` and `currency` (`BUDGET_REACHED`). `state` is `refused`, `failed`, `unreachable`,
 `busy`, `starting`, `gone`, `asleep` or `cancelled`, so a loop reads `state` on every answer. The codes a script meets
 most:
@@ -228,7 +230,8 @@ most:
 |---|---|---|
 | `LEDGER_IMPORTING` | the import of earlier works is not complete yet | the same call again in a few seconds |
 | `NOT_OURS` | no open work has that id, or its name now points at another machine | `boxd_ensure` for an unknown id; otherwise look at the machines the message names |
-| `MACHINE_LIMIT` | no region has room | the other `region` when it has room, or free machines with `boxd_drop` or `boxd_reassign` |
+| `MACHINE_LIMIT` | no allowed region has room | the other `region` when it has room, or free machines with `boxd_drop` or `boxd_reassign` |
+| `REGION_NOT_ALLOWED` | a new machine or image would be placed outside the option `regions` | a region the option lists, or add this one and restart OpenCode |
 | `SESSION_BUSY` | the session is running and the call needs it idle | wait for the notice or `boxd_status`, or `mode: "interrupt"` |
 | `NOT_SAVED` | drop without a fresh harvest, or the guest moved on since it | `boxd_harvest`, then drop again |
 | `RUN_FAILED`, `GUEST_AUTH_FAILED` | the session's last run failed | read `lastText`; fix the credential for an auth failure; then `boxd_submit` again |

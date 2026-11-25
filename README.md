@@ -21,7 +21,8 @@ boxd is a trademark of Azin Tech Operating Company B.V.; this unofficial plugin 
 ## Install
 
 Install from a release: `opencode plugin add github:we-the-rebel-alliance/boxd-plugin#v<version>`. The first release on
-plugin-contract is v0.0.0 (phase 4b).
+plugin-contract is v0.0.0 (phase 4b). Tags from before the transfer are not releases of this plugin and are not
+installable.
 
 Run `opencode reload`, or restart OpenCode, then run `/boxd-status`.
 
@@ -52,9 +53,11 @@ Each tool takes one work, or `works: [...]` for up to 300 at once, and returns o
 returns `{ state, counts, results }` with the results in input order. Read a tool's description before its first call.
 
 1. `boxd_ensure` makes a work exist, set up and ready: it picks the region with the most free machines (`region`,
-   default `"auto"`), creates `oc-<work id>` from the golden image for that region, its `size` and this OpenCode
-   (building the image first when it is missing), clones `repo`, sets the guest's `git` identity, and waits up to 90 s
-   for the guest's OpenCode. Calling it again converges an existing work: it wakes, resizes or upgrades it in place.
+   default `"auto"`) among the regions the option `regions` allows (every region by default), creates `oc-<work id>`
+   from the golden image for that region, its `size` and this OpenCode (building the image first when it is missing),
+   clones `repo`, sets the guest's `git` identity, and waits up to 90 s for the guest's OpenCode. A region outside
+   `regions` is refused `REGION_NOT_ALLOWED` and nothing is created. Calling it again converges an existing work: it
+   wakes, resizes or upgrades it in place, wherever the work already lives.
 2. `boxd_submit` admits a prompt and returns; it does not wait for the model. `mode` decides how it reaches a running
    session: `"steer"` (the default) at its next step boundary, `"queue"` after the run, `"interrupt"` at once. `files`
    copies files from here into the work tree first.
@@ -157,7 +160,8 @@ A tool that fails returns `state`, `error` (the code), `message` (what happened)
 | `FILE_CONFLICT` | A harvested file changed here since the last harvest, so it was not overwritten. Keep the edit and leave that path out, or restore it and harvest again. |
 | `NOT_OURS` | No open work has this id, or `oc-<work id>` now has another machine id than the ledger records, or two regions hold it, or the machine to adopt is another open work's (even with `adopt: true`). Nothing was changed. `boxd_ensure` for an unknown id; otherwise look at the machines the message names. |
 | `NOT_REASSIGNABLE` | `from` has a session, uploaded files or a dirty tree, or `to` is an open work. Drop it after a harvest, or reassign a work with no prompt yet. |
-| `MACHINE_LIMIT` | No region has room; `limit`, `inUse` and `free` are given per region. Pass the other `region` when it has room; otherwise free machines with `boxd_drop` or `boxd_reassign`, or have the owner raise the limit. |
+| `MACHINE_LIMIT` | No allowed region has room; `limit`, `inUse` and `free` are given per region. Pass the other `region` when it has room; otherwise free machines with `boxd_drop` or `boxd_reassign`, or have the owner raise the limit. |
+| `REGION_NOT_ALLOWED` | A new machine or golden image would be placed in a region the option `regions` does not list. Pass an allowed `region` (`"fra"` or `"nyc"` by default; the message lists this project's set, and `/boxd-status` shows it), or add this region to `regions` and restart OpenCode. |
 | `SIZE_UNAVAILABLE` | The organisation's quota does not allow this size. Pick a smaller `size`. |
 | `GOLDEN_MISSING` | No golden image for this region, size and OpenCode, and `buildGolden` is `"never"`. Call `boxd_golden({ region, size })`. |
 | `GOLDEN_BUILD_FAILED` | A golden image build failed at the step the message names. Fix `goldenSetup` or the base, then `boxd_golden` again. |
@@ -209,14 +213,19 @@ Warnings sit beside a result that succeeded, never in place of one:
 - `NO_MODEL_CREDENTIAL`: a golden build found no provider key among the account's secrets.
 
 The `/boxd` dialog and `/boxd-status` show the same status: the boxd CLI's sign-in, connection, access, the golden
-image, the guest version, works by phase, the works that need a decision, each region's machines, the cost, automation
-and notices, health, tools, agents without the default rules, the OpenCode version and one next step.
+image, the guest version, works by phase, the works that need a decision, the default and allowed regions, each
+region's machines, the cost, automation and notices, health, tools, agents without the default rules, the OpenCode
+version and one next step.
 
 ## Known limits
 
 - **The machine limit and usage are read as boxd documents them.** The per-region shape of `manage machine-limit
   --json` and the keys of `manage usage --json` are not confirmed against every boxd release; the region headroom in
   status, `MACHINE_LIMIT`'s numbers, `auto`'s region choice and the machine cost rest on that reading.
+- **`regions` pins new placement, not history.** It refuses a new work's machine, and a golden build for one, outside its
+  list; a work that already lives in another region still converges, is harvested, resumed and dropped there, and a
+  resume rebuilds a gone machine in the work's own region, building that image there when it is missing (unless
+  `buildGolden` is `"never"`). A prune deletes images in every region, because deleting is not placement.
 - **A call waits at most 4 minutes, measured up to 10.** A tool answers its real state (`creating`, `starting`) with a
   `next` after at most 4 minutes.
 - **Model spend is not measured.** `cost.today`, the budget and `/boxd-cleanup` count boxd's machine cost only.

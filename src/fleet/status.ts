@@ -518,6 +518,8 @@ export async function fleetStatus(services: FleetServices, input: StatusInput, c
     cursor,
     asOf: listing ? new Date(listing.takenAt).toISOString() : now().toISOString(),
     counts,
+    region: services.options.region,
+    allowedRegions: services.options.regions,
     regions: (limits ?? [])
       .filter((limit) => !input.region || limit.region === input.region)
       .map((limit) => ({ ...limit, keepFree: services.options.keepFree[limit.region] ?? 0, works: open.filter((record) => record.region === limit.region).length })),

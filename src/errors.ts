@@ -63,8 +63,13 @@ export const CODES = {
   },
   MACHINE_LIMIT: {
     state: "refused",
-    message: "No region has room for another machine; limit, inUse and free are given per region.",
+    message: "No allowed region has room for another machine; limit, inUse and free are given per region.",
     next: 'Pass region: "<other region>" when it has room; otherwise free machines with boxd_drop or boxd_reassign, or have the owner raise the limit with boxd manage machine-limit request --max-vms <n>.',
+  },
+  REGION_NOT_ALLOWED: {
+    state: "refused",
+    message: "A new machine or golden image would be placed in a region the plugin option \"regions\" does not allow.",
+    next: 'Pass region: "<an allowed region>" ("fra" or "nyc" by default; the message lists the ones this project allows, and /boxd-status shows them), or add this region to "regions" and restart OpenCode.',
   },
   SIZE_UNAVAILABLE: { state: "refused", message: "The organisation's quota does not allow this size.", next: "Pick a smaller size." },
 

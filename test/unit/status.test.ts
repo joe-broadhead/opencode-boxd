@@ -2,7 +2,7 @@
 // family's shared fields, a Cost row, and one next step.
 import { describe, expect, test } from "bun:test"
 import { boxdError } from "../../src/errors.js"
-import { buildStatus, formatStatus, readStatus } from "../../src/status.js"
+import { buildStatus, formatStatus, readStatus, StatusRpc } from "../../src/status.js"
 import { TOOLS } from "../../src/tools.js"
 import { VERSION } from "../../src/version.js"
 import { fleet, HOST, statusFacts } from "../support/fleet.js"
@@ -73,11 +73,29 @@ describe("the status model", () => {
       .split("\n")
       .filter((line) => line.startsWith("- "))
       .map((line) => line.slice(2, line.indexOf(":", 3) === -1 ? undefined : line.indexOf(":", 3)))
-    expect(labels).toEqual(["boxd CLI", "Connection", "Access", "Image", "Guest", "Works", "Attention", "Machines", "Cost", "Automation", "Health", "Tools", "Agents without default rules", "OpenCode", "Next step"])
+    expect(labels).toEqual(["boxd CLI", "Connection", "Access", "Image", "Guest", "Works", "Attention", "Regions", "Machines", "Cost", "Automation", "Health", "Tools", "Agents without default rules", "OpenCode", "Next step"])
     expect(text.match(/- Next step:/g)).toHaveLength(1)
     expect(text).toContain("- Image: oc-golden-2.2.6-2x8 for a new work in the default size; boxd_ensure builds it when it is missing")
     expect(text).toContain("the 9 machine changes")
     expect(text).toContain("- Machines: fra 2 of 300 in use, 298 free; nyc 0 of 300 in use, 300 free")
+  })
+
+  test("the Regions row shows the default region and the allowlist that pins new placement", () => {
+    const open = buildStatus(statusFacts())
+    expect(open).toMatchObject({ region: "auto", allowedRegions: ["fra", "nyc"] })
+    expect(formatStatus(open)).toContain('- Regions: default "auto"; allowed "fra", "nyc"')
+    const pinned = buildStatus(statusFacts({ region: "fra", allowedRegions: ["fra"] }))
+    expect(formatStatus(pinned)).toContain('- Regions: default "fra"; allowed "fra"')
+  })
+
+  test("the status RPC schema requires the default region and the allowlist", () => {
+    const output = StatusRpc.methods.status.output as {
+      readonly required: readonly string[]
+      readonly properties: Record<string, { readonly enum?: readonly string[]; readonly items?: { readonly enum?: readonly string[] } }>
+    }
+    expect(output.required).toEqual(expect.arrayContaining(["region", "allowedRegions"]))
+    expect(output.properties.region?.enum).toEqual(["auto", "fra", "nyc"])
+    expect(output.properties.allowedRegions?.items?.enum).toEqual(["fra", "nyc"])
   })
 
   test("the Cost row: counts, the estimate per hour, today, and the top cleanup action", () => {
