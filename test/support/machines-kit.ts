@@ -1,14 +1,12 @@
-// Package C1's test kit: the plugin's own services (the runtime on the fake boxd CLI, the v0 import and the ledger as
-// the plugin builds them) with a fake guest server, narrow fakes for the watcher, cost and the host's sessions, and
-// C1's runs. A test seeds machines, snapshots and faults on the fake, and reads back the calls, the spawns and the
+// Package C1's test kit: the plugin's own services (the provider on the fake boxd CLI and the ledger as the plugin
+// builds them) with a fake guest server, narrow fakes for the watcher, cost and the host's sessions, and C1's runs. A test seeds machines, snapshots and faults on the fake, and reads back the calls, the spawns and the
 // ledger.
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { boxdError } from "../../src/errors.js"
-import { createRuntime, type PluginRuntime } from "../../src/exec/runtime.js"
+import { createProvider, type PluginProvider } from "../../src/provider/index.js"
 import { machineRuns, type MachineSeam } from "../../src/fleet/machines.js"
-import { createImportV0 } from "../../src/import-v0.js"
 import { createLedger } from "../../src/ledger/index.js"
 import type { WorkRecord } from "../../src/ledger/types.js"
 import { parseOptions } from "../../src/options.js"
@@ -16,16 +14,16 @@ import type { CostPort } from "../../src/services.js"
 import type { FleetServices, HostServices, SessionAccess } from "../../src/services.js"
 import { notBuilt } from "./not-built.js"
 import type { ChangeTarget, MachineId, MachineName, OpContext, Region } from "../../src/ports.js"
-import type { CallContext } from "../../src/tools.js"
+import type { CallContext } from "../../src/call.js"
 import { startFakeGuest, type FakeGuest } from "../host/fake-guest.js"
 import { startSpawnCounter, type CountingFake } from "../host/spawn-counter.js"
 
-export const VERSION = "2.2.6"
+export const VERSION = "2.4.1"
 
 export interface Kit {
   readonly guest: FakeGuest
   readonly counter: CountingFake
-  readonly runtime: PluginRuntime
+  readonly runtime: PluginProvider
   readonly services: FleetServices
   readonly runs: ReturnType<typeof machineRuns>
   readonly project: string
@@ -44,12 +42,6 @@ export interface Kit {
   reset(): void
   record(workId: string): Promise<WorkRecord | undefined>
   write(record: WorkRecord): Promise<void>
-  /**
-   * The v0 takeovers the runs made, in order, and whether the v1 password was still absent at each (a takeover runs
-   * before any v1 setup). The kit stands in for `ADOPT_COMMAND` on the fake disk: the real command's absolute paths
-   * would reach this laptop's own home through the fake's shell.
-   */
-  readonly adopted: Array<{ readonly machineId: string; readonly beforeSetup: boolean }>
   /** Runs `fn` as the plugin would on a machine it owns: under its lock, on a target checked by id. */
   change<T>(region: Region, name: string, id: string, fn: (target: ChangeTarget) => Promise<T>): Promise<T>
   /** Installs the plugin's helper on a seeded machine, as a golden image carries it. */
@@ -72,7 +64,7 @@ export interface KitInput {
 export async function startKit(input: KitInput = {}): Promise<Kit> {
   const guest = startFakeGuest({ version: VERSION })
   const counter = await startSpawnCounter({ guestPort: guest.port, version: VERSION })
-  const runtime = createRuntime({ boxdBin: counter.boxdBin, opencodeBin: counter.opencodeBin })
+  const runtime = createProvider({ boxdBin: counter.boxdBin, opencodeBin: counter.opencodeBin })
   const root = realpathSync(mkdtempSync(join(realpathSync(tmpdir()), "boxd-c1-")))
   const project = join(root, "project")
   mkdirSync(project, { recursive: true })
@@ -86,32 +78,11 @@ export async function startKit(input: KitInput = {}): Promise<Kit> {
     hostVersion: input.hostVersion === undefined ? VERSION : input.hostVersion,
     projectDirectory: project,
     ledgerRoot: join(root, "ledger"),
-    boxdBin: counter.boxdBin,
-    opencodeBin: counter.opencodeBin,
     clock: { now: () => new Date() },
     sessions,
-    report: (area, problem) => void (problem ? problems.set(area, problem) : problems.delete(area)),
+    report: (area, problem) => { problem ? problems.set(area, problem) : problems.delete(area) },
   }
-  const imported = createImportV0({ ...host, ...runtime })
-  const adopted: Array<{ machineId: string; beforeSetup: boolean }> = []
-  const importV0: typeof imported = {
-    ...imported,
-    state: () => imported.state(),
-    run: (context) => imported.run(context),
-    readPhase: (target, request, context) => imported.readPhase(target, request, context),
-    dispose: () => imported.dispose(),
-    adopt: async (target) => {
-      const disk = counter.fake.disk(target.machineId)
-      const v1 = join(disk, "home/boxd/.opencode-boxd/password")
-      const v0 = join(disk, "tmp/opencode-boxd/password")
-      adopted.push({ machineId: target.machineId, beforeSetup: !existsSync(v1) })
-      if (!existsSync(v1) && existsSync(v0)) {
-        mkdirSync(join(disk, "home/boxd/.opencode-boxd"), { recursive: true })
-        copyFileSync(v0, v1)
-      }
-    },
-  }
-  const ledger = createLedger({ ...host, ...runtime, importV0 })
+  const ledger = createLedger({ ...host, ...runtime })
   const kit = {} as Kit
   const cost: CostPort = {
     ...notBuilt<CostPort>("cost"),
@@ -134,14 +105,11 @@ export async function startKit(input: KitInput = {}): Promise<Kit> {
     ...host,
     ...runtime,
     guest: guestPort,
-    importV0,
     ledger,
     watch: { subscribe: () => () => {}, snapshot: () => ({ asOf: new Date(0).toISOString(), works: [] }), sessionGone: () => {} },
     cost,
   }
   const op = (callId: string): OpContext => ({ call: { callId, source: "boxd_ensure" } })
-  // The import runs once (an empty v0 ledger) before the first call, as at plugin start.
-  await ledger.ready(op("kit"))
   const runs = machineRuns(services, { intervalMs: 50, ...input.seam })
   Object.assign(kit, {
     guest,
@@ -152,7 +120,6 @@ export async function startKit(input: KitInput = {}): Promise<Kit> {
     project,
     problems,
     parents,
-    adopted,
     budgetReached: false,
     staleReads: 0,
     call: (over: Partial<CallContext> = {}) => ({ sessionID: "ses_coordinator", agent: "build", messageID: "msg_1", id: `call_${++calls}`, signal: new AbortController().signal, via: "rpc" as const, ...over }),
@@ -169,7 +136,6 @@ export async function startKit(input: KitInput = {}): Promise<Kit> {
     dispose: async () => {
       await runtime.dispose()
       await ledger.dispose()
-      await importV0.dispose()
       await counter.dispose()
       await guest.close()
       rmSync(root, { recursive: true, force: true })
@@ -194,7 +160,6 @@ export function workRecord(workId: string, over: Partial<WorkRecord> = {}): Work
     guestDirectory: `/home/boxd/work/${workId}`,
     createdAt: at,
     touchedAt: at,
-    guestHelper: "v1",
     ...over,
   }
 }

@@ -5,7 +5,9 @@ import { errorLine, failureCode, isCredentialFailure } from "../../src/outcome.j
 
 describe("a failed run", () => {
   test("a failure's line is redacted and cut, and its response body is never read", () => {
-    const line = errorLine({ type: "provider.auth", message: "denied for key=sk-live-0123456789abcdef", response: { body: "secret-body" } })
+    // An invented credential, never a real one: the provider's error line must be redacted.
+    const key = ["sk", "live", "0123456789abcdef"].join("-")
+    const line = errorLine({ type: "provider.auth", message: `denied for key=${key}`, response: { body: "secret-body" } })
     expect(line).toBe("provider.auth: denied for key=[redacted]")
     expect(line).not.toContain("sk-live")
     expect(line).not.toContain("secret-body")

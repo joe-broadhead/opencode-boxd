@@ -1,9 +1,9 @@
 // Review of #23, round 2: the read refresh in the runner and the CLI port (M-1, no stampede, Stop and dispose during a refresh, a refresh whose listing fails).
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { createBoxdCli } from "../../src/boxd/cli.js"
+import { createBoxdCli } from "../../src/provider/boxd/cli.js"
 import { BoxdError } from "../../src/errors.js"
-import { createRunner } from "../../src/exec/runner.js"
+import { createRunner } from "../../src/provider/runner.js"
 import { notRead } from "../../src/fleet/model.js"
 import type { BoxdPort, OpContext, ReadTarget } from "../../src/ports.js"
 import { startFakeCli, type FakeCli } from "../host/fake-cli.js"
@@ -30,7 +30,7 @@ describe("r2 runner", () => {
   test("no stampede: 40 queued background reads at 400 ms each take about one listing per 2 s window", async () => {
     for (let i = 0; i < 40; i++) fake.machine({ name: `oc-m${i}`, region: "fra" })
     const listing = await boxd.list({ maxAgeMs: 0 }, ctx("l"))
-    fake.update((s) => void (s.latencyMs = [400, 400]))
+    fake.update((s) => { s.latencyMs = [400, 400] })
     const before = lists(fake)
     const t0 = Date.now()
     const reads = Array.from({ length: 40 }, (_, i) => settle(boxd.exec({ region: "fra", name: `oc-m${i}`, listing, machineId: null } as ReadTarget, "true", { timeoutSeconds: 5, json: false }, ctx(`r${i}`))))
@@ -49,7 +49,7 @@ describe("r2 runner", () => {
     const blockers = Array.from({ length: 4 }, (_, i) => runner.spawn({ ...ctx(`b${i}`), bin: "sleep", args: ["2.5"], timeoutMs: 10_000 }))
     await sleep(50)
     const read = settle(boxd.exec({ region: "fra", name: "oc-a", listing, machineId: null }, "true", { timeoutSeconds: 5, json: false }, ctx("r")))
-    fake.update((s) => void (s.machines.find((m) => m.name === "oc-a")!.status = "standby"))
+    fake.update((s) => { s.machines.find((m) => m.name === "oc-a")!.status = "standby" })
     await Promise.all(blockers)
     const answer = await read
     expect(answer.ok).toBe(false)
@@ -79,7 +79,7 @@ describe("r2 runner", () => {
   test("Stop during a refresh: that read answers CANCELLED (not a failure); a joiner of the same refresh still runs", async () => {
     fake.machine({ name: "oc-a", region: "fra" })
     const listing = await boxd.list({ maxAgeMs: 0 }, ctx("l"))
-    fake.update((s) => void (s.latencyMs = [1500, 1500]))
+    fake.update((s) => { s.latencyMs = [1500, 1500] })
     await sleep(2100)
     const stop = new AbortController()
     const a = settle(boxd.exec({ region: "fra", name: "oc-a", listing, machineId: null }, "true", { timeoutSeconds: 5, json: false }, ctx("A", stop.signal)))
@@ -96,7 +96,7 @@ describe("r2 runner", () => {
   test("dispose during a refresh: every queued read settles CANCELLED, nothing hangs", async () => {
     for (let i = 0; i < 12; i++) fake.machine({ name: `oc-d${i}`, region: "fra" })
     const listing = await boxd.list({ maxAgeMs: 0 }, ctx("l"))
-    fake.update((s) => void (s.latencyMs = [1500, 1500]))
+    fake.update((s) => { s.latencyMs = [1500, 1500] })
     await sleep(2100)
     const reads = Array.from({ length: 12 }, (_, i) => settle(boxd.exec({ region: "fra", name: `oc-d${i}`, listing, machineId: null }, "true", { timeoutSeconds: 5, json: false }, ctx(`d${i}`))))
     await sleep(300)

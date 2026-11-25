@@ -1,7 +1,7 @@
 /**
  * Package D's watcher and notices (design §3.13): the sweep, `events.jsonl`, the notices to each work's root
  * coordinator, and the event stream package E consumes. Package D owns this file, `src/notices.ts` and
- * `src/fleet/model.ts`. `src/plugin.ts` calls `createWatch` once and disposes it with the plugin.
+ * `src/fleet/model.ts`. `src/index.ts` calls `createWatch` once and disposes it with the plugin.
  *
  * - **A local tick every 60 s** (no CLI call): it reads the ledger's index and tails `events.jsonl`, only when the file
  *   changed, so an event a change tool or another OpenCode process appended reaches the subscribers and the notices.
@@ -18,7 +18,6 @@
  */
 import { statSync } from "node:fs"
 import { join } from "node:path"
-import { BoxdError } from "./errors.js"
 import { LEDGER_PATHS, type Phase, type WorkRecord } from "./ledger/types.js"
 import { base, codeOf, notRead, observe, observeFailure, outcomeOf, phaseOf, promptedSince, readGuest, recordPhase, STATUS_TEXT_LIMIT, wantsRead, type Observed } from "./fleet/model.js"
 import { FileNoticeCursors } from "./notice-cursors.js"
@@ -73,7 +72,6 @@ export interface Watcher {
   flushNotices(): Promise<void>
 }
 
-const isGate = (error: unknown) => error instanceof BoxdError && (error.code === "LEDGER_IMPORTING" || error.code === "IMPORT_V0_FAILED")
 const ACTIVE: ReadonlySet<Phase> = new Set<Phase>(["busy", "creating", "starting", "unreachable"])
 
 export function createWatch(core: CoreServices, options: WatchOptions = {}): Watcher {
@@ -378,7 +376,7 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
           }
         }
       } catch (error) {
-        if (!isGate(error) && !abort.signal.aborted) core.report("watch", `The watcher's tick failed: ${reasonOf(error)}.`)
+        if (!abort.signal.aborted) core.report("watch", `The watcher's tick failed: ${reasonOf(error)}.`)
       }
     })()
     current = run
@@ -438,7 +436,6 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
           phase,
           outcome: outcomeOf(record, obs),
           saved: core.ledger.saved(record),
-          ...(record.laptopCopy ? { laptopCopy: record.laptopCopy } : {}),
           ...(obs?.needsInput ? { needsInput: obs.needsInput } : {}),
           ...(obs?.reading ? { reading: obs.reading } : {}),
           ...((phase === "idle" || phase === "ready") && obs?.since ? { idleSince: obs.since } : {}),

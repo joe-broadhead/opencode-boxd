@@ -7,9 +7,9 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { createBoxdCli } from "../../src/boxd/cli.js"
+import { createBoxdCli } from "../../src/provider/boxd/cli.js"
 import { BoxdError } from "../../src/errors.js"
-import { createRunner } from "../../src/exec/runner.js"
+import { createRunner } from "../../src/provider/runner.js"
 import type { BoxdPort, MachineId, OpContext, ReadTarget } from "../../src/ports.js"
 import { startFakeCli, type FakeCli } from "../host/fake-cli.js"
 import { running as alive, stillRunning } from "../support/processes.js"
@@ -25,7 +25,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
  * A descendant that leaves the child's process group (a new session) and keeps its stdout open, writing its pid first.
  * `os.setsid` from Python, which every test machine has, where the `setsid` binary is Linux's alone.
  */
-const escape = (file: string, seconds: number) =>
+const shellSleep = (file: string, seconds: number) =>
   `python3 -c 'import os, sys; os.setsid(); open(sys.argv[1], "w").write(str(os.getpid())); os.execvp("sleep", ["sleep", sys.argv[2]])' ${file} ${seconds}`
 
 let files = 0
@@ -196,7 +196,7 @@ describe("the boxd port's shared reads", () => {
   test("M-2: Stop of call A does not cancel call B that joined A's listing", async () => {
     fake.machine({ name: "oc-a", region: "fra" })
     await boxd.list({ maxAgeMs: 0 }, ctx("warm"))
-    fake.update((state) => void (state.latencyMs = [800, 800]))
+    fake.update((state) => { state.latencyMs = [800, 800] })
     // Older than the 1 ms the calls below accept, so both take a new listing rather than the warm one.
     await sleep(10)
     const stop = new AbortController()
@@ -213,7 +213,7 @@ describe("the boxd port's shared reads", () => {
 
   test("M-2: the same for the machine limit and the snapshots", async () => {
     await boxd.list({ maxAgeMs: 0 }, ctx("warm"))
-    fake.update((state) => void (state.latencyMs = [500, 500]))
+    fake.update((state) => { state.latencyMs = [500, 500] })
     const reads: Array<(context: OpContext) => Promise<unknown>> = [(context) => boxd.machineLimit(context), (context) => boxd.snapshots(context)]
     for (const read of reads) {
       const stop = new AbortController()
@@ -235,7 +235,7 @@ describe("the boxd port's shared reads", () => {
     const read = settle(boxd.exec(target, "echo read-ran", { timeoutSeconds: 5, json: false }, ctx("r")))
     await sleep(100)
     // The machine hibernates while the read waits in the queue.
-    fake.update((state) => void (state.machines.find((machine) => machine.name === "oc-a")!.status = "hibernated"))
+    fake.update((state) => { state.machines.find((machine) => machine.name === "oc-a")!.status = "hibernated" })
     await Promise.all(blockers)
     const answer = await read
     expect(answer.ok).toBe(false)
@@ -297,7 +297,7 @@ describe("process trees", () => {
   test("L-2: dispose settles a child whose escaped descendant holds its stdout, within the bound", async () => {
     const file = pidFile()
     const runner = createRunner({ killGraceMs: 200 })
-    const script = `${escape(file, 33)} & sleep 33`
+    const script = `${shellSleep(file, 33)} & sleep 33`
     const run = settle(runner.spawn({ ...ctx("t"), bin: "sh", args: ["-c", script], timeoutMs: 60_000 }))
     const escaped = await readPid(file)
     const started = Date.now()
@@ -313,7 +313,7 @@ describe("process trees", () => {
   test("L-2: a timeout settles the same way: the slot comes back", async () => {
     const file = pidFile()
     const runner = createRunner({ killGraceMs: 100 })
-    const script = `${escape(file, 34)} & sleep 34`
+    const script = `${shellSleep(file, 34)} & sleep 34`
     // The bound outlasts the descendant's escape, so the timeout finds it out of the group, holding the pipes.
     const run = settle(runner.spawn({ ...ctx("t"), bin: "sh", args: ["-c", script], timeoutMs: 12_000 }))
     const escaped = await readPid(file)

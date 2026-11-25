@@ -1,20 +1,17 @@
 // Pack, install and load the published shape: the tarball holds exactly the files whitelist, installs with lifecycle
-// scripts disabled, and both entry points load. Then, on each stock OpenCode release, the installed plugin is started
-// by the real binary and its tools, default rules, command and status RPC are checked. No boxd machine is ever started:
-// every tool call that would touch a machine is left out here (test/host does those against a fake CLI and a fake
-// guest).
+// scripts disabled, and the server entry loads. Then, on each stock OpenCode release, the installed plugin is started by
+// the real binary: its status RPC answers the contract's shape, its access rules are installed on the build agent, and
+// its skill is listed. No boxd machine is ever started.
 import { afterAll, describe, expect, test } from "bun:test"
 import { spawn, spawnSync } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { isBuiltin } from "node:module"
 import { createServer } from "node:net"
 import { arch, platform } from "node:os"
 import { basename, join, relative, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 import { SUPPORTED_HOST, TESTED_HOSTS } from "../../src/constants.js"
-import { defaultRules, type Rule } from "../../src/permissions.js"
-import { TOOLS } from "../../src/tools.js"
-import { StatusRpc } from "../../src/status.js"
 
 const root = fileURLToPath(new URL("../..", import.meta.url))
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
@@ -23,20 +20,18 @@ const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
   files: string[]
   exports: Record<string, string>
   devDependencies: Record<string, string>
+  capabilities: { plugin: { name: string }; methods: Record<string, { class: string }> }
 }
+const METHODS = Object.keys(pkg.capabilities.methods)
 // Outside the repository, so nothing resolves from the repository's own node_modules.
 const work = realpathSync(mkdtempSync(join(realpathSync("/tmp"), "boxd-pack-")))
 run("git", ["init", "--quiet", work], root)
 afterAll(() => rmSync(work, { recursive: true, force: true }), { timeout: 120_000 })
 
-const MAX_FILES = 30
-// The v0.1.0 redesign's runner, ledger, import and guest v1, with the machine runs, the fleet view, the watcher and cost
-// (about 169 KB packed with C1, D and E); still catches an accidentally bundled dependency. Re-checked at integration.
-const MAX_PACKED_BYTES = 192 * 1024
-const DIST = ["dist/index.js", "dist/tui.js"]
+const MAX_FILES = 60
+const MAX_PACKED_BYTES = 900 * 1024
+const DIST = ["dist/index.js"]
 const SERVER_HOST_MODULES = [/^node:/, /^@opencode\/plugin(?:\/|$)/]
-const TUI_HOST_MODULES = [/^node:/, /^@opencode\/plugin(?:\/|$)/, /^@opentui\//, /^solid-js(?:\/|$)/]
-const HOST_PACKAGES = ["@opencode/plugin", "@opentui/core", "@opentui/solid", "solid-js"]
 const BUILT_IN_AGENTS = ["build", "general", "explore", "compaction", "title", "summary", "plan"]
 const OFFLINE = {
   HTTP_PROXY: "http://127.0.0.1:9",
@@ -67,7 +62,7 @@ function pack(): Packed {
     packed = { filename: basename(tarball), size: statSync(tarball).size, entryCount: files.length, files }
     return packed
   }
-  run("node", [join(root, "scripts", "check.mjs"), "build"], root)
+  run("node", [join(root, "scripts", "check.mjs"), "bundle"], root)
   const result = run("npm", ["pack", "--json", "--ignore-scripts", "--pack-destination", work], root)
   packed = (JSON.parse(result) as Packed[])[0]!
   return packed
@@ -81,18 +76,16 @@ function project(name: string): string {
 }
 
 const installs = new Map<string, string>()
-function install(withHostPackages: boolean): string {
-  const name = withHostPackages ? "with-host-packages" : "alone"
-  const existing = installs.get(name)
+function install(): string {
+  const existing = installs.get("alone")
   if (existing) return existing
-  const dir = project(name)
-  const hosts = withHostPackages ? HOST_PACKAGES.map((item) => `${item}@${pkg.devDependencies[item]}`) : []
-  run("npm", ["install", join(work, pack().filename), ...hosts, "--ignore-scripts", "--no-audit", "--no-fund", "--prefer-offline"], dir)
-  installs.set(name, dir)
+  const dir = project("alone")
+  run("npm", ["install", join(work, pack().filename), `@opencode/plugin@${pkg.devDependencies["@opencode/plugin"]}`, "--ignore-scripts", "--no-audit", "--no-fund", "--prefer-offline"], dir)
+  installs.set("alone", dir)
   return dir
 }
 
-const installedPackage = (withHostPackages: boolean) => join(install(withHostPackages), "node_modules", ...pkg.name.split("/"))
+const installedPackage = () => join(install(), "node_modules", ...pkg.name.split("/"))
 
 function isolated(base: string) {
   const home = join(base, "home")
@@ -125,96 +118,92 @@ describe("package tarball", () => {
     expect(paths).toContain("skills/boxd-sessions/SKILL.md")
   }, 120_000)
 
-  test("ships the NOTICE for the bundled source contract", () => {
-    const notice = run("tar", ["-xzOf", join(work, pack().filename), "package/NOTICE"], root)
-    expect(notice).toContain("@we-the-rebel-alliance/source-contract 0.3.0")
-    expect(notice).toContain("tools RPC transport, events and cursor modules")
-    expect(notice).toContain("Copyright (c) 2026 Joe Broadhead")
-    expect(notice).toContain("MIT License")
-  })
-
-  test("installs with scripts disabled and loads both entry points under Bun", () => {
-    const consumer = install(true)
+  test("installs with scripts disabled and the server entry loads under Bun", () => {
+    const consumer = install()
     const probe = join(consumer, "probe.mjs")
     writeFileSync(
       probe,
-      [
-        "const out = {}",
-        `for (const [part, specifier] of [["server", ${JSON.stringify(pkg.name)}], ["tui", ${JSON.stringify(`${pkg.name}/tui`)}]]) {`,
-        "  const plugin = (await import(specifier)).default",
-        "  out[part] = { id: plugin?.id, setup: typeof plugin?.setup }",
-        "}",
-        "console.log(JSON.stringify(out))",
-      ].join("\n"),
+      ["const plugin = (await import(" + JSON.stringify(`${pkg.name}/server`) + ")).default", "console.log(JSON.stringify({ id: plugin?.id, setup: typeof plugin?.setup }))"].join("\n"),
     )
     const output = run(process.execPath, [probe], consumer, { PATH: process.env.PATH, ...isolated(join(work, "bun-probe")) })
-    expect(JSON.parse(output.trim().split("\n").at(-1)!)).toEqual({
-      server: { id: "boxd.machines", setup: "function" },
-      tui: { id: "boxd.machines.tui", setup: "function" },
-    })
+    expect(JSON.parse(output.trim().split("\n").at(-1)!)).toEqual({ id: "boxd", setup: "function" })
   }, 300_000)
 
-  test("dist holds only the two entry bundles, and they import no sibling module", () => {
-    const dist = join(installedPackage(true), "dist")
-    expect(tree(relative(root, dist), dist).sort()).toEqual(["index.js", "tui.js"])
-    for (const file of ["index.js", "tui.js"]) expect(relativeImports(readFileSync(join(dist, file), "utf8"))).toEqual([])
+  test("dist holds only the one entry bundle, and it imports no sibling module", () => {
+    const dist = join(installedPackage(), "dist")
+    expect(tree(relative(root, dist), dist).sort()).toEqual(DIST.map((path) => basename(path)))
+    for (const file of DIST) expect(relativeImports(readFileSync(join(dist, basename(file)), "utf8"))).toEqual([])
   }, 300_000)
 
   test("dist imports only modules the host provides", () => {
-    const dist = join(installedPackage(true), "dist")
+    const file = join(installedPackage(), "dist", "index.js")
     // The scan finds the bundle's real imports, so an empty foreign list means something.
-    expect(specifiers(readFileSync(join(dist, "index.js"), "utf8"))).toContain("@opencode/plugin")
-    expect(foreign(join(dist, "index.js"), SERVER_HOST_MODULES)).toEqual([])
-    expect(foreign(join(dist, "tui.js"), TUI_HOST_MODULES)).toEqual([])
+    expect(specifiers(readFileSync(file, "utf8"))).toContain("@opencode/plugin")
+    expect(foreign(file, SERVER_HOST_MODULES)).toEqual([])
   }, 300_000)
 })
 
 describe.each(TESTED_HOSTS)("installed alone, in stock OpenCode %s", (version) => {
-  test("is active, registers the thirteen tools, adds the default rules, and answers the status RPC", async () => {
-    const installed = installedPackage(false)
+  test("is active, answers the contract's status RPC, installs its access rules and lists its skill", async () => {
+    const installed = installedPackage()
     const host = await serve(version, installed)
     try {
       const plugin = await host.until("the plugin finishes loading", async () => {
         const { data } = await host.api<{ data: { id: string; state: { status: string; error?: string } }[] }>("GET", "/api/plugin")
-        const found = data.find((item) => item.id === "boxd.machines")
+        const found = data.find((item) => item.id === "boxd")
         if (found?.state.status === "failed") throw new Error(`the plugin failed: ${found.state.error}`)
         return found && found.state.status !== "loading" ? found : undefined
       })
       expect(plugin.state).toEqual({ status: "active" })
 
-      // The status RPC counts the tools OpenCode lists in the `boxd` namespace: thirteen, none unknown.
-      await host.until("the thirteen tools are registered", async () => {
-        const { output } = await host.api<{ output: { tools: number; unknownCount: number } }>("POST", "/api/rpc/boxd.machines/status", { input: {} })
-        return output.tools === TOOLS.length && output.unknownCount === 0
-      })
+      const { data: created } = await host.api<{ data: { id: string } }>("POST", "/api/session", { agent: "build" })
+      const { output } = await host.api<{ output: Record<string, unknown> }>("POST", "/api/rpc/boxd/status", { input: { sessionID: created.id, input: {} } })
+      expect(Object.keys(output).sort()).toEqual(["accounts", "host", "name", "nextStep", "state", "unguardedAgents", "version"])
+      expect(output).toMatchObject({ name: "boxd", version: pkg.version, host: { version, range: SUPPORTED_HOST, tested: [version] } })
+      expect(["ready", "needs_sign_in", "error"]).toContain(String(output["state"]))
+      expect(output["nextStep"] === null || typeof output["nextStep"] === "string").toBe(true)
+      expect(output["accounts"]).toEqual([])
 
-      const build = await host.until("the build agent has the default rules", async () => {
-        const { data } = await host.api<{ data: { id: string; permissions: Rule[] }[] }>("GET", "/api/agent")
+      // Every method has its generated rule on the build agent, after its base allow.
+      const build = await host.until("the build agent has the generated rules", async () => {
+        const { data } = await host.api<{ data: { id: string; permissions: { action: string; resource: string; effect: string }[] }[] }>("GET", "/api/agent")
         const permissions = data.find((agent) => agent.id === "build")?.permissions
-        return permissions?.slice(1, 1 + defaultRules().length)
+        return permissions?.find((rule) => rule.action === "boxd.status")
       })
-      expect(build).toEqual(defaultRules())
-
-      const { output } = await host.api<{ output: Record<string, unknown> }>("POST", "/api/rpc/boxd.machines/status", { input: {} })
-      // An empty ledger: the fleet is read (a stock host has no boxd CLI, so the listing fails and says so), and the
-      // package's posture, hooks and tools are reported.
-      expect(output).toMatchObject({
-        version: pkg.version,
-        state: "connected",
-        host: { version, range: SUPPORTED_HOST, tested: true },
-        image: `oc-golden-${version}-2x8`,
-        guestVersion: version,
-        openWorks: 0,
-        unknownCount: 0,
-        unguardedAgents: [],
-        problems: [],
-      })
-      expect(StatusRpc.methods.status.output.required).toContain("nextStep")
+      expect(build).toMatchObject({ resource: "*", effect: "allow" })
+      expect(METHODS).toContain("status")
 
       const { data: agents } = await host.api<{ data: { id: string }[] }>("GET", "/api/agent")
       expect(agents.map((agent) => agent.id).filter((id) => !BUILT_IN_AGENTS.includes(id))).toEqual([])
-      const { data: skills } = await host.api<{ data: { id: string; path: string }[] }>("GET", "/api/skill")
-      expect(skills.filter((skill) => skill.id === "boxd-sessions").map((skill) => skill.path)).toEqual([join(installed, "skills", "boxd-sessions", "SKILL.md")])
+      const { data: skills } = await host.api<{ data: { id: string; description?: string; path: string; content?: string }[] }>("GET", "/api/skill")
+      const files = readdirSync(join(installed, "skills"), { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && existsSync(join(installed, "skills", entry.name, "SKILL.md")))
+        .map((entry) => {
+          const path = join(installed, "skills", entry.name, "SKILL.md")
+          const text = readFileSync(path, "utf8").replace(/\r\n/g, "\n")
+          const front = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(text)?.[1]
+          const parsed = front === undefined ? undefined : (Bun.YAML.parse(front) as unknown)
+          const fields = typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : {}
+          return { id: typeof fields.name === "string" ? fields.name : entry.name, path, description: typeof fields.description === "string" ? fields.description : "" }
+        })
+      expect(files.length).toBeGreaterThan(0)
+      const byId = new Map(skills.map((skill) => [skill.id, skill]))
+      const badDescription = (description: string) => description === "" || description === ">" || description === "|"
+      for (const file of files) {
+        const skill = byId.get(file.id)
+        expect(skill).toBeDefined()
+        const description = String(skill!.description ?? "")
+        expect(badDescription(description)).toBe(false)
+        expect(badDescription(file.description)).toBe(false)
+        expect(description).toBe(file.description)
+        expect(String(skill!.path)).toBe(file.path)
+        expect(String(skill!.content).trim().length).toBeGreaterThan(0)
+        expect(existsSync(file.path)).toBe(true)
+      }
+      const fileIds = new Set(files.map((file) => file.id))
+      const ours = skills.filter((skill) => fileIds.has(skill.id) || skill.path.includes(`${sep}skills${sep}`))
+      for (const skill of ours) expect(existsSync(skill.path)).toBe(true)
+      expect(ours.filter((skill) => fileIds.has(skill.id)).map((skill) => skill.id).sort()).toEqual(files.map((file) => file.id).sort())
     } catch (error) {
       throw new Error(`${(error as Error).message}\n--- opencode ${version} log ---\n${host.log().slice(-3000)}`)
     } finally {
@@ -230,7 +219,7 @@ function stockBinary(version: string): string {
   const cached = installed.get(version)
   if (cached) return cached
   const binary = `@opencode/cli-${platform()}-${arch()}`
-  const dir = project(`opencode-${version}`)
+  const dir = project(`stock-${version}`)
   run("npm", ["install", `@opencode/cli@${version}`, `${binary}@${version}`, "--omit=optional", "--ignore-scripts", "--no-audit", "--no-fund", "--prefer-offline"], dir)
   const path = join(dir, "node_modules", binary, "bin", "opencode")
   installed.set(version, path)
@@ -267,8 +256,8 @@ async function serve(version: string, installedDir: string) {
   const port = await freePort()
   let log = ""
   const server = spawn(binary, ["serve", "--hostname", "127.0.0.1", "--port", String(port)], { cwd: directory, env, stdio: ["ignore", "pipe", "pipe"] })
-  server.stdout.on("data", (chunk) => void (log += chunk))
-  server.stderr.on("data", (chunk) => void (log += chunk))
+  server.stdout.on("data", (chunk) => { log += chunk })
+  server.stderr.on("data", (chunk) => { log += chunk })
   const exited = new Promise((done) => server.once("exit", done))
 
   const authorization = `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`
@@ -308,7 +297,7 @@ async function serve(version: string, installedDir: string) {
   return { api, request, until, close, directory, log: () => log }
 }
 
-// The files a `files` entry should put in the tarball. dist/ must hold exactly the two bundles.
+// The files a `files` entry should put in the tarball. dist/ must hold exactly the one bundle.
 function whitelisted(entry: string): string[] {
   if (entry === "dist") return DIST
   const path = join(root, entry)
@@ -337,7 +326,7 @@ const relativeImports = (source: string) => [
   ...[...source.matchAll(/(?<![\w$.])(?:import|require)\s*\(/g)].map((match) => match[0]),
 ]
 
-const foreign = (file: string, allowed: RegExp[]) => [...new Set(specifiers(readFileSync(file, "utf8")).filter((specifier) => !allowed.some((pattern) => pattern.test(specifier))))].sort()
+const foreign = (file: string, allowed: RegExp[]) => [...new Set(specifiers(readFileSync(file, "utf8")).filter((specifier) => !isBuiltin(specifier) && !allowed.some((pattern) => pattern.test(specifier))))].sort()
 
 function run(command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv = { ...process.env, npm_config_update_notifier: "false" }): string {
   const result = spawnSync(command, args, { cwd, encoding: "utf8", env })

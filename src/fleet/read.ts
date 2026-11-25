@@ -47,9 +47,6 @@ export function checkRead(input: Record<string, unknown>): ReadItem {
 export async function readWork(services: Services, item: ReadItem, op: OpContext): Promise<ReadResult> {
   const record = await loadOpen(services, item.workId, op)
   if (record.region === null) throw boxdError("MACHINE_GONE", `${record.machine} was found in no region when this work was imported; nothing was read.`)
-  if (record.guestHelper === "v0") {
-    throw boxdError("GUEST_FAILED", `${record.machine} still runs the v0 guest helper, which has no read action; a read never uploads the new one.`)
-  }
   const input = { directory: record.guestDirectory, maxBytes: item.maxBytes, ...(item.path ? { path: item.path } : {}), ...(item.log ? { log: item.log } : {}), ...(item.tail ? { tail: item.tail } : {}) }
   const attempt = async (fresh: boolean) => {
     const { listing, row } = await markListing(async () => (fresh ? freshRow(await services.boxd.list({ maxAgeMs: 0 }, op), record) : await listed(services, record.region!, record.machine, op)))
@@ -58,7 +55,7 @@ export async function readWork(services: Services, item: ReadItem, op: OpContext
     if (row.status !== "running") throw boxdError("MACHINE_ASLEEP", `${record.machine} is ${row.status}, and a read never wakes a machine.`)
     return services.guest.read({ region: record.region!, name: record.machine as MachineName, listing, machineId: record.machineId }, input, op)
   }
-  let answer
+  let answer: Awaited<ReturnType<Services["guest"]["read"]>>
   try {
     answer = await attempt(false)
   } catch (error) {

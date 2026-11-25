@@ -7,7 +7,7 @@
  * Sequence numbers come from the log itself under a short cross-process lock, so two OpenCode processes on one laptop
  * never hand out the same one. A line cut off by a crash is skipped by readers and fenced off by the next writer.
  */
-import { createReadStream } from "node:fs"
+import { createReadStream, mkdirSync } from "node:fs"
 import { open, rename, stat } from "node:fs/promises"
 import { join } from "node:path"
 import { boxdError, isCode } from "../errors.js"
@@ -34,6 +34,7 @@ export class EventLog {
   private readonly locks: LockSet | undefined
 
   constructor(ledgerDir: string, options: { rotateBytes?: number; now?: () => Date; locks?: LockSet } = {}) {
+    mkdirSync(ledgerDir, { recursive: true, mode: 0o700 })
     this.file = join(ledgerDir, "events.jsonl")
     this.rotated = join(ledgerDir, ROTATED_EVENTS)
     this.lockPath = join(ledgerDir, EVENTS_LOCK)
@@ -162,7 +163,7 @@ async function appendText(path: string, text: string): Promise<void> {
 
 /** The last complete line's sequence number, the file's size, and whether it ends in a line cut off by a crash. */
 async function lastLine(path: string): Promise<{ seq: number | undefined; size: number; cut: boolean }> {
-  let handle
+  let handle: Awaited<ReturnType<typeof open>>
   try {
     handle = await open(path, "r")
   } catch (error) {

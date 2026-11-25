@@ -23,7 +23,7 @@ import { BoxdError, boxdError } from "../errors.js"
 import type { MachineId, MachineName, OpContext, Region } from "../ports.js"
 import type { WorkRecord } from "../ledger/types.js"
 import type { ReassignResult } from "../results.js"
-import type { CallContext } from "../tools.js"
+import type { CallContext } from "../call.js"
 import { carriesLabels, ensureOne, listSettings, missingLabels, newRecord, opOf, parseItem, recordPhase, type Machines } from "./ensure.js"
 import { runOne } from "./list.js"
 
@@ -126,7 +126,6 @@ export async function runReassign(machines: Machines, input: Record<string, unkn
   const { from: _from, to: _to, ...rest } = input
   const item = await parseItem({ ...rest, workId: to }, machines.services, "ready")
   const op = opOf(call, "boxd_reassign")
-  await ledger.ready(op)
 
   return runOne({ signal: call.signal, ...listSettings(machines) }, async (context) => {
     const itemOp: OpContext = { ...op, signal: context.signal }
@@ -177,7 +176,6 @@ export async function runReassign(machines: Machines, input: Record<string, unkn
           ...fresh,
           image: now.image,
           machineId,
-          guestHelper: now.guestHelper,
           ...(now.lease ? { lease: now.lease } : {}),
           pendingRename: { from, machineId, at },
         }

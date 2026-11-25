@@ -25,15 +25,15 @@ import {
   type Region,
 } from "../ports.js"
 import type { FleetServices } from "../services.js"
-import type { CallContext } from "../tools.js"
+import type { CallContext } from "../call.js"
 import type { WarningCode } from "../errors.js"
 
 export type Services = FleetServices
 
 const WORK_ID = /^[a-z][a-z0-9-]{0,24}$/
 
-/** Who acts: a tool call, or package E in-process (the automation loop, or `/boxd-cleanup` after the person's yes). */
-export type Actor = "tool" | "automation" | "cleanup-command"
+/** Who acts: a tool call, or the automation loop in-process. */
+export type Actor = "tool" | "automation"
 
 /** One work's context in a C2 run: the port context, who acts, and the tool call when there is one. */
 export interface WorkContext {
@@ -131,13 +131,6 @@ export async function listed(services: Services, region: Region, name: string, o
     row = listing.machines.find((machine) => machine.name === name && machine.region === region)
   }
   return { listing, row }
-}
-
-/** A running v0 guest is taken over once, by the first change that runs a helper action on it (design §6.3). */
-export async function adoptIfV0(services: Services, record: WorkRecord, target: ChangeTarget, context: OpContext): Promise<boolean> {
-  if (record.guestHelper !== "v0") return false
-  await services.importV0.adopt(target, context)
-  return true
 }
 
 /** A warning added once, by code. */

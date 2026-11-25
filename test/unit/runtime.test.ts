@@ -3,14 +3,14 @@
 // lock survives, nothing new starts, and it resolves well within the bound.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { BoxdError } from "../../src/errors.js"
-import { createRuntime, type PluginRuntime } from "../../src/exec/runtime.js"
+import { createProvider, type PluginProvider } from "../../src/provider/index.js"
 import { CAPS, TIMEOUTS, type MachineId, type OpContext } from "../../src/ports.js"
 import { DISPOSE_BOUND_MS } from "../../src/services.js"
 import { startFakeCli, type FakeCli } from "../host/fake-cli.js"
 import { running } from "../support/processes.js"
 
 let fake: FakeCli
-let runtime: PluginRuntime
+let runtime: PluginProvider
 const context = (callId: string): OpContext => ({ call: { callId, source: "boxd_exec" }, pool: "exec" })
 const outcome = (promise: Promise<unknown>) => promise.then(() => "ran", (error: unknown) => (error instanceof BoxdError ? error.code : String(error)))
 /** This process's own long command: another copy of the suite running at once has its own, so the counts never mix. */
@@ -26,7 +26,7 @@ const count = () => sleeping().split("\n").filter(Boolean).length
 
 beforeEach(() => {
   fake = startFakeCli()
-  runtime = createRuntime({ boxdBin: fake.bin, opencodeBin: fake.opencodeBin })
+  runtime = createProvider({ boxdBin: fake.bin, opencodeBin: fake.opencodeBin })
 })
 afterEach(async () => {
   await runtime.dispose()

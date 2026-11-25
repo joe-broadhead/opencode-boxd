@@ -1,8 +1,8 @@
 /**
  * The ports every package codes against (design §4.1, §3, §9.1): the runner that owns every child process, the boxd
- * CLI port with regions, the guest port with the v1 helper's actions and the laptop port (package A); the ledger port
- * and the v0 import port (package B); and the watcher's event stream (package D). Interfaces and constants only;
- * `src/services.ts` says which entry module builds each one.
+ * CLI port with regions, the guest port with the helper's actions and the laptop port (package A); the ledger port
+ * (package B); and the watcher's event stream (package D). Interfaces and constants only; `src/services.ts` says which
+ * entry module builds each one.
  *
  * The rules these types carry, so no package re-decides them:
  *
@@ -43,8 +43,8 @@ export type MachineId = string & { readonly [machineIdBrand]: true }
 /** The machine name a work owns: `oc-<workId>`. */
 export type MachineName = `oc-${string}`
 
-/** The labels the plugin sets on a work's machine; adoption needs `owner` (v1) or v0's `role` with `work`. */
-export const WORK_LABELS = { role: "session", owner: "opencode-boxd" } as const
+/** The labels the plugin sets on a work's machine; adoption needs `owner=boxd`. */
+export const WORK_LABELS = { role: "session", owner: "boxd" } as const
 /** The label a golden builder carries; restores inherit it under the work's own `role=session`. */
 export const BUILDER_LABELS = { role: "golden-builder" } as const
 
@@ -80,8 +80,8 @@ export interface Owned {
 }
 
 /**
- * A machine this process just read, with `owned` when its labels carry the plugin's ownership (`owner=opencode-boxd`,
- * or v0's `role=session` with `work=<id>` matching `oc-<id>`) and it is private and not isolated. Labels are a claim,
+ * A machine this process just read, with `owned` when its labels carry the plugin's ownership (`owner=boxd`)
+ * and it is private and not isolated. Labels are a claim,
  * not a proof: anyone in the organisation can set them, and another laptop's plugin sets the same ones. So `owned` is
  * **only for adopting a work that has no recorded `machineId`** (design §3.4 step 2), where there is no record to
  * compare with. A work with a recorded `machineId` must use `checkOwned`, or compare `owned.target.machineId` with the
@@ -97,7 +97,7 @@ export type CreatedMachine = MachineInfo & { readonly owned: Owned }
 export interface Listing {
   /** `Date.now()` when the listing's process ended. */
   readonly takenAt: number
-  /** True only for a listing taken in this call with no cache: the "gone" rule and the v0 import need one. */
+  /** True only for a listing taken in this call with no cache: the "gone" rule needs one. */
   readonly fresh: boolean
   readonly machines: readonly MachineRow[]
 }
@@ -152,7 +152,7 @@ export type Usage =
   | { readonly available: false; readonly reason: string }
 
 /**
- * How the stderr table (`src/boxd/errors-table.ts`) reads a failed CLI call. Only an exact pattern pinned by a fixture
+ * How the stderr table (`src/provider/boxd/errors-table.ts`) reads a failed CLI call. Only an exact pattern pinned by a fixture
  * makes `missing`; a not-found answer that names another region is `elsewhere`; anything else is `unknown`, which is
  * `BOXD_FAILED` and is never read as missing (F4). Even `missing` is a fact about one region at one moment: "gone"
  * belongs to drop's two-check rule.
@@ -228,12 +228,12 @@ export const OUTPUT_CAP_BYTES = 8 * 1024 * 1024
  * The environment variable the runner sets on every child it starts, holding the call's id. The spawn-count harness's
  * fake CLI reads it to count spawns per call (`test/support/spawn-count.ts`); the real CLI ignores it.
  */
-export const CALL_TAG_ENV = "OPENCODE_BOXD_CALL"
+export const CALL_TAG_ENV = "BOXD_PLUGIN_CALL"
 
 /** Which call a child belongs to: a tool call's id, or a named background job. */
 export interface CallTag {
   readonly callId: string
-  readonly source: `boxd_${string}` | "watcher" | "import-v0" | "status-command" | "automation" | "cleanup-command"
+  readonly source: `boxd_${string}` | "watcher" | "status-command" | "automation"
 }
 
 /** What every port operation takes: the call it belongs to, its signal, and the pool it runs in. */
@@ -413,7 +413,7 @@ export interface BoxdPort {
 // ── The guest port: the v1 helper's actions ───────────────────────────────────────────────────────────────────────
 
 /** The v1 helper's stable home on the guest, and the protocol version it answers. */
-export const GUEST_HELPER_PATH = "/home/boxd/.opencode-boxd/guest.py"
+export const GUEST_HELPER_PATH = "/home/boxd/.boxd-plugin/guest.py"
 export const GUEST_PROTOCOL = 1
 /**
  * The most characters a `phase` read's `lastText` carries with `full: true`. The guest cuts the message to this, and the
@@ -519,7 +519,7 @@ export interface PromptAnswer {
 /**
  * `export`, with its own busy check in the same exec (no phase read first): a running tree answers `busy` with the
  * reason and writes nothing, unless the call is `partial`. Otherwise each session of the tree is written to
- * `~/.opencode-boxd/exports/<id>.json` on the guest, with its marks, and the root's last run (`run`) comes back too.
+ * `~/.boxd-plugin/exports/<id>.json` on the guest, with its marks, and the root's last run (`run`) comes back too.
  */
 /*
  * A harvest records `saved.complete = !input.partial && !answer.busy` (design §3.6): a partial harvest, or an export
@@ -564,8 +564,7 @@ export interface ScrubAnswer {
 }
 
 export interface GuestPort {
-  // Reads: the read rule, the v1 helper already on the machine, no upload, no ledger write. A guest with only v0's
-  // helper is read through `ImportV0Port.readPhase`, never through this port.
+  // Reads: the read rule, the helper already on the machine, no upload, no ledger write.
   /** With `directory`, also the detached clone's progress for that work folder, so a wait needs no second `setup`. */
   serve(target: ReadTarget, input: { readonly directory?: string }, context: OpContext): Promise<ServeAnswer>
   phase(target: ReadTarget, input: { readonly sessionId: string; readonly tail?: number; readonly full?: boolean }, context: OpContext): Promise<PhaseAnswer>
@@ -629,11 +628,6 @@ export interface WorkSnapshot {
   readonly phase: Phase
   readonly outcome: RunOutcome | null
   readonly saved: SavedState
-  /**
-   * `"unverified"` for a work imported from v0 whose laptop copy of the transcript no v1 harvest has replaced yet (F1):
-   * the drop selector skips it, and the harvest selector takes it, until a harvest verifies the copy.
-   */
-  readonly laptopCopy?: "unverified"
   readonly needsInput?: "form" | "permission"
   /** The last guest reading; idle works keep theirs. */
   readonly reading?: Reading & { readonly at: string }
@@ -715,12 +709,9 @@ export interface Expected {
 
 /**
  * The laptop ledger, format 1 (design §2.2). Every write is copy-on-write (temp, verify, fsync, rename), except the
- * append-only `events.jsonl`. Every method first passes the import gate: while the v0 import is unfinished it throws
- * `LEDGER_IMPORTING` with `progress`, and for a blocked work id it throws `IMPORT_V0_FAILED`.
+ * append-only `events.jsonl`.
  */
 export interface LedgerPort {
-  /** The import gate alone, for a call that reads nothing else first. */
-  ready(context: OpContext): Promise<void>
   /** One record, or undefined for an id the ledger has never seen (open or closed). */
   get(workId: string, context: OpContext): Promise<WorkRecord | undefined>
   /**
@@ -775,39 +766,6 @@ export interface LedgerPort {
   /**
    * On plugin disposal or reload: stops every lock heartbeat and releases the work locks this process holds, so another
    * process does not wait for a stale takeover. A write in flight finishes or leaves the old file (copy-on-write).
-   */
-  dispose(): Promise<void>
-}
-
-// ── The v0 import (package B: `src/import-v0.ts`; removed in v0.2.0 with everything else that knows v0) ───────────
-
-export type ImportState =
-  | { readonly state: "complete"; readonly works: number; readonly blocked: readonly string[] }
-  | { readonly state: "importing"; readonly done: number; readonly total: number }
-  | { readonly state: "failed"; readonly reason: string; readonly retryAt: string }
-
-/**
- * The only v0-aware code in v1 (AGENTS.md's exception): the one-time import, the read of a v0 guest through its own
- * helper, and the takeover of a running v0 guest. The guest port and `guest/guest.py` know nothing of v0.
- */
-export interface ImportV0Port {
-  state(): ImportState
-  /** Starts the import, or joins the one running in this or another process; at most once per 30 s after a failure. */
-  run(context: OpContext): Promise<ImportState>
-  /**
-   * Reads a v0 guest with v0's own `phase` action at `/tmp/opencode-boxd/guest.py`, under the read rule; never uploads.
-   * v0's request has no `full` field, so a full read gets what v0 itself returns (at most 2,000 characters).
-   */
-  readPhase(target: ReadTarget, input: { readonly sessionId: string; readonly full?: boolean }, context: OpContext): Promise<PhaseAnswer>
-  /**
-   * Takes a running v0 guest over, once, at its first change: with a plain `machine exec`, copies
-   * `/tmp/opencode-boxd/password` to `~/.opencode-boxd/password` (0600) when the latter is missing. The running server
-   * and its session are untouched; the caller then records `guestHelper: "v1"`.
-   */
-  adopt(target: ChangeTarget, context: OpContext): Promise<void>
-  /**
-   * On plugin disposal or reload: stops a running import (its staging folder is left for the next run to discard),
-   * stops the import lock's heartbeat and releases the lock.
    */
   dispose(): Promise<void>
 }

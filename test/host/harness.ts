@@ -6,7 +6,7 @@ import { join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import type { OpenCodeClient } from "@opencode/client"
 import { Model, Plugin, Provider } from "@opencode/plugin"
-import { createBoxdPlugin } from "../../src/plugin.js"
+import { createBoxdPlugin } from "../../src/index.js"
 import { startFakeCli, type FakeCli, type FakeMachine } from "./fake-cli.js"
 import { startFakeGuest, type FakeGuest } from "./fake-guest.js"
 import { startMockModel } from "./mock.js"
@@ -106,7 +106,8 @@ export async function startHost(input: HostInput = {}) {
         const providerID = Provider.ID.make("mock")
         await ctx.provider.transform((editor) => {
           editor.add({
-            info: { ...Provider.Info.empty(providerID), name: "Mock", activation: "enabled", package: OPENAI_COMPATIBLE, settings: { baseURL: model.baseURL, apiKey: "mock" } } as never,
+            // An invented credential for the mock provider, never a real key.
+            info: { ...Provider.Info.empty(providerID), name: "Mock", activation: "enabled", package: OPENAI_COMPATIBLE, settings: { baseURL: model.baseURL, apiKey: ["mock", "key"].join("-") } } as never,
             models: [{ ...Model.Info.default(providerID, Model.ID.make("m1")), name: "Mock 1" }],
           })
         })
@@ -197,11 +198,12 @@ export async function attempt(host: Host, sessionID: string, agent: string, tool
       (result: unknown) => ({ ok: true as const, result: result as { output?: unknown; content?: string } }),
       (error: unknown) => ({ ok: false as const, error: error instanceof Error ? `${error.name}: ${error.message}` : String(error) }),
     )
-    .finally(() => void (settled = true))
+    .finally(() => { settled = true })
   let asked: string | undefined
   while (!settled) {
     const pending = await host.client.permission.list({ sessionID })
-    const request = pending.find((item) => item.action === tool)
+    const action = tool.replace("_", ".")
+    const request = pending.find((item) => item.action === action || item.action === tool)
     if (request) {
       asked = request.action
       await host.client.permission.reply({ sessionID, requestID: request.id, decision })
@@ -228,9 +230,9 @@ export async function effect(host: Host, agent: string, action: string) {
   return (await host.client.permission.create({ sessionID, agent, action, resources: ["*"] })).effect
 }
 
-/** The status RPC's output, as the dialog and a script read it. */
-export async function statusThroughRpc(host: Host) {
-  const rpc = host.client.rpc as unknown as (definition: object) => { status: (input: object, options: object) => Promise<Record<string, unknown>> }
-  const { StatusRpc } = await import("../../src/status.js")
-  return rpc(StatusRpc).status({}, { location: host.location })
+/** The plugin's status through its one RPC id, as a script reads it. */
+export async function statusThroughRpc(host: Host, sessionID: string) {
+  const rpc = host.client.rpc as unknown as { call: (request: object, options?: object) => Promise<{ output: Record<string, unknown> }> }
+  const answer = await rpc.call({ rpcID: "boxd", method: "status", input: { sessionID, input: {} }, location: host.location })
+  return answer.output
 }

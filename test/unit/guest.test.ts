@@ -11,12 +11,12 @@ import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { BoxdError } from "../../src/errors.js"
-import { createBoxdCli } from "../../src/boxd/cli.js"
-import { createLaptopPort } from "../../src/exec/laptop.js"
-import { createRunner } from "../../src/exec/runner.js"
-import type { PluginRuntime as Runtime } from "../../src/exec/runtime.js"
-import { helperFile } from "../../src/guest/helper.js"
-import { createGuestPort } from "../../src/guest/port.js"
+import { createBoxdCli } from "../../src/provider/boxd/cli.js"
+import { createLaptopPort } from "../../src/provider/laptop.js"
+import { createRunner } from "../../src/provider/runner.js"
+import type { PluginProvider as Runtime } from "../../src/provider/index.js"
+import { helperFile } from "../../src/provider/guest/helper.js"
+import { createGuestPort } from "../../src/provider/guest/port.js"
 import { GUEST_HELPER_PATH, type ChangeTarget, type MachineId, type OpContext, type ReadTarget } from "../../src/ports.js"
 import { startFakeCli, type FakeCli, type FakeMachine } from "../host/fake-cli.js"
 import { startFakeGuest, type FakeGuest } from "../host/fake-guest.js"
@@ -32,7 +32,7 @@ const context = (callId = "call_guest"): OpContext => ({ call: { callId, source:
 const fail = <T>(promise: Promise<T>) => promise.then(() => undefined, (error: unknown) => error as BoxdError)
 
 beforeAll(() => {
-  guestServer = startFakeGuest({ version: "2.2.6" })
+  guestServer = startFakeGuest({ version: "2.4.1" })
 })
 afterAll(async () => {
   await guestServer.close()
@@ -50,7 +50,7 @@ beforeEach(async () => {
   guestServer.quirks.vanished.clear()
   fake = startFakeCli({ guestPort: guestServer.port })
   runtime = clocked(fake)
-  machine = fake.machine({ name: "oc-review-api", region: "fra", labels: { owner: "opencode-boxd" } })
+  machine = fake.machine({ name: "oc-review-api", region: "fra", labels: { owner: "boxd" } })
 })
 
 /** The plugin's runtime as createRuntime builds it, on a clock that never moves. */
@@ -85,35 +85,35 @@ async function readTarget(): Promise<ReadTarget> {
 /** The port's serve read of one folder, which also reports that folder's detached clone. */
 const serveOf = async (directory: string) => runtime.guest.serve(await readTarget(), { directory }, context())
 
-const setup = (input: Partial<Parameters<Runtime["guest"]["setup"]>[1]> = {}) => change((target) => runtime.guest.setup(target, { directory: DIRECTORY, opencode: "2.2.6", ...input }, context()))
+const setup = (input: Partial<Parameters<Runtime["guest"]["setup"]>[1]> = {}) => change((target) => runtime.guest.setup(target, { directory: DIRECTORY, opencode: "2.4.1", ...input }, context()))
 
 describe("the helper on the machine", () => {
   test("the first change uploads it and it installs itself at the stable path; the next change is one exec", async () => {
     const first = await setup()
-    expect(first).toEqual({ server: "up", opencode: "2.2.6", workspace: "ready", helperUploaded: true })
+    expect(first).toEqual({ server: "up", opencode: "2.4.1", workspace: "ready", helperUploaded: true })
     const helper = await helperFile()
     expect(createHash("sha256").update(readFileSync(onDisk(GUEST_HELPER_PATH))).digest("hex")).toBe(helper.sha256)
-    expect(existsSync(onDisk("/home/boxd/.opencode-boxd-upload.py"))).toBe(false)
+    expect(existsSync(onDisk("/home/boxd/.boxd-plugin-upload.py"))).toBe(false)
     expect(existsSync(onDisk(DIRECTORY))).toBe(true)
     expect(verbs()).toEqual(["machine get", "machine exec", "machine cp", "machine exec"])
-    fake.update((state) => void (state.log = []))
+    fake.update((state) => { state.log = [] })
     expect((await setup()).helperUploaded).toBe(false)
     expect(verbs()).toEqual(["machine get", "machine exec"])
   })
 
   test("another copy of the helper changes nothing and is replaced", async () => {
-    mkdirSync(onDisk("/home/boxd/.opencode-boxd"), { recursive: true })
+    mkdirSync(onDisk("/home/boxd/.boxd-plugin"), { recursive: true })
     writeFileSync(onDisk(GUEST_HELPER_PATH), readFileSync(new URL("../../guest/guest.py", import.meta.url)).toString().replace("PROTOCOL = 1", "PROTOCOL = 1  # an older build"))
     expect((await setup()).helperUploaded).toBe(true)
     expect(verbs().filter((verb) => verb === "machine cp")).toHaveLength(1)
   })
 
   test("an upload that is not the copy the plugin sent installs nothing and changes nothing", async () => {
-    const upload = onDisk("/home/boxd/.opencode-boxd-upload.py")
+    const upload = onDisk("/home/boxd/.boxd-plugin-upload.py")
     writeFileSync(upload, readFileSync(new URL("../../guest/guest.py", import.meta.url)))
     const target = await readTarget()
     const result = await change((owned) =>
-      runtime.boxd.exec(owned, "python3 /home/boxd/.opencode-boxd-upload.py --install", { timeoutSeconds: 8, json: false, stdin: JSON.stringify({ action: "setup", helper: "0".repeat(64), directory: DIRECTORY }) }, context()),
+      runtime.boxd.exec(owned, "python3 /home/boxd/.boxd-plugin-upload.py --install", { timeoutSeconds: 8, json: false, stdin: JSON.stringify({ action: "setup", helper: "0".repeat(64), directory: DIRECTORY }) }, context()),
     )
     expect(JSON.parse(result.stdout.trim())).toMatchObject({ ok: false, error: "HELPER_OUTDATED" })
     expect(existsSync(upload)).toBe(false)
@@ -131,8 +131,8 @@ describe("the helper on the machine", () => {
 
   test("a read on a hibernated machine runs nothing and wakes nothing", async () => {
     await setup()
-    fake.update((state) => void (state.machines[0]!.status = "hibernated"))
-    fake.update((state) => void (state.log = []))
+    fake.update((state) => { state.machines[0]!.status = "hibernated" })
+    fake.update((state) => { state.log = [] })
     expect((await fail(runtime.guest.serve(await readTarget(), {}, context())))?.code).toBe("MACHINE_ASLEEP")
     expect(verbs()).toEqual(["machine list"])
     expect(fake.read().wokenByExec ?? []).toEqual([])
@@ -140,12 +140,12 @@ describe("the helper on the machine", () => {
 
   test("serve reports the server and the release, and starts nothing", async () => {
     await setup()
-    expect(await runtime.guest.serve(await readTarget(), {}, context())).toEqual({ server: "up", opencode: "2.2.6" })
+    expect(await runtime.guest.serve(await readTarget(), {}, context())).toEqual({ server: "up", opencode: "2.4.1" })
   })
 
   test("two identical reads in flight share one exec", async () => {
     await setup()
-    fake.update((state) => void (state.log = []))
+    fake.update((state) => { state.log = [] })
     const target = await readTarget()
     await Promise.all([runtime.guest.serve(target, {}, context()), runtime.guest.serve(target, {}, context())])
     expect(verbs().filter((verb) => verb === "machine exec")).toHaveLength(1)
@@ -176,7 +176,7 @@ describe("sessions", () => {
     const queued = await change((target) => runtime.guest.prompt(target, { directory: DIRECTORY, sessionId: "ses_root", title: "x", text: "Then docs.", delivery: "queue" }, context()))
     expect(queued).toMatchObject({ delivery: "queue", waitingBefore: 1 })
     const phase = await runtime.guest.phase(await readTarget(), { sessionId: "ses_root" }, context())
-    expect(phase).toMatchObject({ phase: "busy", waiting: { steer: 1, queue: 1 }, guestVersion: "2.2.6" })
+    expect(phase).toMatchObject({ phase: "busy", waiting: { steer: 1, queue: 1 }, guestVersion: "2.4.1" })
     const interrupted = await change((target) => runtime.guest.prompt(target, { directory: DIRECTORY, sessionId: "ses_root", title: "x", text: "Stop and do this.", delivery: "interrupt" }, context()))
     expect(interrupted).toMatchObject({ interrupted: true, delivery: "started" })
     expect(guestServer.interrupts).toEqual(["ses_root"])
@@ -195,10 +195,10 @@ describe("sessions", () => {
 
   test("a staged file moves into the work tree with the prompt; one outside the staging folder is refused", async () => {
     await setup()
-    mkdirSync(onDisk("/home/boxd/.opencode-boxd/staging"), { recursive: true })
-    writeFileSync(onDisk("/home/boxd/.opencode-boxd/staging/f1"), "data")
+    mkdirSync(onDisk("/home/boxd/.boxd-plugin/staging"), { recursive: true })
+    writeFileSync(onDisk("/home/boxd/.boxd-plugin/staging/f1"), "data")
     guestServer.next("ses_files")
-    await change((target) => runtime.guest.prompt(target, { directory: DIRECTORY, sessionId: null, title: "t", text: "use it", delivery: "steer", files: [{ staged: "/home/boxd/.opencode-boxd/staging/f1", to: "data/input.json" }] }, context()))
+    await change((target) => runtime.guest.prompt(target, { directory: DIRECTORY, sessionId: null, title: "t", text: "use it", delivery: "steer", files: [{ staged: "/home/boxd/.boxd-plugin/staging/f1", to: "data/input.json" }] }, context()))
     expect(readFileSync(onDisk(`${DIRECTORY}/data/input.json`), "utf8")).toBe("data")
     const refused = await fail(change((target) => runtime.guest.prompt(target, { directory: DIRECTORY, sessionId: "ses_files", title: "t", text: "x", delivery: "steer", files: [{ staged: "/home/boxd/elsewhere", to: "x" }] }, context())))
     expect(refused?.code).toBe("NAME_INVALID")
@@ -322,7 +322,7 @@ describe("sessions", () => {
     const local = join(fake.dir, "parent.json")
     await change((target) => runtime.boxd.copyFrom(target, exported.sessions[0]!.file, local, context()))
     expect(createHash("sha256").update(readFileSync(local)).digest("hex")).toBe(exported.sessions[0]!.sha256)
-    expect(exported.guestVersion).toBe("2.2.6")
+    expect(exported.guestVersion).toBe("2.4.1")
     expect((await fail(change((target) => runtime.guest.export(target, { rootId: "ses_missing" }, context()))))?.code).toBe("SESSION_MISSING")
   })
 
@@ -330,10 +330,10 @@ describe("sessions", () => {
     await setup()
     guestServer.next("ses_parent")
     await change((target) => runtime.guest.prompt(target, { directory: DIRECTORY, sessionId: null, title: "t", text: "go", delivery: "steer" }, context()))
-    fake.update((state) => void (state.log = []))
+    fake.update((state) => { state.log = [] })
     const busy = await change((target) => runtime.guest.export(target, { rootId: "ses_parent" }, context()))
-    expect(busy).toMatchObject({ outcome: "busy", guestVersion: "2.2.6" })
-    expect(existsSync(onDisk("/home/boxd/.opencode-boxd/exports/ses_parent.json"))).toBe(false)
+    expect(busy).toMatchObject({ outcome: "busy", guestVersion: "2.4.1" })
+    expect(existsSync(onDisk("/home/boxd/.boxd-plugin/exports/ses_parent.json"))).toBe(false)
     expect(verbs()).toEqual(["machine get", "machine exec"])
     const partial = await change((target) => runtime.guest.export(target, { rootId: "ses_parent", partial: true }, context()))
     // A live run has no outcome yet: a partial export never reports it as aborted.
@@ -342,11 +342,11 @@ describe("sessions", () => {
 
   test("import puts a tree back, parents first, and answers its root", async () => {
     await setup()
-    mkdirSync(onDisk("/home/boxd/.opencode-boxd/imports"), { recursive: true })
-    writeFileSync(onDisk("/home/boxd/.opencode-boxd/imports/child.json"), JSON.stringify({ info: { id: "ses_kid", parentID: "ses_top" }, messages: [] }))
-    writeFileSync(onDisk("/home/boxd/.opencode-boxd/imports/top.json"), JSON.stringify({ info: { id: "ses_top" }, messages: [] }))
+    mkdirSync(onDisk("/home/boxd/.boxd-plugin/imports"), { recursive: true })
+    writeFileSync(onDisk("/home/boxd/.boxd-plugin/imports/child.json"), JSON.stringify({ info: { id: "ses_kid", parentID: "ses_top" }, messages: [] }))
+    writeFileSync(onDisk("/home/boxd/.boxd-plugin/imports/top.json"), JSON.stringify({ info: { id: "ses_top" }, messages: [] }))
     const answer = await change((target) =>
-      runtime.guest.import(target, { directory: DIRECTORY, files: ["/home/boxd/.opencode-boxd/imports/child.json", "/home/boxd/.opencode-boxd/imports/top.json"] }, context()),
+      runtime.guest.import(target, { directory: DIRECTORY, files: ["/home/boxd/.boxd-plugin/imports/child.json", "/home/boxd/.boxd-plugin/imports/top.json"] }, context()),
     )
     expect(answer).toEqual({ rootId: "ses_top" })
     expect(guestServer.imports.map((item) => item.id)).toEqual(["ses_top", "ses_kid"])
@@ -378,7 +378,7 @@ describe("the work tree", () => {
     expect(answer.unpushedCount).toBe(1)
     expect(answer.unpushedKnown).toBe(true)
     expect(answer.unpushed).toEqual([expect.stringMatching(/^[0-9a-f]{7,} init$/)])
-    expect(answer.patch?.file).toBe("/home/boxd/.opencode-boxd/harvest/patch.diff")
+    expect(answer.patch?.file).toBe("/home/boxd/.boxd-plugin/harvest/patch.diff")
     expect(readFileSync(onDisk(answer.patch!.file), "utf8")).toContain("+two")
     expect(answer.sessions).toEqual([{ id: "ses_g", parentId: null, lastMessageId: "msg_0", messages: 1, updated: 1 }])
   })
@@ -516,8 +516,8 @@ describe("machine care", () => {
 
   test("upgrade moves the guest to the laptop's release and restarts its server", async () => {
     await setup()
-    expect(await change((target) => runtime.guest.upgrade(target, { version: "2.3.0" }, context()))).toEqual({ opencode: "2.3.0" })
-    expect(readFileSync(onDisk("/.opencode-version"), "utf8").trim()).toBe("2.3.0")
+    expect(await change((target) => runtime.guest.upgrade(target, { version: "2.4.2" }, context()))).toEqual({ opencode: "2.4.2" })
+    expect(readFileSync(onDisk("/.opencode-version"), "utf8").trim()).toBe("2.4.2")
   })
 
   test("scrub refuses a base with model credentials or a session, and otherwise removes what must not reach an image", async () => {
@@ -531,10 +531,14 @@ describe("machine care", () => {
     guestServer.sessions.clear()
     mkdirSync(onDisk("/etc/profile.d"), { recursive: true })
     writeFileSync(onDisk("/etc/profile.d/boxd-env.sh"), "export KEY=x")
-    mkdirSync(onDisk("/tmp/opencode-boxd"), { recursive: true })
+    // The boxd CLI's own file in ~/.boxd is not the helper's, and a scrub must never remove it.
+    mkdirSync(onDisk("/home/boxd/.boxd"), { recursive: true })
+    writeFileSync(onDisk("/home/boxd/.boxd/password"), "cli")
     const scrubbed = await change((target) => runtime.guest.scrub(target, context()))
-    expect(scrubbed.removed).toEqual(expect.arrayContaining(["/etc/profile.d/boxd-env.sh", "/home/boxd/.opencode-boxd/password", "/tmp/opencode-boxd", "/home/boxd/work"]))
+    expect(scrubbed.removed).toEqual(expect.arrayContaining(["/etc/profile.d/boxd-env.sh", "/home/boxd/.boxd-plugin/password", "/home/boxd/work"]))
+    expect(scrubbed.removed).not.toContain("/home/boxd/.boxd/password")
     expect(existsSync(onDisk(GUEST_HELPER_PATH))).toBe(true)
-    expect(existsSync(onDisk("/home/boxd/.opencode-boxd/password"))).toBe(false)
+    expect(existsSync(onDisk("/home/boxd/.boxd-plugin/password"))).toBe(false)
+    expect(existsSync(onDisk("/home/boxd/.boxd/password"))).toBe(true)
   })
 })

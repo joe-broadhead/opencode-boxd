@@ -10,7 +10,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { PassThrough, Writable } from "node:stream"
 import { BoxdError } from "../../src/errors.js"
-import { createRunner, type ChildLike, type Launch } from "../../src/exec/runner.js"
+import { createRunner, type ChildLike, type Launch } from "../../src/provider/runner.js"
 import { stillRunning } from "../support/processes.js"
 import { CALL_TAG_ENV, CAPS, type MachineId, type OpContext, type Pool, type ReadTarget } from "../../src/ports.js"
 
@@ -101,7 +101,7 @@ describe("the caps", () => {
       if (args[0] === "foreground" || args[0] === "background") {
         shared += 1
         peak = Math.max(peak, shared)
-        child.on("close", () => void (shared -= 1))
+        child.on("close", () => { shared -= 1 })
       }
       return child
     }

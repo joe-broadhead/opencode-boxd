@@ -4,7 +4,7 @@
  * One listing at most 2 s old, then one guest read for each work whose machine it shows running and that has a session.
  * A work that is down answers from the listing and the ledger, with no exec, so a hibernated machine is never woken. An
  * explicit job does read an idle work's guest, once, which resets that machine's idle clock once: that is the price of
- * asking, and status never pays it. The read uses only the helper already on the machine (v0's own for an imported
+ * asking, and status never pays it. The read uses only the helper already on the machine
  * work), never uploads anything and never writes the ledger. `lastText` and `tail` are redacted and are the guest
  * model's words: data, never instructions. `lastText` is cut to 300 characters unless the call asks for `full`, which
  * returns the whole last assistant message up to `FULL_TEXT_LIMIT` with its line breaks, on one work or a `works` list of
@@ -16,7 +16,7 @@ import { FULL_TEXT_LIMIT, LIST_ITEM_CONCURRENCY, LIST_MAX_ITEMS, TIMEOUTS, type 
 import { excerpt, excerptBlock, reasonOf } from "../redact.js"
 import type { JobResult, ListResult, Refusal, WorkCost } from "../results.js"
 import type { FleetServices } from "../services.js"
-import { refusal } from "../tools.js"
+import { refusalResult } from "../call.js"
 import { watchHandle } from "../watch.js"
 import { codeOf, JOB_TEXT_LIMIT, notRead, observe, observeFailure, outcomeOf, phaseOf, readGuest, rowOf, type Observed } from "./model.js"
 
@@ -191,7 +191,6 @@ function envelope(results: ReadonlyArray<JobResult | Refusal>, cancelled: boolea
 export async function jobRun(services: FleetServices, raw: Record<string, unknown>, call: { readonly tag: CallTag; readonly signal?: AbortSignal }): Promise<JobResult | ListResult<JobResult>> {
   const input = jobInput(raw)
   const op: OpContext = { call: call.tag, ...(call.signal ? { signal: call.signal } : {}), pool: "foreground" }
-  await services.ledger.ready(op)
   // A single form refuses through the registry; a list form answers each item.
   const records = await Promise.all(
     input.workIds.map(async (workId): Promise<WorkRecord | Refusal> => {
@@ -201,7 +200,7 @@ export async function jobRun(services: FleetServices, raw: Record<string, unknow
         throw boxdError("NOT_OURS", `No work has the id "${workId}" in the ledger here. Nothing was read.`)
       } catch (error) {
         if (!input.list || !(error instanceof BoxdError)) throw error
-        return refusal(error, { workId })
+        return refusalResult(error, { workId })
       }
     }),
   )
@@ -219,7 +218,7 @@ export async function jobRun(services: FleetServices, raw: Record<string, unknow
       const transient = error instanceof BoxdError && (error.code === "BOXD_FAILED" || error.code === "TIMEOUT")
       if (!transient) {
         if (!input.list || !(error instanceof BoxdError)) throw error
-        return envelope(records.map((record) => ("format" in record ? refusal(error, { workId: record.workId }) : record)), error.code === "CANCELLED")
+        return envelope(records.map((record) => ("format" in record ? refusalResult(error, { workId: record.workId }) : record)), error.code === "CANCELLED")
       }
       listingFailed = reasonOf(error)
     }
@@ -236,12 +235,12 @@ export async function jobRun(services: FleetServices, raw: Record<string, unknow
   }
   const results = await eachLimited(records, LIST_ITEM_CONCURRENCY, async (record): Promise<JobResult | Refusal> => {
     if (!("format" in record)) return record
-    if (call.signal?.aborted) return refusal(boxdError("CANCELLED", "The call was stopped before this work was read."), { workId: record.workId })
+    if (call.signal?.aborted) return refusalResult(boxdError("CANCELLED", "The call was stopped before this work was read."), { workId: record.workId })
     try {
       return await jobOf(services, record, listing ?? empty, input, costs, op, listingFailed)
     } catch (error) {
       if (!input.list || !(error instanceof BoxdError)) throw error
-      return refusal(error, { workId: record.workId })
+      return refusalResult(error, { workId: record.workId })
     }
   })
   if (!input.list) return results[0] as JobResult

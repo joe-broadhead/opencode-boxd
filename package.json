@@ -1,12 +1,12 @@
 {
   "name": "@we-the-rebel-alliance/boxd-plugin",
   "version": "0.0.0",
-  "private": true,
   "description": "Run OpenCode sessions on private boxd machines, one work per machine, and bring the transcripts and git back here",
   "keywords": [
     "opencode",
     "opencode-plugin",
-    "boxd"
+    "boxd",
+    "plugin-contract"
   ],
   "license": "MIT",
   "type": "module",
@@ -19,206 +19,411 @@
     "url": "https://github.com/we-the-rebel-alliance/boxd-plugin/issues"
   },
   "exports": {
-    ".": "./dist/index.js",
-    "./tui": "./dist/tui.js",
-    "./icon.svg": "./assets/icon.svg",
-    "./icon-128.png": "./assets/icon-128.png",
-    "./icon-256.png": "./assets/icon-256.png"
+    "./server": "./dist/index.js"
   },
   "files": [
     "dist",
     "guest",
     "skills",
-    "assets/icon.svg",
-    "assets/icon-128.png",
-    "assets/icon-256.png",
-    "NOTICE",
+    "assets",
     "README.md",
-    "LICENSE",
-    "CHANGELOG.md"
+    "NOTICE",
+    "LICENSE"
   ],
-  "opencode": {
-    "host": ">=2.4.1 <2.5.0",
-    "icons": [
-      {
-        "src": "assets/icon.svg",
-        "mimeType": "image/svg+xml",
-        "sizes": [
-          "any"
-        ]
-      },
-      {
-        "src": "assets/icon-128.png",
-        "mimeType": "image/png",
-        "sizes": [
-          "128x128"
-        ]
-      },
-      {
-        "src": "assets/icon-256.png",
-        "mimeType": "image/png",
-        "sizes": [
-          "256x256"
-        ]
-      }
-    ],
-    "vendor": {
-      "id": "boxd",
+  "capabilities": {
+    "version": 1,
+    "plugin": {
       "name": "boxd",
-      "domain": "boxd.sh",
-      "mark": true
-    }
-  },
-  "jelly": {
-    "title": "boxd",
-    "summary": "Run an OpenCode session on a private boxd machine and bring the transcript back here.",
-    "icon": "assets/icon.svg",
-    "cost": "boxd bills each plugin machine: compute and memory while running, disk while hibernated, until boxd_drop. boxd_golden and boxd_ensure may make a short-lived builder. At access Allowed, finished works are harvested and hibernated after 10 idle minutes by default; else only with automation \"on\".",
-    "tools": [
-      {
-        "name": "boxd.status",
-        "permission": "boxd_status",
-        "effect": "allow",
-        "readOnly": true
+      "title": "boxd",
+      "summary": "Parallel OpenCode sessions on private boxd machines, one work per machine; harvest brings each transcript and git back here. Load the boxd-sessions skill first. Not for a helper on this machine: use the subagent tool.",
+      "vendor": {
+        "id": "boxd",
+        "name": "boxd",
+        "domain": "boxd.sh"
       },
-      {
-        "name": "boxd.events_list",
-        "permission": "boxd_events_list",
-        "effect": "allow",
-        "readOnly": true
-      },
-      {
-        "name": "boxd.job",
-        "permission": "boxd_job",
-        "effect": "allow",
-        "readOnly": true
-      },
-      {
-        "name": "boxd.read",
-        "permission": "boxd_read",
-        "effect": "allow",
-        "readOnly": true
-      },
-      {
-        "name": "boxd.ensure",
-        "permission": "boxd_ensure",
-        "effect": "allow",
-        "readOnly": false
-      },
-      {
-        "name": "boxd.submit",
-        "permission": "boxd_submit",
-        "effect": "allow",
-        "readOnly": false
-      },
-      {
-        "name": "boxd.harvest",
-        "permission": "boxd_harvest",
-        "effect": "allow",
-        "readOnly": false
-      },
-      {
-        "name": "boxd.sleep",
-        "permission": "boxd_sleep",
-        "effect": "allow",
-        "readOnly": false
-      },
-      {
-        "name": "boxd.resume",
-        "permission": "boxd_resume",
-        "effect": "allow",
-        "readOnly": false
-      },
-      {
-        "name": "boxd.reassign",
-        "permission": "boxd_reassign",
-        "effect": "allow",
-        "readOnly": false
-      },
-      {
-        "name": "boxd.golden",
-        "permission": "boxd_golden",
-        "effect": "allow",
-        "readOnly": false
-      },
-      {
-        "name": "boxd.exec",
-        "permission": "boxd_exec",
-        "effect": "allow",
-        "readOnly": false
-      },
-      {
-        "name": "boxd.drop",
-        "permission": "boxd_drop",
-        "effect": "allow",
-        "readOnly": false
-      }
-    ],
-    "skills": [
-      "boxd-sessions"
-    ],
-    "rpc": [],
-    "views": [],
-    "signIns": [],
-    "contributes": {
-      "homeFeeds": [],
-      "homeWidgets": [],
-      "workKinds": [],
-      "settings": [
+      "icons": [
         {
-          "key": "access",
-          "label": "Access",
-          "type": "string",
-          "description": "How much the plugin's tools may do. Generates default rules for agents with a base allow rule.",
-          "choices": [
-            {
-              "value": "all",
-              "label": "Allowed",
-              "description": "Every tool runs without asking, reads and changes alike."
-            },
-            {
-              "value": "ask-changes",
-              "label": "Ask before changes",
-              "description": "Reads run without asking. Each change asks you first."
-            },
-            {
-              "value": "read-only",
-              "label": "Read only",
-              "description": "Reads run. Changes never run."
-            }
-          ],
-          "default": "all"
+          "src": "assets/icon.svg",
+          "type": "image/svg+xml"
+        },
+        {
+          "src": "assets/icon-128.png",
+          "type": "image/png"
+        },
+        {
+          "src": "assets/icon-256.png",
+          "type": "image/png"
         }
-      ]
-    }
-  },
-  "sources": {
-    "contractVersion": 1,
-    "rpc": "boxd.machines.tools",
-    "probe": {
-      "action": "boxd_probe"
+      ],
+      "host": {
+        "opencode": ">=2.4.1 <2.5.0",
+        "tested": [
+          "2.4.1"
+        ]
+      }
     },
-    "items": [
+    "options": {
+      "type": "object",
+      "properties": {
+        "access": {
+          "type": "string",
+          "enum": [
+            "all",
+            "ask-changes",
+            "read-only"
+          ],
+          "default": "all",
+          "description": "How much the plugin's methods may do: every method, changes ask first, or reads only."
+        },
+        "allowUntestedHost": {
+          "type": "boolean",
+          "default": false,
+          "description": "Start outside the tested OpenCode range."
+        },
+        "allowedRoots": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Absolute folders here, besides the project, that work files may read or write."
+        },
+        "regions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "fra",
+              "nyc"
+            ]
+          },
+          "default": [
+            "fra",
+            "nyc"
+          ],
+          "description": "The regions a new work's machine or a golden image may be placed in."
+        },
+        "region": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "fra",
+            "nyc"
+          ],
+          "default": "auto",
+          "description": "Where a new work goes within regions; auto picks the region with the most free machines."
+        },
+        "keepFree": {
+          "type": "object",
+          "properties": {
+            "fra": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "nyc": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "default": {
+            "fra": 0,
+            "nyc": 0
+          },
+          "description": "Machines auto leaves free in each region for the organisation's CI pool."
+        },
+        "size": {
+          "type": "string",
+          "enum": [
+            "1x4",
+            "2x8",
+            "4x16",
+            "8x32"
+          ],
+          "default": "2x8",
+          "description": "A new work's machine size, vCPU x GiB."
+        },
+        "git": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "email": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "email"
+          ],
+          "additionalProperties": false,
+          "description": "The guest's git identity for every new work. Never a token."
+        },
+        "goldenPrefix": {
+          "type": "string",
+          "default": "oc-golden",
+          "description": "Golden image names are <goldenPrefix>-<opencode version>-<size>."
+        },
+        "goldenBase": {
+          "type": "string",
+          "default": "stock",
+          "description": "What a golden build starts from: stock, or a snapshot name in the region it lives in."
+        },
+        "goldenSetup": {
+          "type": "string",
+          "description": "An absolute path here to a script the golden builder runs before the scrub."
+        },
+        "buildGolden": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "never"
+          ],
+          "default": "auto",
+          "description": "Whether boxd_ensure builds a missing golden image itself, or refuses with a next step."
+        },
+        "notices": {
+          "type": "string",
+          "enum": [
+            "wake",
+            "queue",
+            "off"
+          ],
+          "default": "wake",
+          "description": "How a work's change reaches its session: yes, queue for when it is idle, or no notice."
+        },
+        "autoHibernateMinutes": {
+          "type": "integer",
+          "minimum": 30,
+          "maximum": 1440,
+          "default": 120,
+          "description": "The platform's idle bound before a machine hibernates, in minutes."
+        },
+        "automation": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "on",
+            "off"
+          ],
+          "default": "auto",
+          "description": "Whether the plugin harvests and hibernates finished works itself: auto is on at access all, on is standing consent, off never."
+        },
+        "autoSleepMinutes": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 10,
+          "description": "Idle minutes before automation harvests and hibernates a finished work; 0 turns that step off."
+        },
+        "orphanHours": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 12,
+          "description": "A running, not-busy work no plugin call touched for this long is harvested and hibernated."
+        },
+        "leaseDays": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "A delete-after lease renewed on activity, in days; 0 is off."
+        },
+        "budget": {
+          "type": "object",
+          "properties": {
+            "daily": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "action": {
+              "type": "string",
+              "enum": [
+                "warn",
+                "refuse"
+              ]
+            }
+          },
+          "required": [
+            "daily",
+            "action"
+          ],
+          "additionalProperties": false,
+          "description": "Machine cost per day, warned about or refused at, in the organisation's billing currency."
+        }
+      },
+      "additionalProperties": false
+    },
+    "methods": {
+      "status": {
+        "class": "read",
+        "accounts": "none",
+        "operations": [
+          "boxd.machine.list",
+          "boxd.manage.machine-limit",
+          "boxd.manage.usage",
+          "boxd.env.list",
+          "boxd.snapshots.list",
+          "boxd.machine.exec",
+          "boxd.local.ledger.read"
+        ]
+      },
+      "events_list": {
+        "class": "read",
+        "accounts": "none",
+        "operations": [
+          "boxd.local.ledger.read"
+        ]
+      },
+      "job": {
+        "class": "read",
+        "accounts": "none",
+        "operations": [
+          "boxd.machine.list",
+          "boxd.machine.exec",
+          "boxd.local.ledger.read"
+        ]
+      },
+      "read": {
+        "class": "read",
+        "accounts": "none",
+        "operations": [
+          "boxd.machine.list",
+          "boxd.machine.exec"
+        ]
+      },
+      "probe": {
+        "class": "read",
+        "accounts": "none"
+      },
+      "ensure": {
+        "class": "admin",
+        "accounts": "none",
+        "operations": [
+          "boxd.machine.new",
+          "boxd.machine.get",
+          "boxd.machine.list",
+          "boxd.machine.label.set",
+          "boxd.machine.resize",
+          "boxd.machine.reboot",
+          "boxd.machine.wake",
+          "boxd.machine.config.set",
+          "boxd.snapshots.save",
+          "boxd.machine.cp",
+          "boxd.machine.exec",
+          "boxd.manage.machine-limit"
+        ]
+      },
+      "submit": {
+        "class": "write",
+        "accounts": "none",
+        "operations": [
+          "boxd.machine.list",
+          "boxd.machine.wake",
+          "boxd.machine.cp",
+          "boxd.machine.exec"
+        ]
+      },
+      "harvest": {
+        "class": "export",
+        "accounts": "none",
+        "operations": [
+          "boxd.machine.wake",
+          "boxd.machine.exec",
+          "boxd.machine.cp",
+          "boxd.local.session.import"
+        ]
+      },
+      "sleep": {
+        "class": "write",
+        "accounts": "none",
+        "operations": [
+          "boxd.machine.get",
+          "boxd.machine.hibernate"
+        ]
+      },
+      "resume": {
+        "class": "admin",
+        "accounts": "none",
+        "operations": [
+          "boxd.machine.list",
+          "boxd.machine.get",
+          "boxd.machine.new",
+          "boxd.machine.wake",
+          "boxd.machine.cp",
+          "boxd.machine.exec",
+          "boxd.manage.machine-limit"
+        ]
+      },
+      "reassign": {
+        "class": "admin",
+        "accounts": "none",
+        "operations": [
+          "boxd.machine.get",
+          "boxd.machine.list",
+          "boxd.machine.rename",
+          "boxd.machine.label.set"
+        ]
+      },
+      "golden": {
+        "class": "admin",
+        "accounts": "none",
+        "operations": [
+          "boxd.snapshots.list",
+          "boxd.snapshots.save",
+          "boxd.snapshots.remove",
+          "boxd.machine.new",
+          "boxd.machine.get",
+          "boxd.machine.resize",
+          "boxd.machine.reboot",
+          "boxd.machine.remove",
+          "boxd.machine.cp",
+          "boxd.machine.exec",
+          "boxd.env.list"
+        ]
+      },
+      "exec": {
+        "class": "admin",
+        "accounts": "none",
+        "effect": "ask",
+        "operations": [
+          "boxd.machine.get",
+          "boxd.machine.wake",
+          "boxd.machine.exec"
+        ]
+      },
+      "drop": {
+        "class": "delete",
+        "accounts": "none",
+        "operations": [
+          "boxd.machine.get",
+          "boxd.machine.list",
+          "boxd.machine.exec",
+          "boxd.machine.remove"
+        ]
+      }
+    },
+    "sources": [
       {
         "id": "boxd.works",
         "kind": "events",
         "reads": "x-boxd/work",
-        "tool": "events_list",
+        "method": "events_list",
         "input": {
           "source": "works"
         },
-        "accounts": {
-          "named": false
+        "service": {
+          "id": "boxd.works",
+          "label": "Works"
         },
-        "permission": {
-          "events": "boxd_events_list",
-          "rules": [
-            {
-              "action": "boxd_events_list",
-              "resource": "*"
-            }
-          ]
+        "operations": [
+          "boxd.local.ledger.read"
+        ],
+        "cadence": {
+          "suggestMinutes": 1
         },
+        "signals": [
+          "bus"
+        ],
         "private": true,
         "cost": {
           "class": "free"
@@ -228,56 +433,55 @@
       {
         "id": "boxd.works.list",
         "kind": "snapshot",
-        "tool": "boxd_status",
+        "output": "list",
+        "method": "status",
         "input": {
-          "source": "works",
           "list": "works"
         },
-        "output": "list",
-        "accounts": {
-          "named": false
+        "service": {
+          "id": "boxd.works",
+          "label": "Works"
         },
-        "permission": {
-          "tool": "boxd_status",
-          "rules": [
-            {
-              "action": "boxd_status",
-              "resource": "*"
-            }
-          ]
-        },
-        "private": true,
+        "operations": [
+          "boxd.local.ledger.read",
+          "boxd.machine.list"
+        ],
         "cost": {
           "class": "free"
         },
-        "maxAgeSec": 900,
         "maxBytes": 65536
       }
-    ]
+    ],
+    "actions": [],
+    "events": {
+      "changed": {}
+    }
   },
   "scripts": {
+    "bundle": "node scripts/build.mjs",
+    "lint": "biome check .",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "unit": "bun test ./test/unit",
+    "host": "bun test ./test/host",
+    "pack": "bun test ./test/pack",
+    "docs": "plugin-kit docs",
+    "conformance": "plugin-kit conformance",
     "check": "node scripts/check.mjs",
-    "typecheck": "node scripts/check.mjs typecheck",
-    "build": "node scripts/check.mjs build",
-    "test": "node scripts/check.mjs unit",
-    "test:host": "node scripts/check.mjs host",
-    "test:pack": "node scripts/check.mjs pack",
-    "lint": "node scripts/check.mjs forbidden",
-    "capture": "node scripts/capture-tools.mjs",
-    "conformance": "bun scripts/conformance.ts"
+    "test": "npm run unit"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.6.9",
     "@opencode/client": "2.4.1",
     "@opencode/plugin": "2.4.1",
     "@opencode/sdk": "2.4.1",
-    "@opentui/core": "0.8.0",
-    "@opentui/solid": "0.8.0",
     "@types/bun": "1.4.4",
     "@types/node": "24.19.2",
-    "@we-the-rebel-alliance/source-contract": "github:we-the-rebel-alliance/source-contract#2fd55cdc0c6c1067927fefc403a88bfd18c9a971",
-    "effect": "4.1.0",
+    "@we-the-rebel-alliance/plugin-contract": "github:we-the-rebel-alliance/plugin-contract#v0.0.0",
     "esbuild": "0.28.2",
-    "solid-js": "1.9.17",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "yaml": "2.9.1"
+  },
+  "engines": {
+    "node": ">=24"
   }
 }

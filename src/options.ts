@@ -1,7 +1,9 @@
 import { boxdError } from "./errors.js"
 import { assertSnapshot } from "./names.js"
-import { ACCESS_VALUES, type Access } from "./permissions.js"
 import { REGIONS, SIZES, type Region, type Size } from "./ports.js"
+
+export type Access = "all" | "ask-changes" | "read-only"
+export const ACCESS_VALUES: readonly Access[] = ["all", "ask-changes", "read-only"]
 
 /** Where a new work goes: the region with the most free machines after `keepFree`, or one region. */
 export type RegionChoice = "auto" | Region
@@ -53,8 +55,6 @@ export interface Options {
   readonly leaseDays: number
   /** Machine cost per day, warned about or refused at (§C.5); none by default. */
   readonly budget?: Budget
-  /** The end-of-turn idle check (§C.4): one synthetic note when money burns and automation will not act. */
-  readonly idleCheck: boolean
 }
 
 export const DEFAULT_OPTIONS: Options = {
@@ -74,7 +74,6 @@ export const DEFAULT_OPTIONS: Options = {
   autoSleepMinutes: 10,
   orphanHours: 12,
   leaseDays: 0,
-  idleCheck: true,
 }
 
 const REGION_CHOICES: readonly RegionChoice[] = ["auto", ...REGIONS]
@@ -108,7 +107,6 @@ const ACCEPTED = {
   orphanHours: "a whole number of hours, 1 or more (12 by default)",
   leaseDays: "a whole number of days, 0 or more (0, off, by default)",
   budget: 'an object with a positive daily amount in the organisation\'s billing currency and an action, "warn" or "refuse"',
-  idleCheck: "true (the default) or false",
 } as const satisfies Record<keyof Options, string>
 
 const EXAMPLE = `"plugins": [{ "package": "github:we-the-rebel-alliance/boxd-plugin#v<version>", "options": { "region": "auto", "size": "2x8" } }]`
@@ -141,7 +139,7 @@ export function parseOptions(raw: unknown): Options {
   }
   const input = { ...DEFAULT_OPTIONS, ...raw } as Record<keyof Options, unknown>
 
-  for (const key of ["allowUntestedHost", "idleCheck"] as const) if (typeof input[key] !== "boolean") throw wrong(key, input[key])
+  if (typeof input.allowUntestedHost !== "boolean") throw wrong("allowUntestedHost", input.allowUntestedHost)
   const access = oneOf("access", input.access, ACCESS_VALUES)
   const { allowedRoots } = input
   if (!Array.isArray(allowedRoots) || allowedRoots.some((root) => typeof root !== "string" || !root.startsWith("/"))) throw wrong("allowedRoots", allowedRoots)
@@ -214,6 +212,5 @@ export function parseOptions(raw: unknown): Options {
     orphanHours: wholeNumber("orphanHours", input.orphanHours, 1),
     leaseDays: wholeNumber("leaseDays", input.leaseDays, 0),
     ...(budget ? { budget } : {}),
-    idleCheck: input.idleCheck as boolean,
   }
 }

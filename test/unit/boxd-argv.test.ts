@@ -2,19 +2,19 @@
 // --region, every change acts by id, a create carries the cost bounds of design §C.2, and nothing ever asks for
 // --shared or --isolated.
 import { describe, expect, test } from "bun:test"
-import * as argv from "../../src/boxd/argv.js"
-import { parseCreated, parseListing, parseMachine, parseMachineLimit, parseSecrets, parseSnapshots, parseUsage, regionLimits } from "../../src/boxd/parse.js"
+import * as argv from "../../src/provider/boxd/argv.js"
+import { parseCreated, parseListing, parseMachine, parseMachineLimit, parseSecrets, parseSnapshots, parseUsage, regionLimits } from "../../src/provider/boxd/parse.js"
 import type { ChangeTarget, MachineId } from "../../src/ports.js"
 
 // A test builds a target by hand; in the plugin only checkOwned makes one.
 const target = { region: "nyc", name: "oc-review-api", machineId: "vm_0042" as MachineId, checkedAt: 1 } as unknown as ChangeTarget
-const work = { kind: "work", region: "nyc", name: "oc-review-api", workId: "review-api", image: "oc-golden-2.2.6-4x16", autoSuspendSeconds: 0, autoHibernateSeconds: 7200 } as const
+const work = { kind: "work", region: "nyc", name: "oc-review-api", workId: "review-api", image: "oc-golden-2.4.1-4x16", autoSuspendSeconds: 0, autoHibernateSeconds: 7200 } as const
 
 describe("argv", () => {
   test("a work's create: its image, the plugin's labels, the cost bounds, and the lease only when asked", () => {
     expect(argv.createWorkArgs(work)).toEqual([
-      "machine", "new", "oc-review-api", "--region", "nyc", "--from-snapshot", "oc-golden-2.2.6-4x16",
-      "--label", "owner=opencode-boxd", "--label", "role=session", "--label", "work=review-api",
+      "machine", "new", "oc-review-api", "--region", "nyc", "--from-snapshot", "oc-golden-2.4.1-4x16",
+      "--label", "owner=boxd", "--label", "role=session", "--label", "work=review-api",
       "--auto-suspend-timeout", "0", "--auto-hibernate-timeout", "7200", "--idle-ignore-outbound=off", "--json",
     ])
     expect(argv.createWorkArgs({ ...work, leaseDays: 3 })).toContain("--delete-after")
@@ -41,7 +41,7 @@ describe("argv", () => {
     expect(argv.renameArgs(target, "oc-next")).toEqual(["machine", "rename", "vm_0042", "oc-next", "-y", "--region", "nyc", "--json"])
     expect(argv.labelSetArgs(target, "work", "next")).toEqual(["machine", "label", "set", "vm_0042", "work", "next", "--region", "nyc"])
     expect(argv.leaseArgs(target, 2)).toEqual(["machine", "config", "set", "vm_0042", "delete-after", "2d", "--region", "nyc"])
-    expect(argv.saveSnapshotArgs(target, "oc-golden-2.2.6-2x8")).toEqual(["snapshots", "save", "vm_0042", "oc-golden-2.2.6-2x8", "--region", "nyc", "--json"])
+    expect(argv.saveSnapshotArgs(target, "oc-golden-2.4.1-2x8")).toEqual(["snapshots", "save", "vm_0042", "oc-golden-2.4.1-2x8", "--region", "nyc", "--json"])
   })
 
   test("reads: one list for every region, a get in its region, and the account's lists", () => {
@@ -52,17 +52,17 @@ describe("argv", () => {
     expect(argv.usageArgs("2026-11-15")).toEqual(["manage", "usage", "--since", "2026-11-15", "--json"])
     expect(argv.usageArgs("24h")).toEqual(["manage", "usage", "--since", "24h", "--json"])
     expect(() => argv.usageArgs("yesterday; rm -rf")).toThrow(/NAME_INVALID/)
-    expect(argv.removeSnapshotArgs("nyc", "oc-golden-2.2.5-2x8")).toEqual(["snapshots", "rm", "oc-golden-2.2.5-2x8", "-y", "--region", "nyc", "--json"])
+    expect(argv.removeSnapshotArgs("nyc", "oc-golden-2.4.3-2x8")).toEqual(["snapshots", "rm", "oc-golden-2.4.3-2x8", "-y", "--region", "nyc", "--json"])
     expect(argv.envListArgs()).toEqual(["env", "list", "--json"])
   })
 
   test("exec passes boxd's own timeout and the command as one argument after --; cp names guest paths with the machine", () => {
-    expect(argv.execArgs("fra", "oc-a", "python3 /home/boxd/.opencode-boxd/guest.py", 8, false)).toEqual([
-      "machine", "exec", "oc-a", "--region", "fra", "--timeout", "8", "--", "python3 /home/boxd/.opencode-boxd/guest.py",
+    expect(argv.execArgs("fra", "oc-a", "python3 /home/boxd/.boxd-plugin/guest.py", 8, false)).toEqual([
+      "machine", "exec", "oc-a", "--region", "fra", "--timeout", "8", "--", "python3 /home/boxd/.boxd-plugin/guest.py",
     ])
     expect(argv.execArgs("fra", "oc-a", "free -m", 60, true)).toContain("--json")
-    expect(argv.copyToArgs("fra", "oc-a", "/laptop/guest.py", "/home/boxd/.opencode-boxd-upload.py")).toEqual(["machine", "cp", "/laptop/guest.py", "oc-a:/home/boxd/.opencode-boxd-upload.py", "--region", "fra"])
-    expect(argv.copyFromArgs("fra", "oc-a", "/home/boxd/.opencode-boxd/exports/ses_a.json", "/laptop/x.tmp")).toEqual(["machine", "cp", "oc-a:/home/boxd/.opencode-boxd/exports/ses_a.json", "/laptop/x.tmp", "--region", "fra"])
+    expect(argv.copyToArgs("fra", "oc-a", "/laptop/guest.py", "/home/boxd/.boxd-plugin-upload.py")).toEqual(["machine", "cp", "/laptop/guest.py", "oc-a:/home/boxd/.boxd-plugin-upload.py", "--region", "fra"])
+    expect(argv.copyFromArgs("fra", "oc-a", "/home/boxd/.boxd-plugin/exports/ses_a.json", "/laptop/x.tmp")).toEqual(["machine", "cp", "oc-a:/home/boxd/.boxd-plugin/exports/ses_a.json", "/laptop/x.tmp", "--region", "fra"])
     expect(() => argv.copyFromArgs("fra", "oc-a", "/home/boxd/../etc/passwd", "/x")).toThrow(/NAME_INVALID/)
     expect(() => argv.execArgs("fra", "oc-a", "  ", 5, false)).toThrow(/NAME_INVALID/)
   })
@@ -79,11 +79,11 @@ describe("the JSON readers", () => {
   test("a listing row needs its region; the size comes from vcpu; labels in any of boxd's forms", () => {
     const rows = parseListing([
       { name: "oc-a", region: "fra", status: "running", vcpu: 4, memory_bytes: 17179869184, sharing: "private", labels: { role: "session" } },
-      { name: "oc-b", region: "nyc", status: "hibernating", size: "2 vCPU · 8 GiB", sharing: "shared", labels: ["work=b", "owner=opencode-boxd"], id: "vm_9" },
+      { name: "oc-b", region: "nyc", status: "hibernating", size: "2 vCPU · 8 GiB", sharing: "shared", labels: ["work=b", "owner=boxd"], id: "vm_9" },
     ])
     expect(rows).toEqual([
       { name: "oc-a", region: "fra", id: null, status: "running", size: "4x16", labels: { role: "session" }, sharing: "private", isolated: null },
-      { name: "oc-b", region: "nyc", id: "vm_9" as MachineId, status: "hibernated", size: "2x8", labels: { work: "b", owner: "opencode-boxd" }, sharing: "shared", isolated: null },
+      { name: "oc-b", region: "nyc", id: "vm_9" as MachineId, status: "hibernated", size: "2x8", labels: { work: "b", owner: "boxd" }, sharing: "shared", isolated: null },
     ])
     expect(() => parseListing([{ name: "oc-a", status: "running" }])).toThrow(/known region/)
     expect(parseListing({ machines: [] })).toEqual([])

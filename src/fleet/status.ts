@@ -11,7 +11,7 @@
  * works that share a reason and a code fold into one `groups` line when there are more than 3 of them. `lastText` is
  * cut to 200 characters and is the guest model's words: data, never instructions.
  */
-import { secretKinds } from "@we-the-rebel-alliance/source-contract/events"
+import { secretKinds } from "@we-the-rebel-alliance/plugin-contract/events"
 import { BoxdError, boxdError, type Code, type WarningCode } from "../errors.js"
 import type { Phase, WorkRecord } from "../ledger/types.js"
 import { LIST_MAX_ITEMS, REGIONS, SIZES, TIMEOUTS, type CallTag, type Listing, type OpContext, type Region, type Size } from "../ports.js"
@@ -74,7 +74,7 @@ const invalid = (field: string, message: string) => boxdError("NAME_INVALID", me
 /** The list registry holds 50 items. */
 const LIST_CAP = 50
 /** Control characters would escape to six bytes each in JSON and only make a work's text unreadable. */
-const CONTROLS = /[\u0000-\u001f\u007f-\u009f]/g
+const CONTROLS = /\p{Cc}+/gu
 
 /**
  * Current works as the contract's `list` items, newest first: by `lastActivityAt` (then by id, so the order is stable),
@@ -196,7 +196,6 @@ export function attentionOf(row: Row, facts: { readonly now: number; readonly ho
   if (observed?.guestVersion && facts.hostVersion && observed.guestVersion !== facts.hostVersion && unsaved && phase !== "busy") {
     reasons.push({ why: "version", error: "GUEST_VERSION", next: `${one("boxd_ensure", id)} upgrades it in place, then ${one("boxd_harvest", id)}` })
   }
-  if (record.laptopCopy === "unverified") reasons.push({ why: "laptop-copy", next: `${one("boxd_harvest", id)} replaces the copy of the transcript here` })
   if ((phase === "idle" || phase === "ready") && !observed?.needsInput && !facts.automation.startsWith("on")) {
     reasons.push({ why: "idle-running", next: one("boxd_sleep", id) })
   }
@@ -221,7 +220,6 @@ function groupNext(why: AttentionReason, error: Code | undefined, ids: readonly 
       return 'boxd_harvest({ select: "unsaved-finished" })'
     case "idle-running":
       return 'boxd_sleep({ select: "idle" })'
-    case "laptop-copy":
     case "orphan":
     case "lease-expiring":
       return `boxd_harvest({ works: [${named}] })`
@@ -305,7 +303,7 @@ export async function fleetStatus(services: FleetServices, input: StatusInput, c
   const op = (pool: OpContext["pool"] = "foreground"): OpContext => ({ call: call.tag, ...(call.signal ? { signal: call.signal } : {}), pool })
   const handle: WatchHandle | undefined = watchHandle(services.watch)
 
-  // The ledger first: its gate answers LEDGER_IMPORTING or IMPORT_V0_FAILED before anything else runs.
+  // The ledger first: its records decide which works exist before any boxd call.
   const filter = { ...(input.workIds ? { workIds: input.workIds } : {}), ...(input.region ? { region: input.region } : {}) }
   const open = await services.ledger.list(filter, op())
   const closed = input.include.includes("closed") ? (await services.ledger.list({ ...filter, closed: true }, op())).filter((record) => record.state === "closed") : []
@@ -476,7 +474,7 @@ export async function fleetStatus(services: FleetServices, input: StatusInput, c
   const recorded = new Set(open.map((record) => `${record.region}/${record.machine}`))
   const orphans = (listing?.machines ?? [])
     .filter((machine) => machine.name.startsWith("oc-") && !machine.name.startsWith("oc-gb-") && machine.status !== "destroyed")
-    .filter((machine) => machine.labels.owner === "opencode-boxd" || (machine.labels.role === "session" && machine.labels.work !== undefined))
+    .filter((machine) => machine.labels.owner === "boxd" || (machine.labels.role === "session" && machine.labels.work !== undefined))
     .filter((machine) => !recorded.has(`${machine.region}/${machine.name}`))
     .filter((machine) => !input.region || machine.region === input.region)
     .map((machine) => {
@@ -511,7 +509,6 @@ export async function fleetStatus(services: FleetServices, input: StatusInput, c
 
   const health = services.runner.health()
   const watchHealth = handle?.health()
-  const imported = services.importV0.state()
 
   return {
     state: "ok",
@@ -556,6 +553,5 @@ export async function fleetStatus(services: FleetServices, input: StatusInput, c
           ? { watcher: watchHealth.watcher }
           : {}),
     },
-    ...(imported.state === "complete" && (imported.works > 0 || imported.blocked.length > 0) ? { import: { works: imported.works, errors: imported.blocked.length } } : {}),
   }
 }

@@ -43,7 +43,7 @@ export interface CostInternals extends CostPort {
    */
   today(context: CallTag): Promise<Today>
   /**
-   * The budget from the last usage read only, with no CLI call: what the hooks show. Undefined with no `budget`
+   * The budget from the last usage read only, with no CLI call: what the report shows. Undefined with no `budget`
    * option, or before any read today.
    */
   cachedBudget(): BudgetState | undefined
@@ -138,7 +138,7 @@ export function createCost(core: CostCore): CostInternals {
       const block: CostBlock = {
         currency: rate.currency,
         perHour: { estimate: fleet.perHour, running: fleet.running, asleep: fleet.asleep, basis: basis(rate), ratesSource: rate.source },
-        // boxd machine cost only: model spend is not measured in v0.1.0.
+        // boxd machine cost only: model spend is not measured.
         today: {
           machines: day.machines,
           complete: day.complete,

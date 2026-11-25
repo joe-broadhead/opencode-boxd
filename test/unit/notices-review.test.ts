@@ -21,7 +21,7 @@ afterEach(async () => {
   world = undefined
   for (const root of roots.splice(0)) removeRoot(root)
 })
-const later = (w: World, ms: number) => void (w.clock.now = new Date(w.clock.now.getTime() + ms))
+const later = (w: World, ms: number) => { w.clock.now = new Date(w.clock.now.getTime() + ms) }
 const event = (seq: number, workId: string, over: Partial<WorkEvent> = {}): WorkEvent => ({ seq, at: "2026-11-16T10:00:00.000Z", workId, from: "busy", to: "idle", outcome: "completed", ...over })
 
 describe("targeting", () => {
@@ -194,7 +194,7 @@ test("the events harvest, sleep and drop append reach the subscribers and the no
   const tool = w.context("c2", "boxd_harvest")
   // As C2's runs record them: a harvest's idle outcome, a sleep with its cause, a drop that closes the work.
   await w.ledger.appendEvent({ at: w.clock.now.toISOString(), workId: "harvested", from: "busy", to: "idle", outcome: "completed" }, tool)
-  w.counter.fake.update((state) => void (state.machines.find((machine) => machine.name === "oc-slept")!.status = "hibernated"))
+  w.counter.fake.update((state) => { state.machines.find((machine) => machine.name === "oc-slept")!.status = "hibernated" })
   await w.record("slept", (record) => ({ ...record, slept: { at: w.clock.now.toISOString(), by: "boxd_sleep" } }))
   await w.ledger.appendEvent({ at: w.clock.now.toISOString(), workId: "slept", from: "idle", to: "asleep", asleepBy: "boxd_sleep" }, tool)
   await w.record("dropped", (record) => ({ ...record, state: "closed", closed: { at: w.clock.now.toISOString(), how: "dropped" } }))

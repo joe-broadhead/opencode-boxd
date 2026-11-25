@@ -7,7 +7,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { arch, platform } from "node:os"
 import { join } from "node:path"
 import { TESTED_HOSTS } from "../../src/constants.js"
-import { createLaptopPort } from "../../src/exec/laptop.js"
+import { createLaptopPort } from "../../src/provider/laptop.js"
 import { replaceOnLaptop, type StoredTranscript } from "../../src/prover.js"
 import type { OpContext } from "../../src/ports.js"
 import { directSpawn, removeRoot, tempRoot } from "../support/ledger-fakes.js"

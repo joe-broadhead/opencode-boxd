@@ -25,7 +25,6 @@ import { assertInsideRoots, assertWorkPath, digestFile, FILE_LIMIT, placeFile, r
 import type { ChangeTarget, ExportAnswer, GitAnswer, OpContext, Owned, RunOutcome, StagedFile, StagedFolder } from "../ports.js"
 import type { HarvestResult } from "../results.js"
 import {
-  adoptIfV0,
   asleep,
   assertWorkIdInput,
   checkStop,
@@ -85,7 +84,6 @@ interface Fetched {
   readonly patch?: { readonly staged: StagedFile; readonly bytes: number; readonly sha256: string }
   readonly untracked?: { readonly staged: StagedFolder; readonly expected: Record<string, { readonly bytes: number; readonly sha256: string }> }
   readonly files: ReadonlyArray<{ readonly path: string; readonly temp: string; readonly laptopPath: string }>
-  readonly adopted: boolean
 }
 
 export async function harvestWork(services: Services, item: HarvestItem, context: WorkContext): Promise<HarvestResult> {
@@ -175,7 +173,6 @@ async function fetch(
     await services.boxd.wake(target, op)
     await untilRunning(services, target, op)
   }
-  const adopted = await adoptIfV0(services, record, target, op)
   const rootId = record.session?.rootId
   let outcome: RunOutcome | null = record.run?.outcome ?? null
   let error: string | undefined = record.run?.error
@@ -233,7 +230,7 @@ async function fetch(
     await copy(services, target, `${record.guestDirectory}/${path}`, temp, op)
     files.push({ path, temp, laptopPath })
   }
-  return { outcome, ...(error ? { error } : {}), ...(exported ? { exported } : {}), exports, git, ...(patch ? { patch } : {}), ...(untracked ? { untracked } : {}), files, adopted }
+  return { outcome, ...(error ? { error } : {}), ...(exported ? { exported } : {}), exports, git, ...(patch ? { patch } : {}), ...(untracked ? { untracked } : {}), files }
 }
 
 /** No git facts: the guest folder is not the top of its own repository. A harvest records that and saves the rest. */
@@ -336,8 +333,8 @@ function written(
   }
   const warnings = complete ? withoutWarning(record.warnings, "UNHARVESTED_SLEEP") : record.warnings
   const out = [...(record.files?.out ?? []).filter((file) => !moved.some((item) => item.path === file.path)), ...moved]
-  // The laptop's copy is replaced and verified only when a transcript was exported; until then a v0 import stays unverified.
-  const base = fetched.exported ? omit(record, "laptopCopy", "warnings") : omit(record, "warnings")
+  // The laptop's copy is replaced and verified only when a transcript was exported.
+  const base = omit(record, "warnings")
   const next: WorkRecord = {
     ...base,
     machineId,
@@ -347,7 +344,6 @@ function written(
     ...(fetched.outcome ? { run: { outcome: fetched.outcome, ...(fetched.error ? { error: fetched.error } : {}), at: record.run?.outcome === fetched.outcome && record.run.error === fetched.error ? record.run.at : at } } : {}),
     ...(warnings?.length ? { warnings } : {}),
     ...(moved.length ? { files: { in: record.files?.in ?? [], out } } : {}),
-    ...(fetched.adopted ? { guestHelper: "v1" as const } : {}),
   }
   const storedFiles = new Map(out.map((file) => [file.path, file.sha256]))
   const value: HarvestResult = {
@@ -357,7 +353,7 @@ function written(
     sessions: sessions.map((session) => ({ id: session.id, bytes: session.bytes })),
     git: { known: gitState.known, dirty: gitState.dirty, patchStored: gitState.patchStored, untracked: gitState.untracked.length, ignored: gitState.ignored.length, unpushed: fetched.git.unpushedKnown ? fetched.git.unpushedCount : null },
     ...(moved.length ? { files: moved.map((file) => ({ path: file.path, bytes: file.bytes, sha256: file.sha256, laptopPath: file.laptopPath! })) } : {}),
-    next: dropAdvice(record.workId, complete, base.laptopCopy === "unverified", fetched.git, fetched.untracked?.expected ?? {}, storedFiles, Boolean(fetched.patch)),
+    next: dropAdvice(record.workId, complete, fetched.git, fetched.untracked?.expected ?? {}, storedFiles, Boolean(fetched.patch)),
   }
   return { write: [next], value }
 }
@@ -366,7 +362,6 @@ function written(
 function dropAdvice(
   workId: string,
   complete: boolean,
-  unverified: boolean,
   git: GitAnswer,
   stored: Readonly<Record<string, { readonly sha256: string }>>,
   files: ReadonlyMap<string, string>,
@@ -374,7 +369,6 @@ function dropAdvice(
 ): string {
   const call = `{ workId: "${workId}" }`
   if (!complete) return `This is a partial copy, so boxd_drop refuses. Once the session is idle: boxd_harvest(${call}).`
-  if (unverified) return `The copy of the transcript here, imported from an earlier release, is not verified yet, so boxd_drop refuses: boxd_harvest(${call}) again.`
   if (!git.known) return `The guest folder is not a git repository, so boxd_drop refuses. boxd_sleep(${call}) keeps it at the cost of its disk.`
   if (!git.unpushedKnown) {
     return `The guest could not tell whether every commit is on a remote ref, so boxd_drop refuses: run the check with boxd_exec({ workId: "${workId}", command: ["git", "rev-list", "--count", "--all", "HEAD", "--not", "--remotes"] }) and push whatever it counts, then boxd_drop(${call}).`

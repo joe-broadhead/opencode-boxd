@@ -8,9 +8,9 @@
 import { afterAll, afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { createBoxdCli, isChangeTarget } from "../../src/boxd/cli.js"
+import { createBoxdCli, isChangeTarget } from "../../src/provider/boxd/cli.js"
 import { BoxdError } from "../../src/errors.js"
-import { createRunner } from "../../src/exec/runner.js"
+import { createRunner } from "../../src/provider/runner.js"
 import type { BoxdPort, ChangeTarget, MachineId, OpContext, ReadTarget } from "../../src/ports.js"
 import { startFakeCli, type FakeCli } from "../host/fake-cli.js"
 
@@ -61,18 +61,18 @@ describe("reads", () => {
   })
 
   test("get hands back a change target only for a machine whose labels show the plugin owns it", async () => {
-    const ours = fake.machine({ name: "oc-a", region: "fra", labels: { role: "session", owner: "opencode-boxd", work: "a" } })
-    const v0 = fake.machine({ name: "oc-b", region: "fra", labels: { role: "session", work: "b" } })
+    const ours = fake.machine({ name: "oc-a", region: "fra", labels: { role: "session", owner: "boxd", work: "a" } })
+    fake.machine({ name: "oc-b", region: "fra", labels: { role: "session", work: "b" } })
     fake.machine({ name: "oc-c", region: "fra", labels: { role: "session", work: "other" } })
     fake.machine({ name: "oc-d", region: "fra" })
     expect((await boxd.get("fra", "oc-a", context())).owned).toMatchObject({ target: { region: "fra", name: "oc-a", machineId: ours.id }, status: "running" })
-    expect((await boxd.get("fra", "oc-b", context())).owned?.target).toMatchObject({ machineId: v0.id })
+    expect((await boxd.get("fra", "oc-b", context())).owned).toBeUndefined()
     expect((await boxd.get("fra", "oc-c", context())).owned).toBeUndefined()
     expect((await boxd.get("fra", "oc-d", context())).owned).toBeUndefined()
   })
 
   test("get never hands back a change target for a shared or isolated machine, whatever its labels", async () => {
-    const labels = { role: "session", owner: "opencode-boxd", work: "s" }
+    const labels = { role: "session", owner: "boxd", work: "s" }
     fake.machine({ name: "oc-s", region: "fra", labels, sharing: "shared" })
     fake.machine({ name: "oc-i", region: "fra", labels: { ...labels, work: "i" }, isolated: true })
     expect(await boxd.get("fra", "oc-s", context())).toMatchObject({ sharing: "shared" })
@@ -83,7 +83,7 @@ describe("reads", () => {
 
   test("a create whose answer names another machine is BOXD_FAILED, and nothing is branded", async () => {
     fake.snapshot({ region: "fra", name: "img" })
-    fake.update((state) => void (state.createAnswersName = "oc-someone-else"))
+    fake.update((state) => { state.createAnswersName = "oc-someone-else" })
     const key = { create: { region: "fra" as const, name: "oc-asked" as const } }
     const error = await fail(
       runner.withMachineLock(key, context(), () =>
@@ -104,7 +104,7 @@ describe("reads", () => {
   })
 
   test("the machine limit per region, cached for a minute; the org-wide shape gives every region the same headroom", async () => {
-    fake.update((state) => void (state.limits = { fra: 2, nyc: 5 }))
+    fake.update((state) => { state.limits = { fra: 2, nyc: 5 } })
     fake.machine({ name: "oc-a", region: "fra" })
     expect(await boxd.machineLimit(context())).toEqual([
       { region: "fra", limit: 2, inUse: 1, free: 1 },
@@ -116,33 +116,33 @@ describe("reads", () => {
 
   test("usage for an owner, and a plain refusal for a member", async () => {
     expect(await boxd.usage("24h", context())).toEqual({ available: false, reason: "boxd's machine usage is for organisation owners and admins." })
-    fake.update((state) => void (state.usage = { currency: "USD", complete: true, rates: { vcpu_hour_micro: 47000, ram_gib_hour_micro: 14000, disk_gib_hour_micro: 96 }, machines: [{ id: "vm_0001", cost_micro: 1_000_000 }] }))
+    fake.update((state) => { state.usage = { currency: "USD", complete: true, rates: { vcpu_hour_micro: 47000, ram_gib_hour_micro: 14000, disk_gib_hour_micro: 96 }, machines: [{ id: "vm_0001", cost_micro: 1_000_000 }] } })
     expect(await boxd.usage("24h", context())).toMatchObject({ available: true, currency: "USD", total: 1, complete: true, machines: [{ machineId: "vm_0001", cost: 1 }] })
   })
 
   test("snapshots in every region, cached; secrets by name, scope and hosts only", async () => {
-    fake.snapshot({ region: "nyc", name: "oc-golden-2.2.6-2x8" })
-    expect(await boxd.snapshots(context())).toEqual([{ region: "nyc", name: "oc-golden-2.2.6-2x8", storage: "local", status: "ready" }])
+    fake.snapshot({ region: "nyc", name: "oc-golden-2.4.1-2x8" })
+    expect(await boxd.snapshots(context())).toEqual([{ region: "nyc", name: "oc-golden-2.4.1-2x8", storage: "local", status: "ready" }])
     await boxd.snapshots(context())
     expect(fake.calls().filter((call) => call.startsWith("snapshots list"))).toHaveLength(1)
-    fake.update((state) => void (state.secrets = [{ name: "OPENCODE_API_KEY", scope: "private", domains: ["api.example.com"] }]))
+    fake.update((state) => { state.secrets = [{ name: "OPENCODE_API_KEY", scope: "private", domains: ["api.example.com"] }] })
     expect(await boxd.secrets(context())).toEqual([{ name: "OPENCODE_API_KEY", scope: "private", hosts: ["api.example.com"] }])
   })
 })
 
 describe("changes", () => {
   test("a work's create carries the labels and the cost bounds, records the id, and never a size", async () => {
-    fake.snapshot({ region: "nyc", name: "oc-golden-2.2.6-4x16", vcpu: 4, labels: { role: "golden-builder", tier: "x" } })
+    fake.snapshot({ region: "nyc", name: "oc-golden-2.4.1-4x16", vcpu: 4, labels: { role: "golden-builder", tier: "x" } })
     const key = { create: { region: "nyc" as const, name: "oc-review-api" as const } }
     const info = await runner.withMachineLock(key, context(), () =>
-      boxd.create({ kind: "work", region: "nyc", name: "oc-review-api", workId: "review-api", image: "oc-golden-2.2.6-4x16", autoSuspendSeconds: 0, autoHibernateSeconds: 7200 }, context()),
+      boxd.create({ kind: "work", region: "nyc", name: "oc-review-api", workId: "review-api", image: "oc-golden-2.4.1-4x16", autoSuspendSeconds: 0, autoHibernateSeconds: 7200 }, context()),
     )
     const stored = fake.read().machines[0]!
     expect(info).toMatchObject({ id: stored.id, name: "oc-review-api", region: "nyc", sharing: "private", isolated: false })
     // This process made it with this id, so the create hands back a change target: no second get to act on it.
     expect(info.owned).toMatchObject({ target: { region: "nyc", name: "oc-review-api", machineId: stored.id }, status: "starting" })
     expect(isChangeTarget(info.owned.target)).toBe(true)
-    expect(stored).toMatchObject({ vcpu: 4, autoSuspend: 0, autoHibernate: 7200, ignoreOutbound: "off", labels: { role: "session", owner: "opencode-boxd", work: "review-api", tier: "x" } })
+    expect(stored).toMatchObject({ vcpu: 4, autoSuspend: 0, autoHibernate: 7200, ignoreOutbound: "off", labels: { role: "session", owner: "boxd", work: "review-api", tier: "x" } })
     expect(stored.deleteAfter).toBeUndefined()
   })
 
@@ -154,7 +154,7 @@ describe("changes", () => {
       )
     await create("a", 2)
     expect(fake.read().machines[0]!.deleteAfter).toBe("2d")
-    fake.update((state) => void (state.limits = { fra: 1 }))
+    fake.update((state) => { state.limits = { fra: 1 } })
     expect(code(await fail(create("b")))).toBe("MACHINE_LIMIT")
     expect(fake.read().machines).toHaveLength(1)
   })
@@ -169,7 +169,7 @@ describe("changes", () => {
     await owned("fra", "oc-a", machine.id, (target) => boxd.hibernate(target, context()))
     expect(fake.read().machines[0]!.status).toBe("hibernated")
     // The name now points at another machine.
-    fake.update((state) => void (state.machines[0]!.name = "oc-moved"))
+    fake.update((state) => { state.machines[0]!.name = "oc-moved" })
     const other = fake.machine({ name: "oc-a", region: "fra" })
     const refused = await fail(owned("fra", "oc-a", machine.id, (target) => boxd.remove(target, context())))
     expect(refused?.code).toBe("NOT_OURS")
@@ -184,24 +184,24 @@ describe("changes", () => {
       await boxd.wake(target, context())
       await boxd.resize(target, "4x16", context())
       await boxd.reboot(target, context())
-      await boxd.setLabels(target, { work: "b", owner: "opencode-boxd" }, context())
+      await boxd.setLabels(target, { work: "b", owner: "boxd" }, context())
       await boxd.renewLease(target, 1, context())
       await boxd.rename(target, "oc-b", context())
-      await boxd.saveSnapshot(target, "oc-golden-2.2.6-4x16", context())
+      await boxd.saveSnapshot(target, "oc-golden-2.4.1-4x16", context())
     })
     const id = machine.id
     expect(fake.calls().filter((call) => !call.startsWith("machine get"))).toEqual([
       `machine wake ${id} --region nyc --json`,
       `machine resize ${id} --vcpu 4 -y --region nyc --json`,
       `machine reboot ${id} --region nyc --json`,
-      `machine label set ${id} owner opencode-boxd --region nyc`,
+      `machine label set ${id} owner boxd --region nyc`,
       `machine label set ${id} work b --region nyc`,
       `machine config set ${id} delete-after 1d --region nyc`,
       `machine rename ${id} oc-b -y --region nyc --json`,
-      `snapshots save ${id} oc-golden-2.2.6-4x16 --region nyc --json`,
+      `snapshots save ${id} oc-golden-2.4.1-4x16 --region nyc --json`,
     ])
-    expect(fake.read().machines[0]).toMatchObject({ name: "oc-b", vcpu: 4, status: "running", deleteAfter: "1d", labels: { work: "b", owner: "opencode-boxd" } })
-    expect(fake.read().snapshots[0]).toMatchObject({ region: "nyc", name: "oc-golden-2.2.6-4x16", vcpu: 4 })
+    expect(fake.read().machines[0]).toMatchObject({ name: "oc-b", vcpu: 4, status: "running", deleteAfter: "1d", labels: { work: "b", owner: "boxd" } })
+    expect(fake.read().snapshots[0]).toMatchObject({ region: "nyc", name: "oc-golden-2.4.1-4x16", vcpu: 4 })
   })
 
   test("checkOwned yields the target and the status the same get showed", async () => {
@@ -258,7 +258,7 @@ describe("exec and copies", () => {
     expect(ran.stdout).toBe("fresh\n")
     // The shared listing was young enough: the read used it, and listed nothing more.
     expect(lists()).toBe(before)
-    fake.update((state) => void (state.machines.find((machine) => machine.name === "oc-b")!.status = "hibernated"))
+    fake.update((state) => { state.machines.find((machine) => machine.name === "oc-b")!.status = "hibernated" })
     // Once the shared listing has aged too, the read takes a fresh one, which shows the machine asleep.
     clock += 2_100
     const refused = await fail(boxd.exec(readTarget({ ...old, takenAt: old.takenAt - 5_000 }, "oc-b"), "echo no", { timeoutSeconds: 5, json: false }, context()))
@@ -304,7 +304,7 @@ describe("the CLI itself", () => {
   test("the flavour check runs once per binary, as one flight, and refuses the in-VM CLI", async () => {
     await Promise.all([boxd.list({ maxAgeMs: 10_000 }, context()), boxd.machineLimit(context()), boxd.snapshots(context())])
     expect(fake.spawns().filter((spawn) => spawn.argv[0] === "--help")).toHaveLength(1)
-    fake.update((state) => void (state.inVm = true))
+    fake.update((state) => { state.inVm = true })
     const fresh = createBoxdCli({ bin: fake.bin, runner: createRunner() })
     const error = await fail(fresh.list({ maxAgeMs: 0 }, context()))
     expect(error?.code).toBe("BOXD_MISSING")

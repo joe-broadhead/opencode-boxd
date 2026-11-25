@@ -6,7 +6,6 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { automation, LEASE_RENEW_MS, startAutomation, type Automation } from "../../src/automation.js"
-import { costHooks } from "../../src/hooks.js"
 import type { WorkSnapshot } from "../../src/ports.js"
 import { fakes, minutesAgo, record, T0, work, type Fakes } from "../support/cost-fakes.js"
 
@@ -42,7 +41,7 @@ describe("a finished work is harvested, then slept, after autoSleepMinutes", () 
       expect(call.context.call.source).toBe("automation")
     }
     // The harvest's own export is the one guest read: no separate phase read, one listing to skip a sleeping machine.
-    expect(f.calls.filter((call) => call.startsWith("phase") || call.startsWith("v0-phase"))).toEqual([])
+    expect(f.calls.filter((call) => call.startsWith("phase"))).toEqual([])
     expect(f.calls.filter((call) => call === "list")).toEqual(["list"])
   })
 
@@ -174,7 +173,7 @@ describe("orphans (§C.3)", () => {
 
   test("the coordinator deleted (the session event, through the watcher's sessionGone): harvested and slept", async () => {
     const { f, loop } = setup({ works: [work("a", { ...fresh, notify: "ses_gone" })], records: [record("a")] })
-    costHooks(f.services).sessionGone("ses_gone", "deleted")
+    f.services.watch.sessionGone("ses_gone", "deleted")
     expect(f.watch.gone).toEqual([{ sessionID: "ses_gone", why: "deleted" }])
     await loop().tick()
     expect(acted(f)).toEqual(["harvest a", "sleep a"])
@@ -195,7 +194,7 @@ describe("orphans (§C.3)", () => {
 
   test("a busy orphan is left to finish", async () => {
     const { f, loop } = setup({ works: [work("a", { phase: "busy", notify: "ses_gone", touchedAt: minutesAgo(T0, 24 * 60) })], records: [record("a")] })
-    costHooks(f.services).sessionGone("ses_gone", "archived")
+    f.services.watch.sessionGone("ses_gone", "archived")
     await loop().tick()
     expect(acted(f)).toEqual([])
   })
@@ -210,13 +209,11 @@ describe("never a drop (§C.3 step 4)", () => {
   test("a fleet where every work could be dropped: only harvest and sleep run, and the CLI removes nothing", async () => {
     const works: WorkSnapshot[] = ["a", "b", "c"].map((id) => work(id, { saved: "fresh", outcome: "completed", touchedAt: minutesAgo(T0, 48 * 60) }))
     const { f, loop } = setup({ works, records: works.map((item) => record(item.workId)) })
-    f.actions.matches.boxd_drop = ["a", "b", "c"]
     const one = loop()
     for (let i = 0; i < 5; i++) {
       f.clock.now = new Date(T0.getTime() + i * 40 * 60_000)
       await one.tick()
     }
-    expect(f.actions.calls.some((call) => call.method === "drop")).toBe(false)
     expect(f.calls.filter((call) => call === "remove" || call === "hibernate")).toEqual([])
   })
 })
@@ -344,7 +341,7 @@ describe("lease renewals (§C.2, L-2)", () => {
   })
 
   test("a saved idle work is not renewed; renewals need no automation consent", async () => {
-    const saved = { at: T0.toISOString(), complete: true, guestVersion: "2.2.3", sessions: [] }
+    const saved = { at: T0.toISOString(), complete: true, guestVersion: "2.4.4", sessions: [] }
     const { f, loop } = setup({ options: { leaseDays: 2, access: "read-only" }, works: [work("s", { saved: "fresh" }), work("u", { phase: "busy" })], records: [record("s", { saved, lease: lease(10, 2) }), record("u", { lease: lease(10, 2) })] })
     await loop().tick()
     expect(f.calls.filter((call) => call.startsWith("renewLease"))).toEqual(["renewLease vm_u 2d"])

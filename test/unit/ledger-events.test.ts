@@ -4,9 +4,8 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { spawn } from "node:child_process"
 import { appendFileSync, linkSync, readFileSync } from "node:fs"
 import { join } from "node:path"
-import { runImport } from "../../src/import-v0.js"
 import { Ledger } from "../../src/ledger/store.js"
-import { fakeImportBoxd, removeRoot, tempRoot } from "../support/ledger-fakes.js"
+import { removeRoot, tempRoot } from "../support/ledger-fakes.js"
 
 const roots: string[] = []
 afterEach(() => {
@@ -16,7 +15,6 @@ afterEach(() => {
 async function ledger(options: ConstructorParameters<typeof Ledger>[1] = {}): Promise<Ledger> {
   const root = tempRoot("boxd-events-")
   roots.push(root)
-  await runImport({ root, boxd: fakeImportBoxd() })
   return new Ledger(root, options)
 }
 

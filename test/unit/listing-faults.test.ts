@@ -2,15 +2,12 @@
 // watcher and boxd_job keep each work's last known phase, count no failure toward `unreachable`, and still answer.
 // And package E's real cost and cleanup providers, as status and the TUI render them.
 import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test"
-import { cleanupView } from "../../src/cleanup.js"
 import type { BoxdError } from "../../src/errors.js"
 import { notReadYet } from "../../src/fleet/ensure.js"
 import { notRead } from "../../src/fleet/model.js"
 import { jobRun } from "../../src/fleet/job.js"
-import { sessionRuns } from "../../src/fleet/sessions.js"
 import { fleetStatus, statusInput } from "../../src/fleet/status.js"
 import type { JobResult, ListResult, Refusal } from "../../src/results.js"
-import { cleanupText } from "../../src/tui.js"
 import { watchHandle } from "../../src/watch.js"
 import { startWorld, type World } from "../support/fleet-world.js"
 
@@ -27,7 +24,7 @@ const ids = (prefix: string, n: number) => Array.from({ length: n }, (_, index) 
 const fault = (w: World, times = 3) => {
   for (let index = 0; index < times; index++) w.counter.fake.fault("machine list", { stderr: "error: network unreachable", code: 1 })
 }
-const later = (w: World, ms: number) => void (w.clock.now = new Date(w.clock.now.getTime() + ms))
+const later = (w: World, ms: number) => { w.clock.now = new Date(w.clock.now.getTime() + ms) }
 
 /** Busy works with the helper installed, at a CLI latency that makes reads queue past their listing. */
 async function busyFleet(w: World, prefix: string, n: number) {
@@ -158,8 +155,8 @@ describe("the watcher", () => {
   })
 })
 
-describe("package E's real providers", () => {
-  test("status renders E's cost and cleanup blocks, and the TUI renders E's cleanup view", async () => {
+describe("the real cost provider", () => {
+  test("status renders E's cost block", async () => {
     world = await startWorld({ cost: "real" })
     const w = world
     await w.work("finished")
@@ -172,10 +169,5 @@ describe("package E's real providers", () => {
     expect(answer.cost.works?.map((work) => work.workId)).toEqual(["finished"])
     expect(Array.isArray(answer.cleanup)).toBe(true)
     expect(answer.automation).toBe("on")
-    const view = await cleanupView({ ...w.services, actions: sessionRuns(w.services).actions }).view({ callId: "view", source: "cleanup-command" })
-    expect(view.state).toBe("ok")
-    const text = cleanupText(view)
-    expect(text).toContain("- finished: idle")
-    expect(text).toContain("/boxd-cleanup asks you to confirm each action with a permission prompt.")
   })
 })

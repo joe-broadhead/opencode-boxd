@@ -1,6 +1,6 @@
 /**
  * Package E's automation loop (design §C.2, §C.3): auto-harvest then auto-sleep of finished and orphaned works, lease
- * renewal, under two locks, never a drop. Package E owns this file. `src/plugin.ts` starts it once and disposes
+ * renewal, under two locks, never a drop. Package E owns this file. `src/index.ts` starts it once and disposes
  * it with the plugin.
  *
  * - **Consent** (round 4, M-2): harvest and sleep run only when `consent(options)` is on: by default at `access: "all"`,
@@ -262,9 +262,8 @@ export function automation(services: CostServices, seam: AutomationSeam = {}): A
     await Promise.all(Array.from({ length: ACT_CONCURRENCY }, worker))
   }
 
-  /** The open records holding a lease; none until the v0 import is complete, so the loop never starts the import. */
+  /** The open records holding a lease. */
   async function leased(): Promise<readonly WorkRecord[]> {
-    if (services.importV0.state().state !== "complete") return []
     try {
       return (await ledger.list({}, op(tag()))).filter((record) => record.lease !== undefined)
     } catch {

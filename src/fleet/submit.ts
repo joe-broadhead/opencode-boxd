@@ -17,9 +17,8 @@ import { assertModel } from "../names.js"
 import { assertTotal, assertWorkPath, laptopFile, rootsOf } from "../paths.js"
 import { POLL_INTERVAL_MS, TIMEOUTS, type ChangeTarget, type Delivery, type MachineStatus, type OpContext } from "../ports.js"
 import type { SubmitResult } from "../results.js"
-import type { CallContext } from "../tools.js"
+import type { CallContext } from "../call.js"
 import {
-  adoptIfV0,
   asleep,
   assertWorkIdInput,
   checkStop,
@@ -38,7 +37,7 @@ import {
 
 const SESSION = /^ses_[A-Za-z0-9_-]{1,80}$/
 /** Where a file waits on the guest until the `prompt` exec moves it into the work tree. */
-const STAGING = "/home/boxd/.opencode-boxd/staging"
+const STAGING = "/home/boxd/.boxd-plugin/staging"
 /** The most `parentID` steps the root walk takes (design §3.5). */
 const ROOT_WALK = 16
 /** How often a woken machine's guest is read while its OpenCode starts: the second `untilRunning` polls at. */
@@ -118,7 +117,7 @@ export async function submitWork(services: Services, item: SubmitItem, context: 
       const record = openRecord(current.get(item.workId), item.workId)
       checkStop(op.signal, false)
       const lastSubmit = { at: nowIso(services), delivery: item.mode, ...(context.call ? { by: context.call.sessionID } : {}) }
-      const { answer, adopted } = await withTarget(services, record, machine, op, async ({ target, status }) => {
+      const { answer } = await withTarget(services, record, machine, op, async ({ target, status }) => {
         const woke = asleep(status)
         let deadline = 0
         if (woke) {
@@ -128,10 +127,8 @@ export async function submitWork(services: Services, item: SubmitItem, context: 
           await services.boxd.wake(target, op)
           await untilRunning(services, target, op)
         }
-        const adopted = await adoptIfV0(services, record, target, op)
-        // A woken machine shows running before its guest's OpenCode answers; the prompt waits for it in this call. A v0
-        // guest has no v1 helper to read yet: the prompt's change installs one after adopt.
-        if (woke && record.guestHelper !== "v0") await untilServing(services, record, target, op, deadline)
+        // A woken machine shows running before its guest's OpenCode answers; the prompt waits for it in this call.
+        if (woke) await untilServing(services, record, target, op, deadline)
         const staged = []
         for (const [index, file] of files.entries()) {
           const guestPath = `${STAGING}/${randomBytes(6).toString("hex")}-${index}`
@@ -154,7 +151,7 @@ export async function submitWork(services: Services, item: SubmitItem, context: 
           },
           op,
         )
-        return { answer, adopted }
+        return { answer }
       })
       const at = lastSubmit.at
       const moved: MovedFile[] = files.map((file) => ({ path: file.to, bytes: file.bytes, sha256: file.sha256, at }))
@@ -166,7 +163,6 @@ export async function submitWork(services: Services, item: SubmitItem, context: 
         session,
         lastSubmit,
         touchedAt: nowIso(services),
-        ...(adopted ? { guestHelper: "v1" as const } : {}),
         ...(moved.length ? { files: { in: [...(record.files?.in ?? []).filter((file) => !moved.some((item) => item.path === file.path)), ...moved], out: record.files?.out ?? [] } } : {}),
       }
       const result: SubmitResult = {

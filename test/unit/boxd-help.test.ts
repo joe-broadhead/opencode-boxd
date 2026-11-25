@@ -26,7 +26,7 @@ import {
   snapshotsArgs,
   usageArgs,
   wakeArgs,
-} from "../../src/boxd/argv.js"
+} from "../../src/provider/boxd/argv.js"
 import type { ChangeTarget, CreateBuilder, CreateWork } from "../../src/ports.js"
 
 const fixture = JSON.parse(readFileSync(fileURLToPath(new URL("../fixtures/boxd-cli-help.json", import.meta.url)), "utf8")) as {
@@ -57,8 +57,8 @@ const CASES: ReadonlyArray<readonly [string, string, readonly string[]]> = [
   ["lease", "machine config set", leaseArgs(target, 2)],
   ["exec", "machine exec", execArgs("fra", "oc-review-api", "git status --short", 60, true)],
   ["exec without json", "machine exec", execArgs("fra", "oc-review-api", "echo hi", 30, false)],
-  ["copy to", "machine cp", copyToArgs("fra", "oc-review-api", "guest.py", "/home/boxd/.opencode-boxd-upload.py")],
-  ["copy from", "machine cp", copyFromArgs("fra", "oc-review-api", "/home/boxd/.opencode-boxd/exports/ses_a.json", "x.tmp")],
+  ["copy to", "machine cp", copyToArgs("fra", "oc-review-api", "guest.py", "/home/boxd/.boxd-plugin-upload.py")],
+  ["copy from", "machine cp", copyFromArgs("fra", "oc-review-api", "/home/boxd/.boxd-plugin/exports/ses_a.json", "x.tmp")],
   ["machine limit", "manage machine-limit", machineLimitArgs()],
   ["usage", "manage usage", usageArgs("24h")],
   ["snapshots", "snapshots list", snapshotsArgs()],
@@ -132,7 +132,7 @@ describe("the external boxd CLI's recorded help", () => {
     expect(fixture.provenance.sha256).toMatch(/^[0-9a-f]{64}$/)
     expect(fixture.provenance.surface).toContain("not the in-VM CLI")
     expect(Object.keys(HELP)).toHaveLength(19)
-    const source = readFileSync(fileURLToPath(new URL("../../src/boxd/argv.ts", import.meta.url)), "utf8")
+    const source = readFileSync(fileURLToPath(new URL("../../src/provider/boxd/argv.ts", import.meta.url)), "utf8")
     expect(source).toContain("laptop boxd CLI (0.3.8)")
   })
 

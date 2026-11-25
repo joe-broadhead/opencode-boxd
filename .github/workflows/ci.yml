@@ -1,26 +1,31 @@
-name: ci
+name: CI
+
+# One job, named ci: the org ruleset requires a check with that name. It runs the whole gate, so the required check
+# covers typecheck, bundle drift, tests, the pack check, conformance, docs drift and the forbidden scan.
+#
+# It runs locally too: npm ci --ignore-scripts && npm run check
+#
+# Public repository: a pull request from a fork must never reach a self-hosted runner. The runner rule below keeps
+# every fork pull request on ubuntu-24.04, and lets this repository's own runs use the org's public runner when set.
 
 on:
-  push:
-    branches: [master]
   pull_request:
-  workflow_dispatch:
+  push:
+    branches:
+      - master
 
 permissions:
   contents: read
 
 concurrency:
-  # The event is part of the group, so a run by hand on master never cancels the push run a release stands on.
-  group: ci-${{ github.event_name }}-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # One job runs the whole check. A pull request from a fork runs the public runner: it has no access to the
-  # organisation's private runners or secrets, and its head repository is not this one.
   ci:
     name: ci
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (vars.CI_RUNNER_PUBLIC || 'ubuntu-24.04') || 'ubuntu-24.04' }}
-    timeout-minutes: 90
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -28,17 +33,18 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-          cache: npm
+          package-manager-cache: false
       - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2.0.2
         with:
           bun-version: 1.4.4
-          # The shared runner's restored Bun cache can lack the executable it names (`/home/runner/.bun/bin/bun`);
-          # download the release each run, as the release workflow does, so the job cannot start from a stale cache.
           no-cache: true
+      - name: Fetch the contract over HTTPS
+        # The contract is a public repository, and npm records its GitHub dependency over ssh. A runner has no key.
+        run: git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
       - run: npm ci --ignore-scripts
-      # actionlint parses the workflows as workflows, not as YAML: a `${{ }}` in a context that does not exist makes
-      # GitHub reject the file and run nothing at all. The download is checked against its published checksums, and
-      # `npm run check` lints the workflows again through its own actionlint stage.
+      - run: npm run lint
+      - name: The committed bundle is current
+        run: npm run bundle && git diff --exit-code dist/
       - name: actionlint
         run: |
           set -euo pipefail
@@ -48,22 +54,24 @@ jobs:
           curl -sSfLO "${base}/actionlint_${version}_checksums.txt"
           grep " actionlint_${version}_linux_amd64.tar.gz$" "actionlint_${version}_checksums.txt" | sha256sum -c -
           tar xzf "actionlint_${version}_linux_amd64.tar.gz" actionlint
-          # A self-hosted runner has no passwordless sudo: keep the binary in the runner's temp folder, and put it on
-          # PATH so the check's own actionlint stage lints the workflows again.
           mkdir -p "$RUNNER_TEMP/bin"
           mv actionlint "$RUNNER_TEMP/bin/actionlint"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
           "$RUNNER_TEMP/bin/actionlint" -color .github/workflows/ci.yml .github/workflows/release.yml
-      # The stock binaries the prover and pack stages run against, so the import-id evidence runs here too: one for each
-      # release in TESTED_HOSTS (src/constants.ts), read by scripts/tested-hosts.mjs as the release workflow reads it.
-      - name: Stock OpenCode binaries
+      - name: The stock OpenCode the pack test installs from
         run: |
           platform="$(node -p 'process.platform')-$(node -p 'process.arch')"
-          hosts="$(node scripts/tested-hosts.mjs)"
-          for version in $(node -p 'JSON.parse(process.argv[1].replace(/^hosts=/, "")).join(" ")' "$hosts"); do
-            dir="$RUNNER_TEMP/stock-$version"
-            mkdir -p "$dir"
-            (cd "$dir" && npm init -y >/dev/null && npm install "@opencode/cli@$version" "@opencode/cli-$platform@$version" --omit=optional --ignore-scripts --no-audit --no-fund)
-            echo "OPENCODE_BIN_${version//./_}=$dir/node_modules/@opencode/cli-$platform/bin/opencode" >> "$GITHUB_ENV"
-          done
+          dir="$RUNNER_TEMP/stock-2.4.1"
+          mkdir -p "$dir"
+          (cd "$dir" && npm init -y >/dev/null && npm install "@opencode/cli@2.4.1" "@opencode/cli-$platform@2.4.1" --omit=optional --ignore-scripts --no-audit --no-fund)
+          echo "OPENCODE_BIN_2_4_1=$dir/node_modules/@opencode/cli-$platform/bin/opencode" >> "$GITHUB_ENV"
+      - name: The git-tag install the release uses
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          H="$(mktemp -d)"
+          HOME="$H" XDG_CONFIG_HOME="$H/c" XDG_CACHE_HOME="$H/k" XDG_DATA_HOME="$H/d" XDG_STATE_HOME="$H/s" \
+            "$OPENCODE_BIN_2_4_1" plugin add "github:we-the-rebel-alliance/boxd-plugin#$HEAD_SHA"
+          find "$H/k/opencode/npm" -path '*/node_modules/@we-the-rebel-alliance/boxd-plugin/dist/index.js' -print -quit | grep -q .
       - run: npm run check

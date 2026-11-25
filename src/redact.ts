@@ -1,8 +1,8 @@
 // Text from OpenCode, boxd or the network, made safe to show in status, the dialog, the status RPC and the session.
-// No imports: status.ts, which the terminal UI bundle inlines, uses it too. Ported from opencode-wisprflow's redact.ts.
+// No imports: status.ts, which the terminal UI bundle inlines, uses it too.
 
 /**
- * Token shapes, the same as the tools RPC's for upstream errors (the source contract's `tools-rpc`): bearer and basic values,
+ * Token shapes: bearer and basic values,
  * `key=value` secrets, JWTs, vendor-prefixed keys, and any long run of key characters; then email addresses and the
  * owner's name in a home folder (macOS, Linux or Windows), which becomes `~`.
  */
@@ -20,7 +20,7 @@ const SECRETS: readonly [RegExp, string][] = [
 const REASON_LIMIT = 160
 
 /** C0 and C1 controls and DEL: a line break or escape sequence must not reach a terminal or the session. */
-const CONTROLS = /[\u0000-\u001f\u007f-\u009f]+/g
+const CONTROLS = /\p{Cc}+/gu
 /** Bidi marks, embeddings, overrides and isolates: a name must not reorder the row it is shown in. */
 const BIDI = /[‎‏‪-‮⁦-⁩]/g
 
@@ -57,7 +57,7 @@ export function excerpt(text: string, limit: number): string | undefined {
 }
 
 /** Controls but line breaks and tabs, for text that keeps its lines. */
-const BLOCK_CONTROLS = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]+/g
+const BLOCK_CONTROLS = /(?:(?![\n\r\t])\p{Cc})+/gu
 
 /**
  * Many lines of guest output, such as a command's stdout, made safe the same way as `shortReason`, line by line: token

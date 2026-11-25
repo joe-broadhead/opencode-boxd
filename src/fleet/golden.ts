@@ -39,12 +39,12 @@ import {
 } from "../ports.js"
 import type { GoldenImage, GoldenResult } from "../results.js"
 import type { FleetServices } from "../services.js"
-import type { CallContext } from "../tools.js"
+import type { CallContext } from "../call.js"
 import { runOne, type ItemContext } from "./list.js"
 import { regionsText } from "./regions.js"
 
 /** Where `goldenSetup` lands on the builder, in boxd's home; it is removed by the same exec that runs it. */
-const SETUP_FILE = ".opencode-boxd-golden-setup.sh"
+const SETUP_FILE = ".boxd-plugin-golden-setup.sh"
 const SETUP_PATH = `/home/boxd/${SETUP_FILE}`
 /** The builder's safety net, whatever happens to the laptop. */
 const BUILDER_LEASE = "2h"
@@ -268,7 +268,6 @@ export function createGolden(services: FleetServices, settings: { readonly bound
     for (const flag of ["rebuild", "prune"] as const) if (input[flag] !== undefined && typeof input[flag] !== "boolean") throw boxdError("NAME_INVALID", `${flag} must be true or false.`, { field: flag })
     const regions = region === "all" ? (pruning ? [...REGIONS] : [...allowed]) : [region as Region]
     const context: OpContext = { call: { callId: call.id, source: "boxd_golden" }, signal: call.signal }
-    await services.ledger.ready(context)
     if (input.prune === true) return prune(regions, context)
 
     return runOne({ signal: call.signal, ...(settings.bound ? { boundMs: settings.bound() } : {}), now }, async (item: ItemContext) => {

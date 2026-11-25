@@ -20,7 +20,6 @@ const DEFAULTS: Options = {
   autoSleepMinutes: 10,
   orphanHours: 12,
   leaseDays: 0,
-  idleCheck: true,
 }
 
 describe("plugin options", () => {
@@ -50,7 +49,7 @@ describe("plugin options", () => {
     for (const automation of ["auto", "on", "off"]) expect(parseOptions({ automation })).toMatchObject({ automation })
     expect(parseOptions({ autoHibernateMinutes: 30, autoSleepMinutes: 0, orphanHours: 1, leaseDays: 3 })).toMatchObject({ autoHibernateMinutes: 30, autoSleepMinutes: 0, orphanHours: 1, leaseDays: 3 })
     expect(parseOptions({ budget: { daily: 50, action: "refuse" } })).toMatchObject({ budget: { daily: 50, action: "refuse" } })
-    expect(parseOptions({ idleCheck: false })).toMatchObject({ idleCheck: false })
+    expect(parseOptions({  })).toMatchObject({  })
   })
 
   test("refuses every value outside its rule, each as OPTIONS_INVALID with a next step", () => {
@@ -140,7 +139,7 @@ describe("the host", () => {
 
 describe("versions", () => {
   test("parses the CLI's own version line", () => {
-    expect(parseVersion("opencode v2.2.6")).toEqual([2, 2, 6])
-    expect(parseVersion("2.2.6-dev.1")).toBeUndefined()
+    expect(parseVersion("opencode v2.4.1")).toEqual([2, 4, 1])
+    expect(parseVersion("2.4.1-dev.1")).toBeUndefined()
   })
 })

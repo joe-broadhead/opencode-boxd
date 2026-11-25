@@ -1,10 +1,10 @@
 // Review of #20 cases re-run on #23's runner: M-1 (fresh), M-2 joined flights, M-3 flight order, and stdout drain.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { spawn } from "node:child_process"
-import { createBoxdCli } from "../../src/boxd/cli.js"
+import { createBoxdCli } from "../../src/provider/boxd/cli.js"
 import { BoxdError } from "../../src/errors.js"
-import { createRunner, type Launch } from "../../src/exec/runner.js"
-import { createGuestPort } from "../../src/guest/port.js"
+import { createRunner, type Launch } from "../../src/provider/runner.js"
+import { createGuestPort } from "../../src/provider/guest/port.js"
 import type { BoxdPort, MachineId, OpContext, ReadTarget } from "../../src/ports.js"
 import { startFakeCli, type FakeCli } from "../host/fake-cli.js"
 
@@ -31,7 +31,7 @@ describe("fresh", () => {
     fake.machine({ name: "oc-a", region: "fra" })
     const guest = createGuestPort({ boxd, runner })
     const listing = await boxd.list({ maxAgeMs: 0 }, ctx("l"))
-    fake.update((s) => void (s.latencyMs = [2500, 2500]))
+    fake.update((s) => { s.latencyMs = [2500, 2500] })
     const target: ReadTarget = { region: "fra", name: "oc-a", listing, machineId: null }
     const first = settle(guest.health(target, ctx("r1")))
     await sleep(20)
@@ -46,7 +46,7 @@ describe("fresh", () => {
 
   test("M-2 fresh: the flavour check and an identical guest read are joined; Stop of A leaves B its answer", async () => {
     fake.machine({ name: "oc-a", region: "fra" })
-    fake.update((s) => void (s.latencyMs = [700, 700]))
+    fake.update((s) => { s.latencyMs = [700, 700] })
     // flavour check: nothing warmed yet; A and B both need it.
     const stop = new AbortController()
     const a = settle(boxd.list({ maxAgeMs: 0 }, ctx("A", stop.signal)))
@@ -59,9 +59,9 @@ describe("fresh", () => {
     expect(rb.ok).toBe(true)
     // identical guest reads
     const guest = createGuestPort({ boxd, runner })
-    fake.update((s) => void (s.latencyMs = [0, 0]))
+    fake.update((s) => { s.latencyMs = [0, 0] })
     const listing = await boxd.list({ maxAgeMs: 0 }, ctx("l"))
-    fake.update((s) => void (s.latencyMs = [700, 700]))
+    fake.update((s) => { s.latencyMs = [700, 700] })
     const target: ReadTarget = { region: "fra", name: "oc-a", listing, machineId: null }
     const stop2 = new AbortController()
     const ga = settle(guest.health(target, ctx("GA", stop2.signal)))

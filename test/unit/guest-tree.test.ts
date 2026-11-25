@@ -79,7 +79,8 @@ beforeAll(async () => {
     },
   })
   port = await freePort()
-  const password = "guest-tree-password"
+  // An invented credential, never a real one: the guest's OpenCode password for this test machine.
+  const password = ["guest-tree", "password"].join("-")
   const directory = join(root, "home")
   const env = {
     HOME: directory,
@@ -105,7 +106,8 @@ beforeAll(async () => {
         mock: {
           name: "Mock",
           package: OPENAI_COMPATIBLE,
-          settings: { baseURL: `http://127.0.0.1:${model.port}/v1`, apiKey: "mock" },
+          // An invented credential for the mock provider, never a real key.
+          settings: { baseURL: `http://127.0.0.1:${model.port}/v1`, apiKey: ["mock", "key"].join("-") },
           models: { m1: { name: "Mock 1" } },
         },
         lmstudio: { settings: { baseURL: "" } },

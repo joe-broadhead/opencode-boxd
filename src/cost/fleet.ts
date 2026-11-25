@@ -1,6 +1,6 @@
 /**
  * The fleet's cost and its cleanup suggestions, computed from the watcher's snapshot alone (design §C.4): no CLI call,
- * no guest read. Pure functions, so status, the hooks and `/boxd-cleanup` agree on every figure. Package E owns this file.
+ * no guest read. Pure functions, so the report and the budget agree on every figure. Package E owns this file.
  *
  * Each suggestion matches exactly one row of the selector table in §C.4, so a suggested call acts on the works it
  * counted (C2 resolves the selector again at call time, against a fresh listing):
@@ -28,10 +28,9 @@ export function matches(select: SelectName, work: WorkSnapshot): boolean {
     case "finished":
       return work.phase === "idle" && work.outcome !== null && notWaiting(work)
     case "unsaved-finished":
-      return (work.phase === "idle" || work.phase === "asleep") && work.outcome !== null && (work.saved !== "fresh" || work.laptopCopy === "unverified")
+      return (work.phase === "idle" || work.phase === "asleep") && work.outcome !== null && work.saved !== "fresh"
     case "saved-finished":
-      // A v0-imported work whose laptop copy is unverified (F1) is never dropped until a harvest verifies it.
-      return work.saved === "fresh" && work.outcome === "completed" && work.phase !== "busy" && (isRunning(work.phase) || work.phase === "asleep") && work.laptopCopy !== "unverified"
+      return work.saved === "fresh" && work.outcome === "completed" && work.phase !== "busy" && (isRunning(work.phase) || work.phase === "asleep")
   }
 }
 

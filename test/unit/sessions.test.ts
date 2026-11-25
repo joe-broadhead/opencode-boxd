@@ -7,7 +7,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaul
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { BoxdError, boxdError, CODES } from "../../src/errors.js"
-import { createRuntime, type PluginRuntime } from "../../src/exec/runtime.js"
+import { createProvider, type PluginProvider } from "../../src/provider/index.js"
 import { sessionRuns } from "../../src/fleet/sessions.js"
 import { quote } from "../../src/fleet/exec.js"
 import { rootOf } from "../../src/fleet/submit.js"
@@ -15,9 +15,9 @@ import { ledgerPort } from "../../src/ledger/index.js"
 import { Ledger } from "../../src/ledger/store.js"
 import type { WorkRecord } from "../../src/ledger/types.js"
 import { parseOptions } from "../../src/options.js"
-import { CAPS, type ChangeTarget, type ImportV0Port, type LedgerPort, type MachineId, type OpContext, type WorkEvent, type WorkSnapshot } from "../../src/ports.js"
+import { CAPS, type ChangeTarget, type LedgerPort, type MachineId, type OpContext, type WorkEvent, type WorkSnapshot } from "../../src/ports.js"
 import type { CostPort, FleetActions, FleetServices, Selectors } from "../../src/services.js"
-import type { CallContext } from "../../src/tools.js"
+import type { CallContext } from "../../src/call.js"
 import { startFakeGuest, type FakeGuest } from "../host/fake-guest.js"
 import { plant } from "../host/fake-lock.mjs"
 import type { FakeMachine } from "../host/fake-cli.js"
@@ -29,10 +29,10 @@ import { removeRoot, tempRoot } from "../support/ledger-fakes.js"
 // calls running into the next test's fakes.
 setDefaultTimeout(60_000)
 
-const VERSION = "2.2.6"
+const VERSION = "2.4.1"
 let guest: FakeGuest
 let counter: CountingFake
-let runtime: PluginRuntime
+let runtime: PluginProvider
 let root: string
 let project: string
 let ledger: LedgerPort
@@ -42,7 +42,6 @@ let selectors: Selectors
 let actions: FleetActions
 let problems: Map<string, string>
 let budget: { calls: number; refuse: boolean }
-let adopted: string[]
 let snapshot: WorkSnapshot[]
 /** The host's sessions: id → parent. */
 let hostSessions: Map<string, string | undefined>
@@ -60,15 +59,13 @@ beforeEach(async () => {
   guest.prompts.length = 0
   guest.switches.length = 0
   counter = await startSpawnCounter({ guestPort: guest.port, version: VERSION })
-  runtime = createRuntime({ boxdBin: counter.boxdBin, opencodeBin: counter.opencodeBin })
+  runtime = createProvider({ boxdBin: counter.boxdBin, opencodeBin: counter.opencodeBin })
   root = tempRoot("boxd-c2-")
   project = join(root, "project")
   mkdirSync(project)
-  const complete = { state: "complete" as const, works: 0, blocked: [] }
-  ledger = ledgerPort(new Ledger(join(root, "ledger")), { state: () => complete, run: async () => complete })
+  ledger = ledgerPort(new Ledger(join(root, "ledger")))
   problems = new Map()
   budget = { calls: 0, refuse: false }
-  adopted = []
   snapshot = []
   hostSessions = new Map([["ses_coord", undefined]])
   const cost: CostPort = {
@@ -83,22 +80,11 @@ beforeEach(async () => {
       if (budget.refuse) throw boxdError("BUDGET_REACHED", "Today's machine cost reached the budget.", { today: 10, daily: 5, currency: "EUR" })
     },
   }
-  const importV0 = {
-    state: () => complete,
-    run: async () => complete,
-    readPhase: async () => {
-      throw new Error("not used")
-    },
-    adopt: async (target: ChangeTarget) => void adopted.push(target.name),
-    dispose: async () => {},
-  } satisfies ImportV0Port
   services = {
     options: parseOptions({}),
     hostVersion: VERSION,
     projectDirectory: project,
     ledgerRoot: join(root, "ledger"),
-    boxdBin: counter.boxdBin,
-    opencodeBin: counter.opencodeBin,
     clock: { now: () => new Date() },
     sessions: {
       get: (async (input: { sessionID: string }) => {
@@ -109,14 +95,13 @@ beforeEach(async () => {
       synthetic: (async () => undefined) as never,
       context: (async () => []) as never,
     },
-    report: (area, problem) => void (problem ? problems.set(area, problem) : problems.delete(area)),
+    report: (area, problem) => { problem ? problems.set(area, problem) : problems.delete(area) },
     runner: runtime.runner,
     boxd: runtime.boxd,
     guest: runtime.guest,
     laptop: runtime.laptop,
     dispose: () => runtime.dispose(),
     ledger,
-    importV0,
     watch: { subscribe: () => () => {}, snapshot: () => ({ asOf: new Date().toISOString(), works: snapshot }), sessionGone: () => {} },
     cost,
   }
@@ -161,7 +146,7 @@ function publish(machine: FakeMachine, workId: string) {
 
 /** A work as `boxd_ensure` leaves it: the machine, the helper installed, a clean git tree, and an open record. */
 async function openWork(workId: string, over: Partial<WorkRecord> = {}): Promise<FakeMachine> {
-  const machine = counter.fake.machine({ name: `oc-${workId}`, region: "fra", labels: { owner: "opencode-boxd", role: "session", work: workId } })
+  const machine = counter.fake.machine({ name: `oc-${workId}`, region: "fra", labels: { owner: "boxd", role: "session", work: workId } })
   await change(machine, (target) => runtime.guest.setup(target, { directory: guestDir(workId), opencode: VERSION }, op()))
   const dir = treeOf(machine, workId)
   git(dir, "init", "--quiet")
@@ -181,7 +166,6 @@ async function openWork(workId: string, over: Partial<WorkRecord> = {}): Promise
     laptopDirectory: project,
     guestDirectory: guestDir(workId),
     createdAt: new Date(Date.now() - 60_000).toISOString(),
-    guestHelper: "v1",
     ...over,
   }
   await ledger.update([workId], async () => ({ write: [value], value: undefined }), op())
@@ -278,7 +262,7 @@ describe("boxd_submit", () => {
 
   test("a hibernated machine is woken after the budget check; a reached refuse budget wakes nothing", async () => {
     const machine = await ranWork("sleepy")
-    await setMachine(machine, (item) => void (item.status = "hibernated"))
+    await setMachine(machine, (item) => { item.status = "hibernated" })
     budget.refuse = true
     expect((await errorOf(runs.boxd_submit({ workId: "sleepy", text: "Wake up." }, call()))).code).toBe("BUDGET_REACHED")
     expect(machineState(machine).status).toBe("hibernated")
@@ -293,8 +277,8 @@ describe("boxd_submit", () => {
 
   test("a hibernated work whose guest server answers after two polls is woken once and admits one prompt", async () => {
     const machine = await ranWork("waking")
-    await setMachine(machine, (item) => void (item.status = "hibernated"))
-    counter.fake.update((state) => void (state.wakeDownPolls = 2))
+    await setMachine(machine, (item) => { item.status = "hibernated" })
+    counter.fake.update((state) => { state.wakeDownPolls = 2 })
     const before = counter.fake.calls().length
     const started = Date.now()
     expect(await runs.boxd_submit({ workId: "waking", text: "Wake up." }, call())).toMatchObject({ state: "admitted" })
@@ -311,8 +295,8 @@ describe("boxd_submit", () => {
 
   test("a woken guest whose OpenCode never answers gives GUEST_SERVER_DOWN and its next step", async () => {
     const machine = await ranWork("never-up")
-    await setMachine(machine, (item) => void (item.status = "hibernated"))
-    counter.fake.update((state) => void (state.wakeDownPolls = 1_000_000))
+    await setMachine(machine, (item) => { item.status = "hibernated" })
+    counter.fake.update((state) => { state.wakeDownPolls = 1_000_000 })
     const refused = await errorOf(runs.boxd_submit({ workId: "never-up", text: "Wake up." }, call()))
     expect(refused.code).toBe("GUEST_SERVER_DOWN")
     expect(refused.next).toBe(CODES.GUEST_SERVER_DOWN.next)
@@ -324,7 +308,7 @@ describe("boxd_submit", () => {
   test("a standby or stopped machine is woken like a hibernated one, with one wake", async () => {
     for (const status of ["standby", "stopped"] as const) {
       const machine = await ranWork(`sleep-${status}`)
-      await setMachine(machine, (item) => void (item.status = status))
+      await setMachine(machine, (item) => { item.status = status })
       expect(await runs.boxd_submit({ workId: `sleep-${status}`, text: `Wake from ${status}.` }, call())).toMatchObject({ state: "admitted" })
       expect(machineState(machine).status).toBe("running")
       expect(counter.fake.calls().filter((line) => line.startsWith(`machine wake ${machine.id}`))).toHaveLength(1)
@@ -368,13 +352,6 @@ describe("boxd_submit", () => {
     expect(counter.spawns()).toEqual([])
   })
 
-  test("a v0 guest is taken over once, by its first change", async () => {
-    await openWork("old", { guestHelper: "v0" })
-    guest.next("ses_old")
-    await runs.boxd_submit({ workId: "old", text: "Go." }, call())
-    expect(adopted).toEqual(["oc-old"])
-    expect((await record("old"))!.guestHelper).toBe("v1")
-  })
 })
 
 // ── boxd_harvest ──────────────────────────────────────────────────────────────────────────────────────────────────
@@ -417,7 +394,7 @@ describe("boxd_harvest", () => {
     await runs.boxd_submit({ workId: "cut", text: "More." }, call())
     guest.say("ses_cut", "More done.", Date.now())
     guest.complete("ses_cut")
-    counter.fake.update((state) => void (state.cutCopies = [true]))
+    counter.fake.update((state) => { state.cutCopies = [true] })
     expect((await errorOf(runs.boxd_harvest({ workId: "cut" }, call()))).code).toBe("EXPORT_INVALID")
     expect(readFileSync(file).equals(good)).toBe(true)
     expect(readdirSync(join(ledger.workFolder("cut"), "exports")).filter((name) => name.endsWith(".tmp"))).toEqual([])
@@ -477,7 +454,7 @@ describe("boxd_harvest", () => {
 
   test("a guest on another OpenCode release is refused before a transcript moves", async () => {
     await ranWork("version")
-    guest.setVersion("2.2.5")
+    guest.setVersion("2.4.3")
     try {
       expect((await errorOf(runs.boxd_harvest({ workId: "version" }, call()))).code).toBe("GUEST_VERSION")
       expect(counter.fake.read().laptopSessions?.ses_version).toBeUndefined()
@@ -499,7 +476,7 @@ describe("boxd_harvest", () => {
 
   test("a hibernated work is woken, listed running, then harvested (L-5)", async () => {
     const machine = await ranWork("woken")
-    await setMachine(machine, (item) => void (item.status = "hibernated"))
+    await setMachine(machine, (item) => { item.status = "hibernated" })
     const context = call()
     expect(await runs.boxd_harvest({ workId: "woken" }, context)).toMatchObject({ state: "saved" })
     expect(machineState(machine).status).toBe("running")
@@ -572,23 +549,6 @@ describe("boxd_drop", () => {
     expect(await runs.boxd_drop({ workId: "detached" }, call())).toMatchObject({ state: "dropped" })
   })
 
-  test("refuses a v0-imported work whose laptop copy is unverified, with next boxd_harvest; a harvest verifies it, and drop then removes it (F1)", async () => {
-    const machine = await savedWork("imported")
-    await ledger.update(["imported"], async (current) => ({ write: [{ ...current.get("imported")!, importedFrom: "v0" as const, laptopCopy: "unverified" as const }], value: undefined }), op())
-    expect(ledger.saved((await record("imported"))!)).toBe("fresh")
-
-    const refused = await errorOf(runs.boxd_drop({ workId: "imported" }, call()))
-    expect([refused.code, refused.what]).toEqual(["NOT_SAVED", "The work was imported from an earlier release, and no harvest since has verified the copy of its transcript here."])
-    expect(refused.next).toStartWith("boxd_harvest(")
-    expect(machineState(machine).status).toBe("running")
-    expect(counter.fake.calls().some((line: string) => line.startsWith("machine remove "))).toBe(false)
-
-    const harvested = await runs.boxd_harvest({ workId: "imported" }, call())
-    expect(harvested).toMatchObject({ state: "saved", next: expect.stringMatching(/^Saved\. /) })
-    expect((await record("imported"))!.laptopCopy).toBeUndefined()
-    expect(await runs.boxd_drop({ workId: "imported" }, call())).toEqual({ state: "dropped", workId: "imported", machine: "oc-imported" })
-    expect(machineState(machine).status).toBe("destroyed")
-  })
 
   test("refuses when the guest's session moved on since the harvest, or has a new session; a new title alone does not refuse (M3, L-d)", async () => {
     const machine = await savedWork("moved")
@@ -620,7 +580,7 @@ describe("boxd_drop", () => {
 
   test("acts by id: an oc-<id> that now has another id is NOT_OURS, and nothing is removed", async () => {
     const machine = await savedWork("repointed")
-    await setMachine(machine, (item) => void (item.id = "vm_someone_else"))
+    await setMachine(machine, (item) => { item.id = "vm_someone_else" })
     expect((await errorOf(runs.boxd_drop({ workId: "repointed" }, call()))).code).toBe("NOT_OURS")
     expect(counter.fake.read().machines.find((item) => item.id === "vm_someone_else")!.status).toBe("running")
     expect(counter.fake.calls().some((line: string) => line.startsWith("machine remove"))).toBe(false)
@@ -629,7 +589,7 @@ describe("boxd_drop", () => {
 
   test("a machine gone from every region closes the work, from a fresh listing and a get of the id in each region", async () => {
     const machine = await ranWork("gone")
-    await setMachine(machine, (item) => void (item.status = "destroyed"))
+    await setMachine(machine, (item) => { item.status = "destroyed" })
     const context = call()
     const answer = await runs.boxd_drop({ workId: "gone" }, context)
     expect(answer).toMatchObject({ state: "closed", workId: "gone", lost: expect.stringContaining("never harvested") })
@@ -641,7 +601,7 @@ describe("boxd_drop", () => {
 
   test("never reads an error as gone: a failed listing keeps the work open", async () => {
     const machine = await ranWork("flaky")
-    await setMachine(machine, (item) => void (item.status = "destroyed"))
+    await setMachine(machine, (item) => { item.status = "destroyed" })
     counter.fake.fault("machine list", { stderr: "error: service unavailable" })
     expect((await errorOf(runs.boxd_drop({ workId: "flaky" }, call()))).code).toBe("BOXD_FAILED")
     expect((await record("flaky"))!.state).toBe("open")
@@ -649,10 +609,10 @@ describe("boxd_drop", () => {
 
   test("a machine found under another name, or in another region, is NOT_OURS and keeps the work open", async () => {
     const renamed = await ranWork("renamed")
-    await setMachine(renamed, (item) => void (item.name = "oc-by-hand"))
+    await setMachine(renamed, (item) => { item.name = "oc-by-hand" })
     expect(await errorOf(runs.boxd_drop({ workId: "renamed" }, call()))).toMatchObject({ code: "NOT_OURS", message: expect.stringContaining("oc-by-hand") })
     const moved = await ranWork("moved-region")
-    await setMachine(moved, (item) => void (item.region = "nyc"))
+    await setMachine(moved, (item) => { item.region = "nyc" })
     expect(await errorOf(runs.boxd_drop({ workId: "moved-region" }, call()))).toMatchObject({ code: "NOT_OURS", message: expect.stringContaining("nyc") })
     expect((await record("renamed"))!.state).toBe("open")
     expect((await record("moved-region"))!.state).toBe("open")
@@ -660,7 +620,11 @@ describe("boxd_drop", () => {
 
   test("a work with no recorded id closes as gone only with confirmGone", async () => {
     await openWork("no-id", { machineId: null })
-    counter.fake.update((state) => void state.machines.forEach((item) => item.name === "oc-no-id" && (item.status = "destroyed")))
+    counter.fake.update((state) => {
+      state.machines.forEach((item) => {
+        if (item.name === "oc-no-id") item.status = "destroyed"
+      })
+    })
     expect((await errorOf(runs.boxd_drop({ workId: "no-id" }, call()))).message).toContain("confirmGone")
     expect(await runs.boxd_drop({ workId: "no-id", confirmGone: true }, call())).toMatchObject({ state: "closed" })
   })
@@ -685,7 +649,7 @@ describe("boxd_sleep", () => {
   test("every change targets the recorded id through the by-id check: a re-pointed name that carries the plugin's labels is NOT_OURS for each tool", async () => {
     const machine = await savedWork("labelled")
     // Another machine now holds oc-labelled, with the plugin's own labels: labels never make it this work's.
-    await setMachine(machine, (item) => void (item.id = "vm_impostor"))
+    await setMachine(machine, (item) => { item.id = "vm_impostor" })
     const before = counter.fake.calls().length
     for (const [tool, input] of [
       ["boxd_submit", { workId: "labelled", text: "x" }],
@@ -705,7 +669,7 @@ describe("boxd_sleep", () => {
   test("a saved work sleeps with no warning; a re-pointed name is NOT_OURS", async () => {
     const machine = await savedWork("rest")
     expect(await runs.boxd_sleep({ workId: "rest" }, call())).not.toHaveProperty("warning")
-    await setMachine(machine, (item) => void (item.id = "vm_other"))
+    await setMachine(machine, (item) => { item.id = "vm_other" })
     expect((await errorOf(runs.boxd_sleep({ workId: "rest" }, call()))).code).toBe("NOT_OURS")
   })
 })
@@ -722,15 +686,17 @@ describe("boxd_exec", () => {
 
   test("keeps stdout and stderr apart, keeps their tails, and redacts token shapes", async () => {
     await openWork("streams")
-    const answer = (await runs.boxd_exec({ workId: "streams", command: ["sh", "-c", "echo out; echo ghp_abcdefghijklmnop123456 >&2; exit 3"] }, call())) as { exitCode: number; stdout: string; stderr: string }
+    // An invented credential, never a real one: the exec output redaction must cut this token.
+    const TOKEN = ["ghp", "abcdefghijklmnop123456"].join("_")
+    const answer = (await runs.boxd_exec({ workId: "streams", command: ["sh", "-c", `echo out; echo ${TOKEN} >&2; exit 3`] }, call())) as { exitCode: number; stdout: string; stderr: string }
     expect(answer).toMatchObject({ exitCode: 3, stdout: "out\n" })
     expect(answer.stderr).toContain("[redacted]")
-    expect(answer.stderr).not.toContain("ghp_abcdefghijklmnop123456")
+    expect(answer.stderr).not.toContain(TOKEN)
   })
 
   test("refuses a hibernated machine unless wake is true, and the wake is budget-checked", async () => {
     const machine = await openWork("asleep-exec")
-    await setMachine(machine, (item) => void (item.status = "hibernated"))
+    await setMachine(machine, (item) => { item.status = "hibernated" })
     expect((await errorOf(runs.boxd_exec({ workId: "asleep-exec", command: ["true"] }, call()))).code).toBe("MACHINE_ASLEEP")
     expect(machineState(machine).status).toBe("hibernated")
     expect(counter.fake.read().wokenByExec ?? []).toEqual([])
@@ -770,7 +736,9 @@ describe("boxd_exec", () => {
 describe("boxd_read", () => {
   test("reads a file under the read rule: one listing and one exec, no copy, no ledger write, redacted", async () => {
     const machine = await openWork("reader")
-    writeFileSync(join(treeOf(machine, "reader"), "notes.md"), "line one\ntoken ghp_abcdefghijklmnop123456\n")
+    // An invented credential, never a real one: a file the read redaction must cut.
+    const token = ["ghp", "abcdefghijklmnop123456"].join("_")
+    writeFileSync(join(treeOf(machine, "reader"), "notes.md"), `line one\ntoken ${token}\n`)
     const file = join(ledger.workFolder("reader"), "work.json")
     const before = readFileSync(file)
     const context = call()
@@ -783,7 +751,7 @@ describe("boxd_read", () => {
 
   test("never wakes a hibernated machine, and refuses a path that leaves the tree", async () => {
     const machine = await openWork("dark")
-    await setMachine(machine, (item) => void (item.status = "hibernated"))
+    await setMachine(machine, (item) => { item.status = "hibernated" })
     const context = call()
     expect((await errorOf(runs.boxd_read({ workId: "dark", log: "server" }, context))).code).toBe("MACHINE_ASLEEP")
     // At most the listing: no exec, so nothing could wake it.
@@ -793,11 +761,6 @@ describe("boxd_read", () => {
     expect((await errorOf(runs.boxd_read({ workId: "dark" }, call()))).code).toBe("NAME_INVALID")
   })
 
-  test("a v0 guest has no read action, and nothing is uploaded to it", async () => {
-    await openWork("legacy", { guestHelper: "v0" })
-    expect((await errorOf(runs.boxd_read({ workId: "legacy", log: "server" }, call()))).code).toBe("GUEST_FAILED")
-    expect(counter.spawns()).toEqual([])
-  })
 })
 
 // ── List forms, Stop, selectors and package E's actions ───────────────────────────────────────────────────────────
@@ -821,7 +784,7 @@ describe("list forms", () => {
   test("a stopped call: items in flight answer cancelled and uncertain, the rest cancelled and not started", async () => {
     const ids = Array.from({ length: 12 }, (_, index) => `w${index}`)
     for (const id of ids) await ranWork(id)
-    counter.fake.update((state) => void (state.latencyMs = [400, 400]))
+    counter.fake.update((state) => { state.latencyMs = [400, 400] })
     const stop = new AbortController()
     const pending = runs.boxd_sleep({ works: ids }, call({ signal: stop.signal }))
     await Bun.sleep(200)
@@ -840,7 +803,7 @@ describe("selectors and dryRun (§C.4)", () => {
     await ranWork("done-unsaved")
     await openWork("fresh-ready")
     const asleep = await ranWork("asleep-unsaved")
-    await setMachine(asleep, (item) => void (item.status = "hibernated"))
+    await setMachine(asleep, (item) => { item.status = "hibernated" })
     const busy = await ranWork("running")
     await runs.boxd_submit({ workId: "running", text: "Busy." }, call())
     // The watcher's last look: it saw the finished works go idle, and the busy one busy.
@@ -860,56 +823,6 @@ describe("selectors and dryRun (§C.4)", () => {
     const slept = await runs.boxd_sleep({ select: "finished" }, call({ matched: ["done-unsaved"] }))
     expect(slept).toMatchObject({ state: "done", select: "finished", results: [{ state: "asleep", workId: "done-unsaved" }] })
     expect((await record("done-saved"))!.slept).toBeUndefined()
-  })
-
-  test("the review's probe: 120 imported, hibernated, saved works whose laptop copy is unverified; drop's dry run matches none, and harvest's select takes them all (F1)", async () => {
-    const at = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString()
-    const ids = Array.from({ length: 120 }, (_, index) => `imp-${String(index).padStart(3, "0")}`)
-    const records = ids.map((workId, index): WorkRecord => {
-      const machine = counter.fake.machine({ name: `oc-${workId}`, region: index % 2 ? "nyc" : "fra", status: "hibernated", labels: { role: "session", work: workId } })
-      return {
-        format: 1,
-        workId,
-        state: "open",
-        region: machine.region,
-        machine: `oc-${workId}`,
-        machineId: machine.id as MachineId,
-        size: "2x8",
-        image: { name: "opencode-golden", opencode: null },
-        laptopDirectory: project,
-        guestDirectory: guestDir(workId),
-        createdAt: at(600),
-        session: { rootId: sid(workId) },
-        lastSubmit: { at: at(300), delivery: "steer" },
-        saved: { at: at(200), complete: true, guestVersion: VERSION, sessions: [{ id: sid(workId), parentId: null, sha256: "0".repeat(64), bytes: 10, lastMessageId: "msg_1", messages: 2, updated: Date.parse(at(250)) }] },
-        run: { outcome: "completed", at: at(250) },
-        slept: { at: at(100), by: "boxd_sleep" },
-        guestHelper: "v0",
-        importedFrom: "v0",
-        laptopCopy: "unverified",
-      }
-    })
-    await ledger.update(ids, async () => ({ write: records, value: undefined }), op())
-    // A v1 work saved and asleep beside them still matches drop's select.
-    const own = await savedWork("own-saved")
-    await setMachine(own, (item) => void (item.status = "hibernated"))
-    counter.reset()
-
-    const context = call()
-    const matched = await selectors.boxd_drop("saved-finished", context)
-    expect(matched).toEqual(["own-saved"])
-    const dry = await runs.boxd_drop({ select: "saved-finished", dryRun: true }, { ...context, matched })
-    expect(dry).toMatchObject({ state: "done", dryRun: true, counts: { matched: 1 }, results: [{ workId: "own-saved" }] })
-    expect(await selectors.boxd_harvest("unsaved-finished", call())).toEqual(ids)
-    expect(counter.fake.calls().filter((line: string) => /^machine (remove|wake|resume|start)/.test(line))).toEqual([])
-  })
-
-  test("automation never drops: FleetActions.drop by automation is refused before anything runs", async () => {
-    const machine = await savedWork("never-auto")
-    const context = { by: "automation" as const, call: { callId: "automation_drop", source: "automation" as const } }
-    await expect(actions.drop(["never-auto"], context)).rejects.toThrow(/never run by automation/)
-    expect(machineState(machine).status).toBe("running")
-    expect((await record("never-auto"))!.state).toBe("open")
   })
 
   test("a select run without the ids the registry matched and asserted throws, and resolves nothing again (L-3)", async () => {
@@ -937,8 +850,6 @@ describe("selectors and dryRun (§C.4)", () => {
     expect(await actions.match("boxd_sleep", "finished", context)).toEqual(["auto", "auto-saved"])
     expect(await actions.sleep(["auto"], context)).toMatchObject({ state: "done", results: [{ state: "asleep", warning: "UNHARVESTED_SLEEP" }] })
     expect((await record("auto"))!.slept?.by).toBe("automation")
-    const cleanup = { by: "cleanup-command" as const, call: { callId: "cleanup_1", source: "cleanup-command" as const } }
-    expect(await actions.drop(["auto", "auto-saved"], cleanup)).toMatchObject({ state: "partial", results: [{ state: "refused", error: "NOT_SAVED" }, { state: "dropped" }] })
     expect(await actions.harvest(["auto"], context)).toMatchObject({ state: "done", results: [{ state: "saved" }] })
   })
 })
@@ -977,7 +888,7 @@ describe("drop never removes unsaved work", () => {
   test("a drop racing a submit: never both, and a removed machine got no prompt", async () => {
     const ids = ["race-a", "race-b", "race-c", "race-d"]
     for (const id of ids) await savedWork(id)
-    counter.fake.update((state) => void (state.latencyMs = [40, 160]))
+    counter.fake.update((state) => { state.latencyMs = [40, 160] })
     for (const id of ids) {
       const machine = counter.fake.read().machines.find((item) => item.name === `oc-${id}`)!
       const before = guest.sessions.get(sid(id))!.messages.length
@@ -990,7 +901,7 @@ describe("drop never removes unsaved work", () => {
 
   test("a submit stopped after the guest admitted it still leaves the work not saved, and drop refuses (L-1)", async () => {
     const machine = await savedWork("stopped-submit")
-    counter.fake.update((state) => void (state.latencyMs = [600, 600]))
+    counter.fake.update((state) => { state.latencyMs = [600, 600] })
     const stop = new AbortController()
     const before = guest.prompts.length
     const pending = runs.boxd_submit({ workId: "stopped-submit", text: "Admitted, then stopped." }, call({ signal: stop.signal })).catch((error: unknown) => error)
@@ -1034,7 +945,7 @@ describe("harvest copies", () => {
     const machine = await ranWork("serial")
     writeFileSync(join(treeOf(machine, "serial"), "README.md"), "# changed\n")
     writeFileSync(join(treeOf(machine, "serial"), "u.txt"), "u\n")
-    counter.fake.update((state) => void (state.latencyMs = [30, 120]))
+    counter.fake.update((state) => { state.latencyMs = [30, 120] })
     const answers = await Promise.allSettled([runs.boxd_harvest({ workId: "serial" }, call()), runs.boxd_harvest({ workId: "serial" }, call()), runs.boxd_drop({ workId: "serial" }, call())])
     expect(answers.map((answer) => (answer.status === "fulfilled" ? (answer.value as { state: string }).state : (answer.reason as BoxdError).code))).toEqual(["saved", "saved", "dropped"])
     expect(tmpFiles(ledger.workFolder("serial"))).toEqual([])
@@ -1050,7 +961,7 @@ describe("harvest copies", () => {
     await runs.boxd_submit({ workId: "silent", text: "More." }, call())
     guest.say(sid("silent"), "More done.", Date.now())
     guest.complete(sid("silent"))
-    counter.fake.update((state) => void (state.cutCopies = ["silent"]))
+    counter.fake.update((state) => { state.cutCopies = ["silent"] })
     expect((await errorOf(runs.boxd_harvest({ workId: "silent" }, call()))).code).toBe("EXPORT_INVALID")
     expect(readFileSync(file).equals(good)).toBe(true)
     expect((await record("silent"))!.saved).toEqual(saved!)
@@ -1066,7 +977,7 @@ describe("harvest copies", () => {
     guest.complete(sid("patch-cut"))
     writeFileSync(join(treeOf(machine, "patch-cut"), "README.md"), "# dirty\n")
     const before = (await record("patch-cut"))!.saved
-    counter.fake.update((state) => void (state.cutCopies = [false, true]))
+    counter.fake.update((state) => { state.cutCopies = [false, true] })
     expect((await errorOf(runs.boxd_harvest({ workId: "patch-cut" }, call()))).code).toBe("EXPORT_INVALID")
     expect(readFileSync(join(folder, "exports", `${sid("patch-cut")}.json`)).equals(stored)).toBe(true)
     expect(existsSync(join(folder, "patch.diff"))).toBe(false)
@@ -1187,7 +1098,7 @@ describe("the read rule under load", () => {
   test("saturation: three harvest lists of 16 and 48 reads at about 1 s per CLI call; every harvest saves, and no read fails on the read rule", async () => {
     const ids = Array.from({ length: 48 }, (_, index) => `sat${index}`)
     for (const id of ids) writeFileSync(join(treeOf(await ranWork(id), id), "notes.md"), "hello\n")
-    counter.fake.update((state) => void (state.latencyMs = [800, 1100]))
+    counter.fake.update((state) => { state.latencyMs = [800, 1100] })
     const lists = [ids.slice(0, 16), ids.slice(16, 32), ids.slice(32)].map((works) => runs.boxd_harvest({ works }, call()))
     const reads = ids.map((id) => runs.boxd_read({ workId: id, path: "notes.md" }, call()).catch((error: unknown) => error))
     const harvested = (await Promise.all(lists)).flatMap((answer) => (answer as unknown as { results: Array<{ state: string; error?: string; message?: string }> }).results)

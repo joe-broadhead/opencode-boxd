@@ -2,7 +2,7 @@
 // name and region asked is `missing`; the other-region hint is `elsewhere`; everything else, an unknown flag and a
 // not-found answer about another region included, is never `missing` (F4).
 import { describe, expect, test } from "bun:test"
-import { classify, failure } from "../../src/boxd/errors-table.js"
+import { classify, failure } from "../../src/provider/boxd/errors-table.js"
 
 /** The CLI's words, as boxd 0.2.29, 0.3.3 and 0.3.5 printed them (docs/architecture.md), and clap's. */
 const FIXTURES = {

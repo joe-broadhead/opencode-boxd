@@ -115,8 +115,8 @@ const SCRIPT = fileURLToPath(new URL("./fake-boxd.mjs", import.meta.url))
 /** The fake guest's `opencode`: its version from the machine's disk, `upgrade` writes it, `serve` returns at once. */
 const GUEST_OPENCODE = `#!/bin/sh
 case "$1" in
-  --version) cat "$OPENCODE_BOXD_FAKE_ROOT/.opencode-version" ;;
-  upgrade) if [ "$2" != "--major" ]; then echo "$2" > "$OPENCODE_BOXD_FAKE_ROOT/.opencode-version"; fi ;;
+  --version) cat "$BOXD_FAKE_ROOT/.opencode-version" ;;
+  upgrade) if [ "$2" != "--major" ]; then echo "$2" > "$BOXD_FAKE_ROOT/.opencode-version"; fi ;;
   *) exit 0 ;;
 esac
 `
@@ -155,7 +155,7 @@ export function startFakeCli(options: { readonly dir?: string; readonly version?
     machines: [],
     snapshots: [],
     log: [],
-    version: options.version ?? "2.2.6",
+    version: options.version ?? "2.4.1",
     port: options.guestPort ?? 0,
     root,
     nextId: 0,
@@ -212,12 +212,13 @@ export function startFakeCli(options: { readonly dir?: string; readonly version?
       return made
     },
     snapshot(input) {
-      update((state) => void state.snapshots.push({ region: "fra", storage: "local", status: "ready", vcpu: 2, labels: {}, ...input }))
+      update((state) => { state.snapshots.push({ region: "fra", storage: "local", status: "ready", vcpu: 2, labels: {}, ...input }) })
     },
     fault(verb, fault) {
       update((state) => {
         state.faults ??= {}
-        ;(state.faults[verb] ??= []).push(fault)
+        state.faults[verb] ??= []
+        state.faults[verb]!.push(fault)
       })
     },
     disk,

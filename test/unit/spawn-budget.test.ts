@@ -3,7 +3,7 @@
 // The steady-state sequences below are the port calls each row of SPAWN_BUDGETS is built from: every one fits its row,
 // and every tool's owner asserts its own row against its run.
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
-import { createRuntime, type PluginRuntime } from "../../src/exec/runtime.js"
+import { createProvider, type PluginProvider } from "../../src/provider/index.js"
 import { CAPS, type ChangeTarget, type MachineId, type OpContext, type ReadTarget } from "../../src/ports.js"
 import { startFakeGuest, type FakeGuest } from "../host/fake-guest.js"
 import { startSpawnCounter, type CountingFake } from "../host/spawn-counter.js"
@@ -12,11 +12,11 @@ import { budgetProblems, SPAWN_BUDGETS, type BudgetRow } from "../support/spawn-
 
 let guestServer: FakeGuest
 let counter: CountingFake
-let runtime: PluginRuntime
+let runtime: PluginProvider
 const DIRECTORY = "/home/boxd/work/review-api"
 
 beforeAll(() => {
-  guestServer = startFakeGuest({ version: "2.2.6" })
+  guestServer = startFakeGuest({ version: "2.4.1" })
 })
 afterAll(async () => {
   await runtime?.dispose()
@@ -27,7 +27,7 @@ beforeEach(async () => {
   await runtime?.dispose()
   await counter?.dispose()
   counter = await startSpawnCounter({ guestPort: guestServer.port })
-  runtime = createRuntime({ boxdBin: counter.boxdBin, opencodeBin: counter.opencodeBin })
+  runtime = createProvider({ boxdBin: counter.boxdBin, opencodeBin: counter.opencodeBin })
 })
 
 const context = (callId: string, source: `boxd_${string}` = "boxd_submit"): OpContext => ({ call: { callId, source } })
@@ -35,8 +35,8 @@ const row = (call: string, scenario: string): BudgetRow => SPAWN_BUDGETS.find((e
 
 /** Puts a running work with the helper installed on the fake, as the steady state has it. */
 async function work(name = "oc-review-api") {
-  const machine = counter.fake.machine({ name, region: "fra", labels: { owner: "opencode-boxd", role: "session", work: name.slice(3) } })
-  await change(machine.id, "setup", (target) => runtime.guest.setup(target, { directory: DIRECTORY, opencode: "2.2.6" }, context("setup")))
+  const machine = counter.fake.machine({ name, region: "fra", labels: { owner: "boxd", role: "session", work: name.slice(3) } })
+  await change(machine.id, "setup", (target) => runtime.guest.setup(target, { directory: DIRECTORY, opencode: "2.4.1" }, context("setup")))
   guestServer.next(`ses_${name.slice(3).replace(/-/g, "_")}`)
   await change(machine.id, "setup", (target) => runtime.guest.prompt(target, { directory: DIRECTORY, sessionId: null, title: "t", text: "start", delivery: "steer" }, context("setup")))
   guestServer.complete(`ses_${name.slice(3).replace(/-/g, "_")}`)
@@ -123,21 +123,21 @@ describe("the steady-state sequences fit their rows", () => {
   })
 
   test("boxd_ensure of a new work from its image: one listing, the create, setup, and a fresh listing for one serve poll", async () => {
-    counter.fake.snapshot({ region: "fra", name: "oc-golden-2.2.6-2x8" })
+    counter.fake.snapshot({ region: "fra", name: "oc-golden-2.4.1-2x8" })
     // The image carries the helper, as a golden build installs it.
     const seed = counter.fake.machine({ name: "oc-seed", region: "fra" })
-    await change(seed.id, "seed", (target) => runtime.guest.setup(target, { directory: "/home/boxd/work/seed", opencode: "2.2.6" }, context("seed")), "oc-seed")
-    await change(seed.id, "seed", (target) => runtime.boxd.saveSnapshot(target, "oc-golden-2.2.6-2x8", context("seed")), "oc-seed")
+    await change(seed.id, "seed", (target) => runtime.guest.setup(target, { directory: "/home/boxd/work/seed", opencode: "2.4.1" }, context("seed")), "oc-seed")
+    await change(seed.id, "seed", (target) => runtime.boxd.saveSnapshot(target, "oc-golden-2.4.1-2x8", context("seed")), "oc-seed")
     await runtime.boxd.snapshots(context("seed"))
     counter.reset()
     const call = "call_ensure"
     await runtime.boxd.list({ maxAgeMs: 0 }, context(call, "boxd_ensure"))
     const info = await runtime.runner.withMachineLock({ create: { region: "fra", name: "oc-fresh" } }, context(call), () =>
-      runtime.boxd.create({ kind: "work", region: "fra", name: "oc-fresh", workId: "fresh", image: "oc-golden-2.2.6-2x8", autoSuspendSeconds: 0, autoHibernateSeconds: 7200 }, context(call, "boxd_ensure")),
+      runtime.boxd.create({ kind: "work", region: "fra", name: "oc-fresh", workId: "fresh", image: "oc-golden-2.4.1-2x8", autoSuspendSeconds: 0, autoHibernateSeconds: 7200 }, context(call, "boxd_ensure")),
     )
     // The create hands back its own target for the id boxd gave; the by-id check is not repeated in the same call.
     const target = info.owned.target
-    const setup = await runtime.runner.withMachineLock({ id: info.id }, context(call), () => runtime.guest.setup(target, { directory: "/home/boxd/work/fresh", opencode: "2.2.6" }, context(call, "boxd_ensure")))
+    const setup = await runtime.runner.withMachineLock({ id: info.id }, context(call), () => runtime.guest.setup(target, { directory: "/home/boxd/work/fresh", opencode: "2.4.1" }, context(call, "boxd_ensure")))
     expect(setup).toMatchObject({ server: "up", workspace: "ready", helperUploaded: false })
     // The wait's serve poll is a read: it needs a listing at most 2 s old that holds the new machine.
     const listing = await runtime.boxd.list({ maxAgeMs: 0 }, context(call, "boxd_ensure"))
@@ -149,7 +149,7 @@ describe("the steady-state sequences fit their rows", () => {
 
 describe("under load", () => {
   test("120 changes on 40 machines at once, with 20 to 60 ms of CLI latency: never more than 12 boxd children, none untagged", async () => {
-    counter.fake.update((state) => void (state.latencyMs = [20, 60]))
+    counter.fake.update((state) => { state.latencyMs = [20, 60] })
     const machines = Array.from({ length: 40 }, (_, index) => counter.fake.machine({ name: `oc-w${index}`, region: "fra" }))
     counter.reset()
     const stop = new AbortController()
@@ -173,7 +173,7 @@ describe("under load", () => {
   test("Stop mid-queue on real processes: the queued calls start no child, and no child outlives the call", async () => {
     await runtime.boxd.assertLaptopCli(context("warm"))
     // Long enough that no child finishes on its own, however slowly the machine starts processes.
-    counter.fake.update((state) => void (state.latencyMs = [20_000, 20_000]))
+    counter.fake.update((state) => { state.latencyMs = [20_000, 20_000] })
     counter.reset()
     const stop = new AbortController()
     const calls = Array.from({ length: 40 }, (_, index) => runtime.boxd.list({ maxAgeMs: 0 }, { ...context(`call_stop_${index}`), signal: stop.signal }).then(() => "ran", (error: { code?: string }) => error.code))

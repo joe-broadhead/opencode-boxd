@@ -2,7 +2,7 @@
  * The cross-process lock (design §2.2, §6.1): a folder made with an atomic `mkdir`, holding `owner.json` with a random
  * token, the pid, the host and the time of the last heartbeat. The holder rewrites it every `LOCK_HEARTBEAT_MS`; a lock
  * whose heartbeat is older than `LOCK_STALE_MS`, or whose holder is a process on this host that no longer exists, is
- * stale and may be taken over. The same lock serves a work's `work.lock`, the import's `import.lock`, the event log and
+ * stale and may be taken over. The same lock serves a work's `work.lock`, the event log and
  * the automation owner's `automation.lock`.
  *
  * Taking over is itself race-free: the stale folder is renamed aside (only one process can rename it), its owner is
@@ -46,7 +46,7 @@ export interface LockHandle {
   readonly lost: boolean
   /** Reads the folder now: true only while it still holds this holder's token. */
   holds(): Promise<boolean>
-  /** Writes a small JSON note beside the owner, such as the import's progress; only while this holder holds it. */
+  /** Writes a small JSON note beside the owner, only while this holder holds it. */
   note(name: string, value: unknown): Promise<void>
   /** Gives the lock up if it still holds this token; a lock already taken over is left to its new owner. */
   release(): Promise<void>
@@ -268,7 +268,7 @@ function handle(path: string, owner: LockOwner, heartbeatMs: number, now: () => 
 }
 
 /**
- * The locks one owner (a ledger, an import) holds, for its disposal: `dispose` refuses new locks with `CANCELLED`,
+ * The locks one owner (a ledger) holds, for its disposal: `dispose` refuses new locks with `CANCELLED`,
  * aborts the ones still waiting, gives the holders `graceMs` to finish, then stops every heartbeat and releases every
  * lock still held, so no other process has to wait for a stale takeover.
  */

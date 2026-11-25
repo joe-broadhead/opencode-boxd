@@ -17,7 +17,7 @@ afterEach(async () => {
 })
 
 const COORDINATOR = "ses_coordinator"
-const later = (w: World, ms: number) => void (w.clock.now = new Date(w.clock.now.getTime() + ms))
+const later = (w: World, ms: number) => { w.clock.now = new Date(w.clock.now.getTime() + ms) }
 const event = (over: Partial<WorkEvent>): WorkEvent => ({ seq: 7, at: "2026-11-16T10:00:00.000Z", workId: "review-api", from: "busy", to: "idle", outcome: "completed", ...over })
 
 describe("the notice text", () => {
@@ -116,21 +116,6 @@ describe("the sweep", () => {
     await again.dispose()
   })
 
-  test("the snapshot carries a v0-imported work's unverified laptop copy, and drops it once a harvest verified it (F1)", async () => {
-    world = await startWorld()
-    const w = world
-    await w.work("imported")
-    await w.work("native")
-    await w.record("imported", (record) => ({ ...record, importedFrom: "v0", laptopCopy: "unverified" }))
-    await w.watcher.tick()
-    const copies = () => Object.fromEntries(w.watcher.watch.snapshot().works.map((work) => [work.workId, work.laptopCopy ?? null]))
-    expect(copies()).toEqual({ imported: "unverified", native: null })
-    await w.record("imported", ({ laptopCopy: _, ...record }) => record)
-    later(w, 61_000)
-    await w.watcher.tick()
-    expect(copies()).toEqual({ imported: null, native: null })
-  })
-
   test("three failed listings in a row stop the watcher, and health says why", async () => {
     world = await startWorld()
     const w = world
@@ -174,7 +159,7 @@ describe("notices", () => {
     expect(posted!.text).toMatch(/^boxd: 2 works changed — (talker|other) idle \(completed, not saved\); (talker|other) idle \(completed, not saved\)\. boxd_status\(\{ since: \d+ \}\) has the details\.$/)
     expect(posted!.text).not.toContain("Ignore")
     // A second change within the minute waits for the minute to pass. boxd_sleep hibernated the machine and logged it.
-    w.counter.fake.update((state) => void (state.machines.find((machine) => machine.name === "oc-talker")!.status = "hibernated"))
+    w.counter.fake.update((state) => { state.machines.find((machine) => machine.name === "oc-talker")!.status = "hibernated" })
     await w.record("talker", (record) => ({ ...record, slept: { at: w.clock.now.toISOString(), by: "boxd_sleep" } }))
     // The shared listing is reused for up to 2 s of real time; the next sweep takes a new one.
     await Bun.sleep(2_100)
