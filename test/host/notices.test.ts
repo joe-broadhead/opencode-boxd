@@ -42,6 +42,14 @@ const synthetics = async (host: Host, sessionID: string) => {
   return inbox.flatMap((item) => (item.type === "synthetic" ? [item.payload.text] : []))
 }
 
+/** A waking notice leaves the inbox when the turn it starts takes it; the session's context keeps its text. */
+const deliveredNotice = async (host: Host, sessionID: string, match: (text: string) => boolean) => {
+  const messages = await host.client.session.context({ sessionID })
+  const context = messages.flatMap((item) => (item.type === "synthetic" ? [item.text] : [])).find(match)
+  if (context !== undefined) return context
+  return (await synthetics(host, sessionID)).find(match)
+}
+
 /** One tools RPC call, as a script makes it. */
 const rpcCall = async (host: Host, method: string, input: Record<string, unknown>, sessionID: string) => {
   const rpc = host.client.rpc as unknown as { call: (request: object) => Promise<{ output: Record<string, unknown> }> }
@@ -114,7 +122,9 @@ describe("notices on a stock host", () => {
       const notices = queue(host, "wake", [])
       notices.enqueue(idle(9, "db-mig"), coordinator, "fresh")
       await notices.flushDue()
-      expect(await until("the notice is in the inbox", () => synthetic(host, coordinator))).toContain("db-mig idle (completed, saved)")
+      // The waking turn can take the notice from the inbox before this reads it, so the session's context counts too.
+      const notice = await until("the notice is delivered", () => deliveredNotice(host, coordinator, (text) => text.includes("db-mig idle")))
+      expect(notice).toContain("db-mig idle (completed, saved)")
       // The woken session runs a turn on the mock model, which records the request.
       await until("the coordinator's turn ends", async () => (await host.client.session.get({ sessionID: coordinator })).outcome !== undefined, 30_000)
       expect(notices.dropped()).toEqual([])
