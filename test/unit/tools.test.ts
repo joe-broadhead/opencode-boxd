@@ -4,6 +4,7 @@
 import { describe, expect, test } from "bun:test"
 import type { Plugin } from "@opencode/plugin"
 import { BoxdError, boxdError, CODES } from "../../src/errors.js"
+import { FULL_LIST_MAX_ITEMS } from "../../src/fleet/job.js"
 import type { Run, Selectors, ToolRuns } from "../../src/services.js"
 import { localIdentity } from "../../src/sources.js"
 import { CHANGING_TOOLS, READ_TOOLS, TOOLS, ownedMethods, refusal, resourcesOf, runTool, selectionOf, toolTransform, type CallContext, type RegistryDeps, type ToolName, type ToolSpec } from "../../src/tools.js"
@@ -99,7 +100,7 @@ describe("the tool table", () => {
     const fields = (name: ToolName) => Object.keys(toolSpec(name).input.properties as object).sort()
     expect(fields("status")).toEqual(["include", "limit", "region", "since", "view", "workIds"])
     expect(fields("events_list")).toEqual(["account", "cursor", "limit", "since", "source"])
-    expect(fields("job")).toEqual(["cost", "tail", "workId", "works"])
+    expect(fields("job")).toEqual(["cost", "full", "tail", "workId", "works"])
     expect(fields("read")).toEqual(["log", "maxBytes", "path", "tail", "workId"])
     expect(fields("ensure")).toEqual(["adopt", "directory", "git", "model", "ref", "region", "repair", "repo", "size", "title", "wait", "workId", "works"])
     expect(fields("submit")).toEqual(["files", "mode", "model", "notify", "text", "title", "workId", "works"])
@@ -115,6 +116,15 @@ describe("the tool table", () => {
     expect(toolSpec("exec").input.required).toEqual(["workId", "command"])
     const submitItem = (toolSpec("submit").input.properties as Record<string, { items: { required: string[] } }>).works!.items
     expect(submitItem.required).toEqual(["workId", "text"])
+  })
+
+  test("boxd_job's full read is a boolean input, described with its cap and list bound", () => {
+    const full = (toolSpec("job").input.properties as Record<string, Record<string, unknown>>).full!
+    expect(full).toMatchObject({ type: "boolean" })
+    expect(full.description).toContain("64,000")
+    expect(full.description).toContain(`at most ${FULL_LIST_MAX_ITEMS} items`)
+    expect(toolSpec("job").description).toContain("full: true")
+    expect(toolSpec("job").description).toContain(`at most ${FULL_LIST_MAX_ITEMS} items`)
   })
 
   test("the selectors are exactly design §C.4's table, on sleep, harvest and drop only", () => {

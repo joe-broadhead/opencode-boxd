@@ -56,7 +56,7 @@ import {
   type RunOutcome,
   type Size,
 } from "./ports.js"
-import { excerpt, shortReason } from "./redact.js"
+import { excerpt, excerptBlock, shortReason } from "./redact.js"
 import type { HostServices, Runtime } from "./services.js"
 
 /** What the import needs from the boxd port: one fresh all-region listing, and `get` for each machine's id. */
@@ -808,23 +808,35 @@ const reasonText = (error: unknown) => shortReason(error instanceof Error ? erro
 export const V0_HELPER_PATH = "/tmp/opencode-boxd/guest.py"
 
 const V0_OUTCOMES: Readonly<Record<string, RunOutcome>> = { succeeded: "completed", failed: "failed", interrupted: "aborted" }
+/** The default `lastText` cut on the laptop. */
 const LAST_TEXT_LIMIT = 300
+/** v0's own `TEXT_LIMIT` in its helper: its `lastText` is already cut there before a full read sees it. */
+const V0_TEXT_LIMIT = 2000
 
 /**
  * A read of an imported work whose guest has only the v0 helper: v0's own `phase` action, read-only (§3.2, M2). The
  * runner's read rule applies to the target; nothing is copied to the machine and the ledger is not written. A machine
  * whose `/tmp` a reboot cleared answers `GUEST_FAILED`, whose next step is `boxd_ensure`, a change that may upload.
  */
-export async function v0Phase(boxd: Pick<BoxdPort, "exec">, target: ReadTarget, input: { readonly sessionId: string; readonly tail?: number }, opContext: OpContext): Promise<PhaseAnswer> {
+export async function v0Phase(
+  boxd: Pick<BoxdPort, "exec">,
+  target: ReadTarget,
+  input: { readonly sessionId: string; readonly tail?: number; readonly full?: boolean },
+  opContext: OpContext,
+): Promise<PhaseAnswer> {
   if (!SESSION_ID.test(input.sessionId)) throw boxdError("NAME_INVALID", `Session id "${input.sessionId}" is not an OpenCode session id.`)
   const tail = input.tail === undefined ? 0 : Math.max(0, Math.min(20, Math.trunc(input.tail)))
+  // v0's `phase` has no `full` field: the request stays v0's own, and its TEXT_LIMIT of 2,000 characters is the cap.
   const request = JSON.stringify({ action: "phase", sessionID: input.sessionId, ...(tail ? { tail } : {}) })
   const result = await boxd.exec(target, `python3 ${V0_HELPER_PATH}`, { timeoutSeconds: 10, json: false, stdin: request }, opContext)
-  return parseV0Phase(result.stdout, result.stderr, result.code)
+  return parseV0Phase(result.stdout, result.stderr, result.code, input.full === true)
 }
 
-/** v0's `phase` answer in v1's `PhaseAnswer` shape; the guest's words are redacted and cut. */
-export function parseV0Phase(stdout: string, stderr: string, code: number): PhaseAnswer {
+/**
+ * v0's `phase` answer in v1's `PhaseAnswer` shape; the guest's words are redacted. A full read keeps the message's line
+ * breaks and runs to v0's own 2,000-character cap; the default is one line cut to 300.
+ */
+export function parseV0Phase(stdout: string, stderr: string, code: number, full = false): PhaseAnswer {
   const line = stdout
     .split("\n")
     .map((item) => item.trim())
@@ -852,7 +864,8 @@ export function parseV0Phase(stdout: string, stderr: string, code: number): Phas
   const failure = isObject(parsed.error) ? parsed.error : undefined
   const error = failure ? shortReason(`${String(failure.type ?? "error")}: ${String(failure.message ?? "").split("\n")[0]}`) : undefined
   const at = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? new Date(value).toISOString() : undefined)
-  const lastText = typeof parsed.lastText === "string" ? excerpt(parsed.lastText, LAST_TEXT_LIMIT) : undefined
+  // A v0 full read uses v0's own cap, not the v1 `FULL_TEXT_LIMIT`: v0's helper already cuts its answer to 2,000.
+  const lastText = typeof parsed.lastText === "string" ? (full ? excerptBlock(parsed.lastText, V0_TEXT_LIMIT) : excerpt(parsed.lastText, LAST_TEXT_LIMIT)) : undefined
   const tail = Array.isArray(parsed.tail)
     ? parsed.tail
         .filter(isObject)

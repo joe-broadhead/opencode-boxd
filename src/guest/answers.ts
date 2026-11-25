@@ -6,6 +6,7 @@
 import { boxdError, type BoxdError, type Code } from "../errors.js"
 import { errorLine } from "../outcome.js"
 import {
+  FULL_TEXT_LIMIT,
   GUEST_PROTOCOL,
   type ExportAnswer,
   type GitAnswer,
@@ -20,7 +21,7 @@ import {
   type SessionMarks,
   type SetupAnswer,
 } from "../ports.js"
-import { excerpt, shortReason } from "../redact.js"
+import { excerpt, excerptBlock, shortReason } from "../redact.js"
 
 type Json = Record<string, unknown>
 
@@ -103,12 +104,16 @@ export function readServe(answer: Json): ServeAnswer {
   return { server: answer.server, opencode: version(answer.opencode), ...(clone ? { clone } : {}) }
 }
 
-export function readPhase(answer: Json): PhaseAnswer {
+/**
+ * A `phase` answer. `full` says the read asked for the whole last message: it keeps its line breaks and runs to
+ * `FULL_TEXT_LIMIT`, where the default is one line cut to `TEXT_LIMIT`.
+ */
+export function readPhase(answer: Json, full = false): PhaseAnswer {
   if (answer.phase !== "busy" && answer.phase !== "idle" && answer.phase !== "missing") throw shape("phase")
   const waiting = (answer.waiting ?? {}) as Json
   if (!count(waiting.steer) || !count(waiting.queue)) throw shape("phase")
   const outcome = string(answer.outcome) && OUTCOMES.has(answer.outcome) ? (answer.outcome as RunOutcome) : null
-  const lastText = string(answer.lastText) ? excerpt(answer.lastText, TEXT_LIMIT) : undefined
+  const lastText = string(answer.lastText) ? (full ? excerptBlock(answer.lastText, FULL_TEXT_LIMIT) : excerpt(answer.lastText, TEXT_LIMIT)) : undefined
   const error = outcome === "failed" ? errorLine(answer.error) : undefined
   const tail = Array.isArray(answer.tail)
     ? answer.tail.flatMap((raw) => {

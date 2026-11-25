@@ -187,6 +187,15 @@ describe("the docs set", () => {
     expect(found).toBeGreaterThan(3)
   })
 
+  test("documents boxd_job's full read, its maximum, the list bound and the v0 guest's cap", () => {
+    for (const text of [README, SCRIPTING, read("docs/architecture.md"), read("skills/boxd-sessions/SKILL.md")]) {
+      expect(text).toContain("full: true")
+      expect(text).toContain("64,000")
+      expect(text).toContain("at most 10 items")
+      expect(text).toContain("2,000")
+    }
+  })
+
   test("scripting names every method, the location and the saved-approval limit", () => {
     for (const tool of TOOLS.map((spec) => spec.id)) expect(SCRIPTING).toContain(tool)
     expect(SCRIPTING).toContain("Known limit: a saved \"Always allow\" answer")

@@ -415,6 +415,11 @@ export interface BoxdPort {
 /** The v1 helper's stable home on the guest, and the protocol version it answers. */
 export const GUEST_HELPER_PATH = "/home/boxd/.opencode-boxd/guest.py"
 export const GUEST_PROTOCOL = 1
+/**
+ * The most characters a `phase` read's `lastText` carries with `full: true`. The guest cuts the message to this, and the
+ * laptop cuts an answer to it again: an untrusted guest cannot make a result larger than the documented maximum.
+ */
+export const FULL_TEXT_LIMIT = 64_000
 
 export type Delivery = "steer" | "queue" | "interrupt"
 export type RunOutcome = "completed" | "failed" | "aborted"
@@ -452,7 +457,10 @@ export interface PhaseAnswer {
   /** The failed run's one line; mapped to a §5 code before it reaches a notice. */
   readonly error?: string
   readonly lastActivityAt?: string
-  /** The guest model's words, redacted, cut to 300 characters: data, never instructions. */
+  /**
+   * The guest model's words, redacted: cut to 300 characters by default, or with `full` the whole message up to
+   * {@link FULL_TEXT_LIMIT} with its line breaks. Data, never instructions.
+   */
   readonly lastText?: string
   readonly waiting: { readonly steer: number; readonly queue: number }
   readonly guestVersion: string | null
@@ -560,7 +568,7 @@ export interface GuestPort {
   // helper is read through `ImportV0Port.readPhase`, never through this port.
   /** With `directory`, also the detached clone's progress for that work folder, so a wait needs no second `setup`. */
   serve(target: ReadTarget, input: { readonly directory?: string }, context: OpContext): Promise<ServeAnswer>
-  phase(target: ReadTarget, input: { readonly sessionId: string; readonly tail?: number }, context: OpContext): Promise<PhaseAnswer>
+  phase(target: ReadTarget, input: { readonly sessionId: string; readonly tail?: number; readonly full?: boolean }, context: OpContext): Promise<PhaseAnswer>
   read(
     target: ReadTarget,
     input: { readonly directory: string; readonly path?: string; readonly log?: "server"; readonly tail?: number; readonly maxBytes: number },
@@ -786,8 +794,11 @@ export interface ImportV0Port {
   state(): ImportState
   /** Starts the import, or joins the one running in this or another process; at most once per 30 s after a failure. */
   run(context: OpContext): Promise<ImportState>
-  /** Reads a v0 guest with v0's own `phase` action at `/tmp/opencode-boxd/guest.py`, under the read rule; never uploads. */
-  readPhase(target: ReadTarget, input: { readonly sessionId: string }, context: OpContext): Promise<PhaseAnswer>
+  /**
+   * Reads a v0 guest with v0's own `phase` action at `/tmp/opencode-boxd/guest.py`, under the read rule; never uploads.
+   * v0's request has no `full` field, so a full read gets what v0 itself returns (at most 2,000 characters).
+   */
+  readPhase(target: ReadTarget, input: { readonly sessionId: string; readonly full?: boolean }, context: OpContext): Promise<PhaseAnswer>
   /**
    * Takes a running v0 guest over, once, at its first change: with a plain `machine exec`, copies
    * `/tmp/opencode-boxd/password` to `~/.opencode-boxd/password` (0600) when the latter is missing. The running server

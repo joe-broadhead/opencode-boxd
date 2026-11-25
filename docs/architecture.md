@@ -85,7 +85,11 @@ than 3 works that share a reason and a code fold into one `groups` line. `since`
 costs no guest read; a cursor older than the kept log answers the full view with `cursorExpired: true`.
 
 `boxd_job` takes one listing at most 2 s old and reads each running work's guest once: an explicit job pays one reset of
-an idle machine's idle clock, and status never does. `/boxd-status` and the dialog read no guest at all.
+an idle machine's idle clock, and status never does. Its `lastText` is cut to 300 characters; `full: true` returns the
+whole last assistant message up to 64,000 characters with its line breaks, for one work or a `works` list of
+at most 10 items. The job's cache entry keeps the 300-character cut, the watcher's own reads keep its 200-character cut,
+and neither caches the full report. An imported v0 guest's `phase` has no `full` request, so a full read returns at most
+its own 2,000-character cap. `/boxd-status` and the dialog read no guest at all.
 
 ## The watcher and notices
 

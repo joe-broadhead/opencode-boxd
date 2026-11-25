@@ -479,6 +479,38 @@ describe("the v0 guest: the read fallback and adopt", () => {
     await expect(v0Phase(boxd, readTarget, { sessionId: "not-a-session" }, { call: { callId: "c", source: "boxd_job" } })).rejects.toThrow(/NAME_INVALID/)
   })
 
+  test("a full read keeps v0's own request and returns its whole answer, up to v0's 2,000-character cap", async () => {
+    const calls: Array<{ stdin?: string }> = []
+    const text = `done. ${"word ".repeat(398).trim()}`
+    expect(text.length).toBeGreaterThan(300)
+    expect(text.length).toBeLessThanOrEqual(2000)
+    const boxd = {
+      exec: async (_target: unknown, _command: string, options: { stdin?: string; json: boolean }) => {
+        calls.push({ ...(options.stdin ? { stdin: options.stdin } : {}) })
+        return { code: 0, stdout: JSON.stringify({ ok: true, phase: "idle", lastText: text, pending: 0 }), stderr: "", ms: 1 }
+      },
+    }
+    const op = { call: { callId: "c", source: "boxd_job" as const } }
+    const cut = await v0Phase(boxd, readTarget, { sessionId: "ses_freshroot" }, op)
+    expect(Array.from(cut.lastText!).length).toBe(300)
+    const full = await v0Phase(boxd, readTarget, { sessionId: "ses_freshroot", full: true }, op)
+    expect(full.lastText).toBe(text)
+    // v0's phase has no `full` field: both requests are v0's own.
+    expect(calls).toEqual([{ stdin: JSON.stringify({ action: "phase", sessionID: "ses_freshroot" }) }, { stdin: JSON.stringify({ action: "phase", sessionID: "ses_freshroot" }) }])
+  })
+
+  test("a v0 full read over 2,000 characters is cut at v0's own cap, not the v1 64,000 one", async () => {
+    const text = `done. ${"word ".repeat(750).trim()}`
+    expect(text.length).toBeGreaterThan(2000)
+    const boxd = {
+      exec: async () => ({ code: 0, stdout: JSON.stringify({ ok: true, phase: "idle", lastText: text, pending: 0 }), stderr: "", ms: 1 }),
+    }
+    const full = await v0Phase(boxd, readTarget, { sessionId: "ses_freshroot", full: true }, { call: { callId: "c", source: "boxd_job" } })
+    expect(Array.from(full.lastText!).length).toBe(2000)
+    expect(full.lastText!.endsWith("…")).toBe(true)
+    expect(full.lastText!.startsWith("done. word")).toBe(true)
+  })
+
   test("a v0.0.0 answer without activity fields, a missing session, and a guest whose /tmp a reboot cleared", () => {
     expect(parseV0Phase('{"ok": true, "phase": "busy"}\n', "", 0)).toEqual({ phase: "busy", outcome: null, waiting: { steer: 0, queue: 0 }, guestVersion: null })
     expect(parseV0Phase('{"ok": true, "phase": "missing"}\n', "", 0).phase).toBe("missing")

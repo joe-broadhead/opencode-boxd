@@ -39,6 +39,16 @@ A script's own session gets no notices: notices go to the coordinator that last 
 script names one with `notify` on `boxd_submit` (a session id, or `false` to clear it), and a submit without `notify`
 leaves an earlier subscription in place.
 
+`boxd_job` cuts `lastText` to 300 characters by default. `full: true` returns the whole last assistant message with its
+line breaks, up to 64,000 characters, so a script can read a report's tables and PR URLs. One work, or a `works` list of
+at most 10 items, takes it per item. An imported v0 guest has no `full` request and answers at most its own
+2,000-character cap.
+
+```sh
+opencode api post /api/rpc/boxd.machines.tools/boxd_job -H "x-opencode-directory:$PWD" \
+  -d '{"input":{"sessionID":"<id>","input":{"workId":"review-api","full":true}}}'
+```
+
 ## Many works in one call
 
 `boxd_ensure`, `boxd_submit`, `boxd_job`, `boxd_harvest`, `boxd_sleep`, `boxd_resume` and `boxd_drop` take

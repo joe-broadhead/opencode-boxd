@@ -70,6 +70,16 @@ export const redactBlock = (text: string) =>
     .map((line) => SECRETS.reduce((value, [pattern, replacement]) => value.replace(pattern, replacement), withoutUrlSecrets(line)).replace(BIDI, "").replace(BLOCK_CONTROLS, ""))
     .join("\n")
 
+/**
+ * Text a guest session wrote, kept line by line: token shapes redacted, URLs without credentials, no controls, and cut
+ * to `limit` characters between whole characters. Its line breaks stay, so a report's tables and lists do; undefined
+ * when nothing is left.
+ */
+export function excerptBlock(text: string, limit: number): string | undefined {
+  const block = redactBlock(text)
+  return block === "" ? undefined : cut(block, limit)
+}
+
 const redactedLine = (text: string) => oneLine(SECRETS.reduce((value, [pattern, replacement]) => value.replace(pattern, replacement), withoutUrlSecrets(text)))
 
 /** An error's message, or the value itself, as a short reason; `fallback` when nothing is left. */

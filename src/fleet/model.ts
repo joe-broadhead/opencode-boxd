@@ -46,7 +46,10 @@ export interface Observed {
 /** The phases a guest read may refresh; an idle, ready or asleep work is never read by status or the watcher. */
 export const READABLE: ReadonlySet<Phase> = new Set<Phase>(["busy", "starting", "creating"])
 
-/** `lastText`'s limits: 200 characters in status, 300 in `boxd_job`. */
+/**
+ * `lastText`'s limits: 200 characters in status, 300 in `boxd_job` and in the watcher's cache of an observed work.
+ * A `boxd_job` read with `full: true` returns up to `FULL_TEXT_LIMIT` in its result, never in the cache.
+ */
 export const STATUS_TEXT_LIMIT = 200
 export const JOB_TEXT_LIMIT = 300
 
@@ -127,13 +130,14 @@ export function readGuest(
   services: Pick<CoreServices, "guest" | "importV0">,
   record: WorkRecord,
   listing: Listing,
-  input: { readonly tail?: number },
+  input: { readonly tail?: number; readonly full?: boolean },
   context: OpContext,
 ): Promise<PhaseAnswer> {
   const sessionId = record.session!.rootId!
   const target = readTarget(record, listing)
-  if (record.guestHelper === "v0") return services.importV0.readPhase(target, { sessionId }, context)
-  return services.guest.phase(target, { sessionId, ...(input.tail ? { tail: input.tail } : {}) }, context)
+  // A v0 guest's `phase` has no `full` field: it answers with its own cap either way.
+  if (record.guestHelper === "v0") return services.importV0.readPhase(target, { sessionId, ...(input.full ? { full: true } : {}) }, context)
+  return services.guest.phase(target, { sessionId, ...(input.tail ? { tail: input.tail } : {}), ...(input.full ? { full: true } : {}) }, context)
 }
 
 /** A guest answer as what the plugin knows: the phase, the run, a §5 code for a failure, and the cut guest text. */
