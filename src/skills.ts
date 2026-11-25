@@ -19,7 +19,12 @@ export function parseSkill(name: string, path: string, text: string): Skill.Info
   const fields = new Map<string, string>()
   for (const line of match[1]!.split("\n")) {
     const field = /^([a-z]+):\s*(.*)$/.exec(line)
-    if (field) fields.set(field[1]!, field[2]!.trim())
+    if (!field) continue
+    const value = field[2]!.trim()
+    // The description must be one line: a bare block scalar (`>`, `|`, `>-`, …) would otherwise become its own
+    // indicator and make the skill invisible to an agent.
+    if (/^[>|]/.test(value)) throw boxdError("SKILLS_INVALID", `The ${name} skill's ${field[1]} uses a YAML block scalar; write it on one line.`)
+    fields.set(field[1]!, value)
   }
   const declared = fields.get("name")
   const description = fields.get("description")

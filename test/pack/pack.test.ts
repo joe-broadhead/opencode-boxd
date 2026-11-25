@@ -179,15 +179,22 @@ describe.each(TESTED_HOSTS)("installed alone, in stock OpenCode %s", (version) =
         .filter((entry) => entry.isDirectory() && existsSync(join(installed, "skills", entry.name, "SKILL.md")))
         .map((entry) => {
           const path = join(installed, "skills", entry.name, "SKILL.md")
-          const text = readFileSync(path, "utf8")
-          return { id: /^name:\s*(.+)$/m.exec(text)?.[1]?.trim() ?? entry.name, path }
+          const text = readFileSync(path, "utf8").replace(/\r\n/g, "\n")
+          const front = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(text)?.[1]
+          const parsed = front === undefined ? undefined : (Bun.YAML.parse(front) as unknown)
+          const fields = typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : {}
+          return { id: typeof fields.name === "string" ? fields.name : entry.name, path, description: typeof fields.description === "string" ? fields.description : "" }
         })
       expect(files.length).toBeGreaterThan(0)
       const byId = new Map(skills.map((skill) => [skill.id, skill]))
+      const badDescription = (description: string) => description === "" || description === ">" || description === "|"
       for (const file of files) {
         const skill = byId.get(file.id)
         expect(skill).toBeDefined()
-        expect(String(skill!.description ?? "").length).toBeGreaterThan(0)
+        const description = String(skill!.description ?? "")
+        expect(badDescription(description)).toBe(false)
+        expect(badDescription(file.description)).toBe(false)
+        expect(description).toBe(file.description)
         expect(String(skill!.path)).toBe(file.path)
         expect(String(skill!.content).trim().length).toBeGreaterThan(0)
         expect(existsSync(file.path)).toBe(true)

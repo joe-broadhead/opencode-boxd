@@ -12,27 +12,33 @@ afterAll(cleanup)
 const PACKAGE_VERSION: string = JSON.parse(readFileSync(join(import.meta.dir, "..", "..", "package.json"), "utf8")).version
 const MANIFEST: {
   exports: Record<string, string>
-  capabilities: { plugin: { name: string }; methods: Record<string, { class: string; effect?: string }>; options: { properties: Record<string, unknown> }; sources: { id: string; kind: string }[] }
+  capabilities: { plugin: { name: string }; accounts: { via: string }; methods: Record<string, { class: string; effect?: string }>; options: { properties: Record<string, unknown> }; sources: { id: string; kind: string }[] }
 } = JSON.parse(readFileSync(join(import.meta.dir, "..", "..", "package.json"), "utf8"))
 const METHODS = Object.keys(MANIFEST.capabilities.methods)
 /** The twelve tools v0.1.4 gave a user; every one must still be reachable as a boxd tool. */
 const OLD_TOOLS = ["status", "job", "read", "ensure", "submit", "harvest", "sleep", "resume", "reassign", "golden", "exec", "drop"] as const
 const SKILLS = join(import.meta.dir, "..", "..", "skills")
 
-/** Every skills/<id>/SKILL.md on disk, with the id and description its frontmatter declares. */
+/** Every skills/<id>/SKILL.md on disk, with the id and description a real YAML parser reads from its frontmatter. */
 function skillFiles(): { id: string; path: string; description: string }[] {
   return readdirSync(SKILLS, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && existsSync(join(SKILLS, entry.name, "SKILL.md")))
     .map((entry) => {
       const path = join(SKILLS, entry.name, "SKILL.md")
-      const text = readFileSync(path, "utf8")
+      const text = readFileSync(path, "utf8").replace(/\r\n/g, "\n")
+      const front = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(text)?.[1]
+      const parsed = front === undefined ? undefined : (Bun.YAML.parse(front) as unknown)
+      const fields = typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : {}
       return {
-        id: /^name:\s*(.+)$/m.exec(text)?.[1]?.trim() ?? entry.name,
+        id: typeof fields.name === "string" ? fields.name : entry.name,
         path,
-        description: /^description:\s*(.+)$/m.exec(text)?.[1]?.trim() ?? "",
+        description: typeof fields.description === "string" ? fields.description : "",
       }
     })
 }
+
+/** A description that is absent, or a bare YAML block-scalar indicator, is not a skill description. */
+const badDescription = (description: string): boolean => description === "" || description === ">" || description === "|"
 
 describe("the plugin on OpenCode 2.4.1", () => {
   test("registers every method as a tool in the boxd namespace", async () => {
@@ -88,10 +94,12 @@ describe("the plugin on OpenCode 2.4.1", () => {
       for (const file of files) {
         const skill = byId.get(file.id)
         expect(skill).toBeDefined()
-        expect(String(skill!.description ?? "").length).toBeGreaterThan(0)
+        const description = String(skill!.description ?? "")
+        expect(badDescription(description)).toBe(false)
+        expect(badDescription(file.description)).toBe(false)
+        expect(description).toBe(file.description)
         expect(String(skill!.path)).toBe(file.path)
         expect(String(skill!.content).trim().length).toBeGreaterThan(0)
-        expect(file.description.length).toBeGreaterThan(0)
         expect(existsSync(file.path)).toBe(true)
       }
       // A registered skill whose path is under the plugin's skills/ tree must have its file; a file that is not
@@ -111,6 +119,9 @@ describe("the plugin on OpenCode 2.4.1", () => {
       const tools = (await host.probe().tool.list()).filter((tool) => tool.options?.namespace === "boxd").map((tool) => tool.id).sort()
       expect(tools).toEqual(expect.arrayContaining(OLD_TOOLS.map((tool) => `boxd_${tool}`)))
       expect(tools).toHaveLength(METHODS.length)
+      expect(OLD_TOOLS).toHaveLength(12)
+      expect(MANIFEST.capabilities.accounts.via).toBe("local")
+      expect(JSON.stringify(MANIFEST.capabilities)).not.toContain('"mcp"')
       expect(MANIFEST.capabilities.sources.map((source) => source.id).sort()).toEqual(["boxd.works", "boxd.works.list"])
 
       const skills = await until("the boxd-sessions skill is registered", async () => {

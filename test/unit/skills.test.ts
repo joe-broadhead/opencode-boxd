@@ -36,4 +36,10 @@ describe("the boxd-sessions skill", () => {
   test("refuses a skill whose front matter names another skill", () => {
     expect(() => parseSkill("boxd-sessions", "/x/SKILL.md", "---\nname: other\ndescription: x\n---\nbody")).toThrow(/name "boxd-sessions"/)
   })
+
+  test("refuses a YAML block-scalar description instead of returning its indicator", () => {
+    for (const indicator of [">", "|", ">-", "|+"]) {
+      expect(() => parseSkill("boxd-sessions", "/x/SKILL.md", `---\nname: boxd-sessions\ndescription: ${indicator}\n  Run sessions.\n---\nbody`)).toThrow(/block scalar/)
+    }
+  })
 })
