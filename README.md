@@ -1,8 +1,8 @@
 # boxd for OpenCode
 
 Runs OpenCode sessions on private [boxd](https://boxd.sh) machines, one work per machine, and brings each transcript,
-its files and its git back here. A work is one task with one id, one machine (`oc-<work id>`) and one root session; the
-machine is a cache with more CPU, and the ledger here is the source of truth.
+its files and its git back here. A work is one task with one id, one machine (`oc-<work id>`) and one root session plus
+the child sessions its subagents start; the machine is a cache with more CPU, and the ledger here is the source of truth.
 
 Unofficial; not affiliated with boxd.
 
@@ -63,9 +63,10 @@ returns `{ state, counts, results }` with the results in input order. Read a too
    copies files from here into the work tree first.
 3. A **notice** says when works change, once per change per coordinating session: one line naming the works and the
    cursor to read the rest with. `boxd_job` reads one work or many live, `boxd_status` the whole fleet, and
-   `boxd_events_list` the ledger's phase changes as events. `boxd_job` cuts `lastText` to 300 characters; `full: true`
-   returns the whole last assistant message, line breaks kept, up to 64,000 characters for one work or a `works` list of
-   at most 10 items (an imported v0 guest answers at most 2,000).
+   `boxd_events_list` the ledger's phase changes as events. A work's phase covers its whole session tree: it is busy
+   while the root or any child session its subagents start runs, so a coordinating root waiting on subagents is not idle.
+   `boxd_job` cuts `lastText` to 300 characters; `full: true` returns the whole last assistant message, line breaks kept,
+   up to 64,000 characters for one work or a `works` list of at most 10 items (an imported v0 guest answers at most 2,000).
 4. `boxd_harvest` brings the work's transcript and git back here. Each session is copied, verified, and then replaces
    this machine's copy; the last good copy is never overwritten before the new one is verified. `files` brings outputs
    back, and `git` reports a commit no remote ref holds.

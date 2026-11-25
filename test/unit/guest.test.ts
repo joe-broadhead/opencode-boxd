@@ -42,6 +42,12 @@ beforeEach(async () => {
   fake?.dispose()
   guestServer.sessions.clear()
   guestServer.pending.clear()
+  guestServer.quirks.activeFails = false
+  guestServer.quirks.ignoresTypeFilter = false
+  guestServer.quirks.listFails = false
+  guestServer.quirks.listFailsAtPage = 0
+  guestServer.quirks.listTimes = true
+  guestServer.quirks.vanished.clear()
   fake = startFakeCli({ guestPort: guestServer.port })
   runtime = clocked(fake)
   machine = fake.machine({ name: "oc-review-api", region: "fra", labels: { owner: "opencode-boxd" } })
@@ -147,6 +153,19 @@ describe("the helper on the machine", () => {
 })
 
 describe("sessions", () => {
+  /**
+   * A tree larger than one /api/session page: 57 children with increasing times, and the oldest child running. Page
+   * one holds the newest 50 children; the busy oldest child and the root are on page two.
+   */
+  function largeTree(): number {
+    const base = 1_700_000_000_000
+    guestServer.sessions.set("ses_root", { id: "ses_root", busy: false, directory: DIRECTORY, messages: [], inbox: [], updated: base })
+    for (let index = 1; index <= 57; index += 1) {
+      guestServer.sessions.set(`ses_child_${index}`, { id: `ses_child_${index}`, parentID: "ses_root", busy: index === 1, directory: DIRECTORY, messages: [], inbox: [], updated: base + index * 1000 })
+    }
+    return base
+  }
+
   test("prompt makes the session, then steers, queues or interrupts a running one", async () => {
     await setup()
     guestServer.next("ses_root")
@@ -223,6 +242,67 @@ describe("sessions", () => {
     guestServer.say("ses_report", huge, 1_763_200_001_000)
     const capped = await runtime.guest.phase(target, { sessionId: "ses_report", full: true }, context())
     expect(Array.from(capped.lastText!).length).toBe(64_000)
+  })
+
+  test("phase is busy while a child session runs, and lastActivityAt is the tree's newest time", async () => {
+    await setup()
+    guestServer.sessions.set("ses_root", { id: "ses_root", busy: false, directory: DIRECTORY, messages: [], inbox: [], updated: 1_700_000_000_000 })
+    guestServer.sessions.set("ses_child", { id: "ses_child", parentID: "ses_root", busy: true, directory: DIRECTORY, messages: [], inbox: [], updated: 1_700_000_000_000 })
+    guestServer.say("ses_root", "The coordinator's report.", 1_700_000_000_500)
+    guestServer.say("ses_child", "The subagent's own words.", 1_763_200_000_000)
+    const phase = await runtime.guest.phase(await readTarget(), { sessionId: "ses_root" }, context())
+    expect(phase).toMatchObject({ phase: "busy", lastActivityAt: "2025-11-15T09:46:40.000Z", lastText: "The coordinator's report." })
+    expect(phase.outcome).toBeNull()
+  })
+
+  test("phase stays idle when every session in the tree is idle, with the tree's newest time", async () => {
+    await setup()
+    guestServer.sessions.set("ses_root", { id: "ses_root", busy: false, directory: DIRECTORY, messages: [], inbox: [], updated: 1_700_000_000_000 })
+    guestServer.sessions.set("ses_child", { id: "ses_child", parentID: "ses_root", busy: false, directory: DIRECTORY, messages: [], inbox: [], updated: 1_763_200_000_000 })
+    guestServer.complete("ses_root")
+    const phase = await runtime.guest.phase(await readTarget(), { sessionId: "ses_root" }, context())
+    expect(phase).toMatchObject({ phase: "idle", outcome: "completed", lastActivityAt: "2025-11-15T09:46:40.000Z" })
+  })
+
+  test("phase stays busy when the root runs, whatever the children say", async () => {
+    await setup()
+    guestServer.sessions.set("ses_root", { id: "ses_root", busy: true, directory: DIRECTORY, messages: [], inbox: [], updated: 1_700_000_000_000 })
+    guestServer.sessions.set("ses_child", { id: "ses_child", parentID: "ses_root", busy: false, directory: DIRECTORY, messages: [], inbox: [], updated: 1_700_000_000_000 })
+    expect(await runtime.guest.phase(await readTarget(), { sessionId: "ses_root" }, context())).toMatchObject({ phase: "busy" })
+  })
+
+  test("phase ignores a busy child of another root, and a child that vanishes while the tree is read", async () => {
+    await setup()
+    guestServer.sessions.set("ses_root", { id: "ses_root", busy: false, directory: DIRECTORY, messages: [], inbox: [], updated: 1_700_000_000_000 })
+    guestServer.sessions.set("ses_other", { id: "ses_other", busy: false, directory: DIRECTORY, messages: [], inbox: [], updated: 1_700_000_000_000 })
+    guestServer.sessions.set("ses_stranger", { id: "ses_stranger", parentID: "ses_other", busy: true, directory: DIRECTORY, messages: [], inbox: [], updated: 1_763_200_000_000 })
+    expect(await runtime.guest.phase(await readTarget(), { sessionId: "ses_root" }, context())).toMatchObject({ phase: "idle", lastActivityAt: "2023-11-14T22:13:20.000Z" })
+    // A list without times reads each child; one that disappears in between is skipped, not failed.
+    guestServer.sessions.set("ses_gone", { id: "ses_gone", parentID: "ses_root", busy: true, directory: DIRECTORY, messages: [], inbox: [], updated: 1_763_200_000_000 })
+    guestServer.quirks.listTimes = false
+    guestServer.quirks.vanished.add("ses_gone")
+    expect(await runtime.guest.phase(await readTarget(), { sessionId: "ses_root" }, context())).toMatchObject({ phase: "idle", lastActivityAt: "2023-11-14T22:13:20.000Z" })
+  })
+
+  test("a failed tree listing fails the phase read instead of reporting an idle tree", async () => {
+    await setup()
+    guestServer.sessions.set("ses_root", { id: "ses_root", busy: true, directory: DIRECTORY, messages: [], inbox: [], updated: 1_700_000_000_000 })
+    guestServer.quirks.listFails = true
+    expect((await fail(runtime.guest.phase(await readTarget(), { sessionId: "ses_root" }, context())))?.code).toBe("GUEST_FAILED")
+  })
+
+  test("phase follows every page: a busy child older than the newest 50 sessions still makes the work busy", async () => {
+    await setup()
+    const base = largeTree()
+    const phase = await runtime.guest.phase(await readTarget(), { sessionId: "ses_root" }, context())
+    expect(phase).toMatchObject({ phase: "busy", lastActivityAt: new Date(base + 57_000).toISOString() })
+  })
+
+  test("a later page that fails fails the phase read instead of reporting an idle tree", async () => {
+    await setup()
+    largeTree()
+    guestServer.quirks.listFailsAtPage = 2
+    expect((await fail(runtime.guest.phase(await readTarget(), { sessionId: "ses_root" }, context())))?.code).toBe("GUEST_FAILED")
   })
 
   test("export writes each session of the tree on the guest with its marks; the copy back matches its digest", async () => {

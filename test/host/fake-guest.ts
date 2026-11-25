@@ -42,7 +42,7 @@ export interface FakeGuest {
   /** Pending asks a person must answer, per session: a permission or a form. */
   readonly pending: Map<string, "permission" | "form">
   /** Ways this server can misbehave: a test sets one to see a caller cope. */
-  readonly quirks: { activeFails: boolean; ignoresTypeFilter: boolean }
+  readonly quirks: { activeFails: boolean; ignoresTypeFilter: boolean; listFails: boolean; listFailsAtPage: number; listTimes: boolean; vanished: Set<string> }
   /** The OpenCode version /api/info reports. */
   setVersion(version: string): void
   /** The next created session's id; the ones after it get `_2`, `_3`… */
@@ -72,7 +72,12 @@ export function startFakeGuest(options: { readonly version?: string } = {}): Fak
   const switches: Array<{ sessionID: string; model: unknown }> = []
   let created = 0
   let nextId = "ses_guest_root"
-  const quirks = { activeFails: false, ignoresTypeFilter: false }
+  const quirks = { activeFails: false, ignoresTypeFilter: false, listFails: false, listFailsAtPage: 0, listTimes: true, vanished: new Set<string>() }
+  /** A session's time stamps, as the real server lists them on /api/session and /api/session/:id. */
+  const times = (session: FakeSession) =>
+    session.interrupted
+      ? { created: 1, updated: session.updated, busy: 2, idle: 1 }
+      : { created: 1, updated: session.updated, busy: session.busy ? 2 : undefined, idle: session.busy ? undefined : 2 }
 
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -82,7 +87,22 @@ export function startFakeGuest(options: { readonly version?: string } = {}): Fak
       const path = url.pathname
       const body = request.method === "POST" ? ((await request.json().catch(() => ({}))) as Record<string, unknown>) : {}
       if (path === "/api/info") return json({ data: { ok: true, version } })
-      if (path === "/api/session" && request.method === "GET") return json({ data: [...sessions.values()].map(({ id, parentID }) => ({ id, parentID })) })
+      if (path === "/api/session" && request.method === "GET") {
+        if (quirks.listFails) return json({ error: "unavailable" }, 503)
+        const limit = Math.max(1, Number(url.searchParams.get("limit") ?? 50) || 50)
+        const offset = Math.max(0, Number(url.searchParams.get("cursor") ?? 0) || 0)
+        if (quirks.listFailsAtPage === Math.floor(offset / limit) + 1) return json({ error: "unavailable" }, 503)
+        // The real server lists newest first and pages with an opaque cursor; the offset is this fake's cursor.
+        const ordered = [...sessions.values()].sort((left, right) => right.updated - left.updated)
+        const page = ordered.slice(offset, offset + limit).map((session) => ({
+          id: session.id,
+          ...(session.parentID ? { parentID: session.parentID } : {}),
+          ...(quirks.listTimes ? { time: times(session) } : {}),
+        }))
+        const previous = offset > 0 ? String(Math.max(0, offset - limit)) : undefined
+        const next = offset + limit < ordered.length ? String(offset + limit) : undefined
+        return json({ data: page, cursor: { ...(previous === undefined ? {} : { previous }), ...(next === undefined ? {} : { next }) } })
+      }
       if (path === "/api/session" && request.method === "POST") {
         created += 1
         const id = created === 1 ? nextId : `${nextId}_${created}`
@@ -95,14 +115,12 @@ export function startFakeGuest(options: { readonly version?: string } = {}): Fak
       const single = /^\/api\/session\/(ses_[A-Za-z0-9_-]+)$/.exec(path)
       if (single) {
         const session = sessions.get(single[1]!)
-        if (!session) return json({ error: "not found" }, 404)
+        if (!session || quirks.vanished.has(single[1]!)) return json({ error: "not found" }, 404)
         return json({
           data: {
             id: session.id,
             ...(session.outcome ? { outcome: session.outcome } : {}),
-            time: session.interrupted
-              ? { created: 1, updated: session.updated, busy: 2, idle: 1 }
-              : { created: 1, updated: session.updated, busy: session.busy ? 2 : undefined, idle: session.busy ? undefined : 2 },
+            time: times(session),
           },
         })
       }

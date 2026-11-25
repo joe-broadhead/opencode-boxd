@@ -12,6 +12,10 @@
  *   prompt reached since its last read.
  * - **Guest text stays data.** `lastText` and `tail` are redacted and cut; a failed run's words become a §5 code
  *   before they reach an event or a notice.
+ * - **A work is its whole session tree.** Its phase is `busy` while any session in it (the root and every child its
+ *   subagents started) is active, and `lastActivityAt` is the newest session time in the tree, never older than the
+ *   root's last assistant message. The helper follows every page of the session listing; a listing that fails or cannot
+ *   finish fails the read, so a read that could not see the whole tree never answers idle.
  */
 import { BoxdError, isCode, type Code } from "../errors.js"
 import type { Phase, WorkRecord } from "../ledger/types.js"

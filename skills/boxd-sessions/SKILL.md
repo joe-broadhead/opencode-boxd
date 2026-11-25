@@ -6,8 +6,8 @@ description: Run OpenCode sessions on the user's private boxd machines, one work
 # boxd sessions
 
 The machine running this session is the source of truth. A work is one task with one id, one machine (`oc-<workId>`) and
-one root session; the work machine is a cache with more CPU. Read a tool's description before its first call; the input
-names below are the real ones.
+one root session plus the child sessions its subagents start; the work machine is a cache with more CPU. Read a tool's
+description before its first call; the input names below are the real ones.
 
 ## The order
 
@@ -31,8 +31,8 @@ Also: `boxd_read({ workId, path })` reads one file, or `log: "server"`, without 
 runs one command with a timeout; `boxd_reassign({ from, to })` moves an unstarted work's machine to a new id;
 `boxd_golden` builds golden images (`boxd_ensure` builds a missing one by itself); `boxd_events_list({ since })` reads the
 ledger's phase changes as events, for a collector or a script.
-
-`saved` says whether this machine holds the work: `fresh` (a harvest after the last prompt), `stale` or `none`.
+`saved` says whether this machine holds the work: `fresh` (a harvest after the last prompt), `stale` or `none`. A work's
+phase is busy while any session in its tree runs, so a coordinating root waiting on subagents is not idle.
 
 ## Many works at once
 

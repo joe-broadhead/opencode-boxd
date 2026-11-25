@@ -91,6 +91,13 @@ at most 10 items. The job's cache entry keeps the 300-character cut, the watcher
 and neither caches the full report. An imported v0 guest's `phase` has no `full` request, so a full read returns at most
 its own 2,000-character cap. `/boxd-status` and the dialog read no guest at all.
 
+A phase read covers the work's whole session tree, not only its root: the work is `busy` while any session in the tree
+runs, and `lastActivityAt` is the newest session time in it, never older than the root's last assistant message, so a
+root that waits on its subagents is not mistaken for an idle work. The helper follows the session listing's cursor
+through every page, so the server's 50-session default page never truncates a large tree. `lastText`, `tail`, `waiting`
+and `needsInput` stay the root coordinator's report and asks. A page that fails, repeats its cursor or outlives the page
+cap fails the read: the work keeps its cached phase, never an idle answer from a read that could not see its children.
+
 ## The watcher and notices
 
 The watcher runs a local tick every 60 s, with no CLI call: it reads the ledger's index and tails `events.jsonl` when the
