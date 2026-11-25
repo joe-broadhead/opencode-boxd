@@ -3,17 +3,19 @@
  * model finishes. `mode` chooses how it reaches a running session: `steer` (the default) at its next step boundary,
  * `queue` after the run ends, `interrupt` after stopping the run, so it also reaches a session blocked in one long tool
  * call. A starting machine is waited for up to 45 s; a hibernated one is woken, because a submit is a decision to spend
- * (and a reached `budget` with `action: "refuse"` answers `BUDGET_REACHED` first). Package C2 owns this file.
+ * (and a reached `budget` with `action: "refuse"` answers `BUDGET_REACHED` first). A woken machine is listed running
+ * before its VM agent and guest OpenCode answer, so the same call waits for one `serve` read to say the server is up
+ * before it sends the prompt. Package C2 owns this file.
  *
  * Steady state: one listing (at most 2 s old, shared), the by-id `machine get`, and one `prompt` exec; one `machine cp`
- * per file.
+ * per file. A wake adds `machine wake` and, until the guest's OpenCode is up, one `serve` read a second.
  */
 import { randomBytes } from "node:crypto"
 import { BoxdError, boxdError } from "../errors.js"
 import type { MovedFile, WorkRecord } from "../ledger/types.js"
 import { assertModel } from "../names.js"
 import { assertTotal, assertWorkPath, laptopFile, rootsOf } from "../paths.js"
-import { POLL_INTERVAL_MS, TIMEOUTS, type Delivery, type MachineStatus, type OpContext } from "../ports.js"
+import { POLL_INTERVAL_MS, TIMEOUTS, type ChangeTarget, type Delivery, type MachineStatus, type OpContext } from "../ports.js"
 import type { SubmitResult } from "../results.js"
 import type { CallContext } from "../tools.js"
 import {
@@ -39,6 +41,8 @@ const SESSION = /^ses_[A-Za-z0-9_-]{1,80}$/
 const STAGING = "/home/boxd/.opencode-boxd/staging"
 /** The most `parentID` steps the root walk takes (design §3.5). */
 const ROOT_WALK = 16
+/** How often a woken machine's guest is read while its OpenCode starts: the second `untilRunning` polls at. */
+const WAKE_POLL_MS = 1_000
 
 export interface SubmitItem {
   readonly workId: string
@@ -115,13 +119,19 @@ export async function submitWork(services: Services, item: SubmitItem, context: 
       checkStop(op.signal, false)
       const lastSubmit = { at: nowIso(services), delivery: item.mode, ...(context.call ? { by: context.call.sessionID } : {}) }
       const { answer, adopted } = await withTarget(services, record, machine, op, async ({ target, status }) => {
-        if (asleep(status)) {
+        const woke = asleep(status)
+        let deadline = 0
+        if (woke) {
           // A submit is a decision to spend: a reached refuse budget wakes nothing.
           await services.cost.assertBudget(op.call)
+          deadline = Date.now() + TIMEOUTS.submitStarting
           await services.boxd.wake(target, op)
           await untilRunning(services, target, op)
         }
         const adopted = await adoptIfV0(services, record, target, op)
+        // A woken machine shows running before its guest's OpenCode answers; the prompt waits for it in this call. A v0
+        // guest has no v1 helper to read yet: the prompt's change installs one after adopt.
+        if (woke && record.guestHelper !== "v0") await untilServing(services, record, target, op, deadline)
         const staged = []
         for (const [index, file] of files.entries()) {
           const guestPath = `${STAGING}/${randomBytes(6).toString("hex")}-${index}`
@@ -204,6 +214,51 @@ async function waitUntilUp(services: Services, record: WorkRecord, region: NonNu
       continue
     }
     await pause(Math.min(POLL_INTERVAL_MS, Math.max(0, deadline - Date.now())), op.signal)
+  }
+}
+
+/**
+ * After a wake, boxd lists the machine running before its VM agent and guest OpenCode answer: a prompt sent then
+ * answers `GUEST_SERVER_DOWN` or `AGENT_UNREACHABLE`, a state a coordinator cannot use while the work is up. Reads one
+ * `serve` a second, through the read rule, until the server is up or the submit's deadline passes. A read the read rule
+ * did not make is not an answer, so the next tick reads again; a guest that never comes up names why.
+ */
+async function untilServing(services: Services, record: WorkRecord, target: ChangeTarget, op: OpContext, deadline: number): Promise<void> {
+  let last: "starting" | "down" = "starting"
+  for (;;) {
+    try {
+      const { listing, row } = await listed(services, target.region, target.name, op)
+      if (row?.status === "running") {
+        const served = await services.guest.serve({ region: target.region, name: target.name, listing, machineId: target.machineId }, { directory: record.guestDirectory }, op)
+        if (served.server === "up") return
+        last = served.server === "down" ? "down" : "starting"
+      }
+    } catch (error) {
+      if (!(error instanceof BoxdError)) throw error
+      if (error.code === "GUEST_SERVER_DOWN") last = "down"
+      // The change path owns the helper: a read never uploads, and the prompt's own change installs one or refuses it.
+      else if (error.code === "GUEST_FAILED") return
+      else if (
+        !(
+          error.code === "AGENT_UNREACHABLE" ||
+          error.code === "TIMEOUT" ||
+          error.code === "MACHINE_ASLEEP" ||
+          error.details.kind === "not-readable" ||
+          error.details.kind === "listing-stale" ||
+          error.details.kind === "listing-failed" ||
+          error.details.rule === "listing-age"
+        )
+      ) {
+        throw error
+      }
+    }
+    checkStop(op.signal, true)
+    if (Date.now() >= deadline) {
+      throw last === "down"
+        ? boxdError("GUEST_SERVER_DOWN", `${target.name} was woken, and nothing listens on its OpenCode port after ${TIMEOUTS.submitStarting / 1000} s.`)
+        : boxdError("MACHINE_STARTING", `${target.name} was woken, and its guest did not answer after ${TIMEOUTS.submitStarting / 1000} s.`)
+    }
+    await pause(WAKE_POLL_MS, op.signal)
   }
 }
 

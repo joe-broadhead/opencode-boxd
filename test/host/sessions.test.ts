@@ -169,6 +169,32 @@ describe("package C2 on a stock host", () => {
     }
   })
 
+  test("a submit to a hibernated work wakes it and delivers in one call, with no boxd_ensure", async () => {
+    const host = await startHost()
+    try {
+      const build = await session(host)
+      const ledger = await ledgerOf(host, build)
+      const machine = await seedWork(host, ledger, "wake")
+      // The work was slept after its guest was ready; a cold wake lists it running before its OpenCode answers.
+      host.boxd.fake.update((state) => {
+        const found = state.machines.find((item) => item.id === machine.id)!
+        found.status = "hibernated"
+        state.wakeDownPolls = 2
+      })
+      host.guest.next("ses_wake")
+      const tool = await executor(host, "boxd_submit")
+      const answer = (await tool.execute({ workId: "wake", text: "From asleep." }, { sessionID: build, agent: "build", messageID: "msg_wake", id: "call_wake", signal: new AbortController().signal, progress: async () => {} } as never)) as { output: Record<string, unknown> }
+      expect(answer.output).toMatchObject({ state: "admitted", workId: "wake", sessionId: "ses_wake" })
+      expect(host.guest.prompts.filter((prompt) => prompt.text === "From asleep.")).toHaveLength(1)
+      const calls = host.boxd.calls()
+      expect(calls.filter((line) => line.startsWith(`machine wake ${machine.id}`))).toHaveLength(1)
+      expect(calls.filter((line) => line.startsWith("machine new"))).toEqual([])
+      expect(host.boxd.machines().find((item) => item.id === machine.id)!.status).toBe("running")
+    } finally {
+      await host.close()
+    }
+  })
+
   test("a submit from a subagent session, and one from a Code Mode program, subscribe the root coordinator (M-b, L-c)", async () => {
     const host = await startHost({ model: true })
     try {

@@ -6,7 +6,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
-import { BoxdError, boxdError } from "../../src/errors.js"
+import { BoxdError, boxdError, CODES } from "../../src/errors.js"
 import { createRuntime, type PluginRuntime } from "../../src/exec/runtime.js"
 import { sessionRuns } from "../../src/fleet/sessions.js"
 import { quote } from "../../src/fleet/exec.js"
@@ -282,6 +282,8 @@ describe("boxd_submit", () => {
     budget.refuse = true
     expect((await errorOf(runs.boxd_submit({ workId: "sleepy", text: "Wake up." }, call()))).code).toBe("BUDGET_REACHED")
     expect(machineState(machine).status).toBe("hibernated")
+    expect(counter.fake.calls().filter((line) => line.startsWith("machine wake"))).toEqual([])
+    expect(counter.fake.spawns().filter((spawn) => spawn.action === "serve")).toEqual([])
     budget.refuse = false
     expect(await runs.boxd_submit({ workId: "sleepy", text: "Wake up." }, call())).toMatchObject({ state: "admitted" })
     expect(machineState(machine).status).toBe("running")
@@ -289,11 +291,54 @@ describe("boxd_submit", () => {
     expect(counter.fake.calls().some((line: string) => line.startsWith(`machine wake ${machine.id}`))).toBe(true)
   })
 
+  test("a hibernated work whose guest server answers after two polls is woken once and admits one prompt", async () => {
+    const machine = await ranWork("waking")
+    await setMachine(machine, (item) => void (item.status = "hibernated"))
+    counter.fake.update((state) => void (state.wakeDownPolls = 2))
+    const before = counter.fake.calls().length
+    const started = Date.now()
+    expect(await runs.boxd_submit({ workId: "waking", text: "Wake up." }, call())).toMatchObject({ state: "admitted" })
+    const calls = counter.fake.calls().slice(before)
+    expect(calls.filter((line) => line.startsWith(`machine wake ${machine.id}`))).toHaveLength(1)
+    expect(calls.filter((line) => line.startsWith("machine new"))).toEqual([])
+    const actions = counter.fake
+      .spawns()
+      .filter((spawn) => spawn.startedAt >= started && spawn.action)
+      .map((spawn) => spawn.action)
+    expect(actions).toEqual(["serve", "serve", "serve", "prompt"])
+    expect(guest.prompts.filter((prompt) => prompt.text === "Wake up.")).toHaveLength(1)
+  })
+
+  test("a woken guest whose OpenCode never answers gives GUEST_SERVER_DOWN and its next step", async () => {
+    const machine = await ranWork("never-up")
+    await setMachine(machine, (item) => void (item.status = "hibernated"))
+    counter.fake.update((state) => void (state.wakeDownPolls = 1_000_000))
+    const refused = await errorOf(runs.boxd_submit({ workId: "never-up", text: "Wake up." }, call()))
+    expect(refused.code).toBe("GUEST_SERVER_DOWN")
+    expect(refused.next).toBe(CODES.GUEST_SERVER_DOWN.next)
+    expect(refused.what).toContain("was woken")
+    expect(guest.prompts.filter((prompt) => prompt.text === "Wake up.")).toHaveLength(0)
+    expect(counter.fake.calls().filter((line) => line.startsWith(`machine wake ${machine.id}`))).toHaveLength(1)
+  }, 90_000)
+
+  test("a standby or stopped machine is woken like a hibernated one, with one wake", async () => {
+    for (const status of ["standby", "stopped"] as const) {
+      const machine = await ranWork(`sleep-${status}`)
+      await setMachine(machine, (item) => void (item.status = status))
+      expect(await runs.boxd_submit({ workId: `sleep-${status}`, text: `Wake from ${status}.` }, call())).toMatchObject({ state: "admitted" })
+      expect(machineState(machine).status).toBe("running")
+      expect(counter.fake.calls().filter((line) => line.startsWith(`machine wake ${machine.id}`))).toHaveLength(1)
+      expect(guest.prompts.filter((prompt) => prompt.text === `Wake from ${status}.`)).toHaveLength(1)
+    }
+  })
+
   test("a running machine is never budget-checked", async () => {
     await ranWork("awake")
     budget.refuse = true
     expect(await runs.boxd_submit({ workId: "awake", text: "Go." }, call())).toMatchObject({ state: "admitted" })
     expect(budget.calls).toBe(0)
+    expect(counter.fake.calls().filter((line) => line.startsWith("machine wake"))).toEqual([])
+    expect(counter.fake.spawns().filter((spawn) => spawn.action === "serve")).toEqual([])
   })
 
   test("notices go to the root of the calling session on the model path; a script keeps the earlier one unless it names one", async () => {

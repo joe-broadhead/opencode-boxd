@@ -25,6 +25,8 @@ export interface FakeMachine {
   deleteAfter?: string
   /** boxd's VM agent does not answer: every exec fails with "cannot connect to VM agent" until a reboot. */
   agentSilent?: boolean
+  /** A woken machine's OpenCode server is not listening yet: this many guest actions still see it down. */
+  downPolls?: number
 }
 
 export interface FakeSnapshot {
@@ -69,6 +71,8 @@ export interface FakeState {
   resizeSilencesAgent?: boolean
   /** Downloads cut off half-way, one per entry: true fails the copy, "silent" lands half the file and exits 0. */
   cutCopies?: Array<boolean | "silent">
+  /** A machine woken by `machine wake` starts with its OpenCode server down for this many guest actions. */
+  wakeDownPolls?: number
   wokenByExec?: string[]
   laptopSessions?: Record<string, { title: string; messages: number }>
 }
