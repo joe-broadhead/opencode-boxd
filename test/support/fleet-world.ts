@@ -80,14 +80,14 @@ export async function startWorld(
   } = {},
 ): Promise<World> {
   const root = tempRoot("boxd-fleet-")
-  const guest = startFakeGuest({ version: "2.2.6" })
+  const guest = startFakeGuest({ version: "2.4.1" })
   const counter = await startSpawnCounter({ guestPort: guest.port, ...(options.latencyMs ? { latencyMs: options.latencyMs } : {}) })
   const runtime = createProvider({ boxdBin: counter.boxdBin, opencodeBin: counter.opencodeBin })
   const sessions = new FakeSessions()
   const clock = { now: new Date("2026-11-16T10:00:00.000Z") }
   const host = {
     options: parseOptions(options.options ?? {}),
-    hostVersion: "2.2.6",
+    hostVersion: "2.4.1",
     projectDirectory: root,
     ledgerRoot: root,
     clock: { now: () => clock.now },
@@ -122,7 +122,7 @@ export async function startWorld(
       machine: `oc-${workId}` as MachineName,
       machineId: machineId as MachineId,
       size: "2x8",
-      image: { name: "oc-golden-2.2.6-2x8", opencode: "2.2.6" },
+      image: { name: "oc-golden-2.4.1-2x8", opencode: "2.4.1" },
       laptopDirectory: root,
       guestDirectory: `/home/boxd/work/${workId}`,
       createdAt: at,
@@ -140,10 +140,10 @@ export async function startWorld(
           region: "fra",
           status: item.status ?? "running",
           vcpu: 2,
-          labels: { owner: "opencode-boxd", role: "session", work: item.workId },
+          labels: { owner: "boxd", role: "session", work: item.workId },
           sharing: "private",
           isolated: false,
-          source: "oc-golden-2.2.6-2x8",
+          source: "oc-golden-2.4.1-2x8",
           autoSuspend: 0,
           autoHibernate: 7200,
           ignoreOutbound: "off",
@@ -165,13 +165,13 @@ export async function startWorld(
   async function work(workId: string, over: Partial<WorkRecord> & { readonly busy?: boolean; readonly notify?: string } = {}): Promise<WorkRecord> {
     const { busy, notify, ...fields } = over
     const name = `oc-${workId}` as MachineName
-    const machine = counter.fake.machine({ name, region: "fra", labels: { owner: "opencode-boxd", role: "session", work: workId } })
+    const machine = counter.fake.machine({ name, region: "fra", labels: { owner: "boxd", role: "session", work: workId } })
     const directory = `/home/boxd/work/${workId}`
     const session = `ses_${workId.replace(/-/g, "_")}`
     const op = context(`seed-${workId}`, "boxd_ensure")
     const change = async <T>(fn: (target: ChangeTarget) => Promise<T>) =>
       runtime.runner.withMachineLock({ id: machine.id as MachineId }, op, async () => fn((await runtime.boxd.checkOwned("fra", name, machine.id as MachineId, op)).target))
-    await change((target) => runtime.guest.setup(target, { directory, opencode: "2.2.6" }, op))
+    await change((target) => runtime.guest.setup(target, { directory, opencode: "2.4.1" }, op))
     guest.next(session)
     await change((target) => runtime.guest.prompt(target, { directory, sessionId: null, title: workId, text: "start", delivery: "steer" }, op))
     if (!busy) guest.complete(session)

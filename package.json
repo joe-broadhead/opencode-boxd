@@ -25,14 +25,9 @@
     "dist",
     "guest",
     "skills",
-    "assets/icon.svg",
-    "assets/icon-128.png",
-    "assets/icon-256.png",
-    "fixtures",
-    "NOTICE",
+    "assets",
     "README.md",
-    "LICENSE",
-    "CHANGELOG.md"
+    "LICENSE"
   ],
   "capabilities": {
     "version": 1,
@@ -497,5 +492,8 @@
     "@we-the-rebel-alliance/plugin-contract": "github:we-the-rebel-alliance/plugin-contract#v0.0.0",
     "esbuild": "0.28.2",
     "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": ">=24"
   }
 }

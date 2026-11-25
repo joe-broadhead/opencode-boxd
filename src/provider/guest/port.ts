@@ -1,6 +1,6 @@
 /**
  * The laptop side of the guest port (design §3, §4.1): each helper action is one `machine exec` of
- * `python3 ~/.opencode-boxd/guest.py`, with its request on stdin and one JSON line back.
+ * `python3 ~/.boxd-plugin/guest.py`, with its request on stdin and one JSON line back.
  *
  * - **Reads** (`serve`, `phase`, `read`, `health`) pass the read rule in the CLI port, use only the helper already on
  *   the machine, never upload anything, and take no machine lock. Two identical reads in flight share one answer, and a

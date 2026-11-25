@@ -34,7 +34,7 @@ const errorOf = async (promise: Promise<unknown>) =>
 
 /** A machine labelled as this plugin's, with the helper already on it, as an earlier ensure leaves it. */
 async function owned(k: Kit, workId: string, over: Parameters<Kit["counter"]["fake"]["machine"]>[0] extends infer T ? Partial<T> : never = {}) {
-  const machine = k.counter.fake.machine({ name: `oc-${workId}`, region: "fra", labels: { owner: "opencode-boxd", role: "session", work: workId }, ...over })
+  const machine = k.counter.fake.machine({ name: `oc-${workId}`, region: "fra", labels: { owner: "boxd", role: "session", work: workId }, ...over })
   await k.install(machine.region, machine.name, machine.id)
   return machine
 }
@@ -64,7 +64,7 @@ describe("boxd_ensure: a new work", () => {
     const created = k.calls().find((entry) => entry.startsWith("machine new"))!
     expect(created).toContain("--from-snapshot " + IMAGE)
     expect(created).toContain("--auto-suspend-timeout 0 --auto-hibernate-timeout 7200 --idle-ignore-outbound=off")
-    expect(created).toContain("--label owner=opencode-boxd --label role=session --label work=review-api")
+    expect(created).toContain("--label owner=boxd --label role=session --label work=review-api")
     expect(created).not.toContain("--delete-after")
     expect(created).not.toContain("--vcpu")
     const record = await k.record("review-api")
@@ -199,14 +199,6 @@ describe("boxd_ensure: adoption (L-b)", () => {
     expect(budgetProblems(row("boxd_ensure", "adopting"), k.counter.count(call.id))).toEqual([])
   })
 
-  test("v0's role=session with work=<id> is the plugin's too; the v1 owner label is added", async () => {
-    const k = await kit()
-    const machine = k.counter.fake.machine({ name: "oc-old", region: "nyc", labels: { role: "session", work: "old" } })
-    const result = (await k.runs.boxd_ensure({ workId: "old" }, k.call())) as EnsureResult
-    expect(result).toMatchObject({ state: "ready", region: "nyc", adopted: true })
-    expect(k.calls()).toContain(`machine label set ${machine.id} owner opencode-boxd --region nyc`)
-  })
-
   test("an oc-<id> without the labels is refused NOT_OURS, with no setup, clone or resize; adopt: true takes it over", async () => {
     const k = await kit()
     const machine = k.counter.fake.machine({ name: "oc-stranger", region: "fra", labels: { team: "data" } })
@@ -215,13 +207,13 @@ describe("boxd_ensure: adoption (L-b)", () => {
     expect(k.calls().filter((entry) => !entry.startsWith("machine list"))).toEqual([])
     const adopted = (await k.runs.boxd_ensure({ workId: "stranger", adopt: true }, k.call())) as EnsureResult
     expect(adopted).toMatchObject({ state: "ready", machineId: machine.id, adopted: true })
-    expect(k.counter.fake.read().machines.find((entry) => entry.id === machine.id)?.labels).toMatchObject({ owner: "opencode-boxd", role: "session", work: "stranger", team: "data" })
+    expect(k.counter.fake.read().machines.find((entry) => entry.id === machine.id)?.labels).toMatchObject({ owner: "boxd", role: "session", work: "stranger", team: "data" })
   })
 
   test("two regions holding oc-<id> answer NOT_OURS naming both", async () => {
     const k = await kit()
-    k.counter.fake.machine({ name: "oc-twin", region: "fra", labels: { owner: "opencode-boxd" } })
-    k.counter.fake.machine({ name: "oc-twin", region: "nyc", labels: { owner: "opencode-boxd" } })
+    k.counter.fake.machine({ name: "oc-twin", region: "fra", labels: { owner: "boxd" } })
+    k.counter.fake.machine({ name: "oc-twin", region: "nyc", labels: { owner: "boxd" } })
     const error = await errorOf(k.runs.boxd_ensure({ workId: "twin" }, k.call()))
     expect(error.code).toBe("NOT_OURS")
     expect(error.what).toContain("fra and nyc")
@@ -265,11 +257,11 @@ describe("boxd_ensure: an existing work converges", () => {
   test("another OpenCode on the guest: upgraded in place while idle, left alone while busy", async () => {
     const k = await kit()
     const machine = await known(k, "older", { session: { rootId: "ses_older" } })
-    writeFileSync(join(k.counter.fake.disk(machine), ".opencode-version"), "2.2.5\n")
+    writeFileSync(join(k.counter.fake.disk(machine), ".opencode-version"), "2.4.3\n")
     k.guest.sessions.set("ses_older", { id: "ses_older", busy: true, directory: "/home/boxd/work/older", messages: [], inbox: [], updated: Date.now() })
     const busy = (await k.runs.boxd_ensure({ workId: "older" }, k.call())) as EnsureResult
     expect(busy.upgraded).toBeUndefined()
-    expect(busy.guestVersion).toBe("2.2.5")
+    expect(busy.guestVersion).toBe("2.4.3")
     k.guest.idle("ses_older")
     const idle = (await k.runs.boxd_ensure({ workId: "older" }, k.call())) as EnsureResult
     expect(idle).toMatchObject({ upgraded: true, guestVersion: VERSION })
@@ -318,7 +310,7 @@ describe("boxd_ensure: an existing work converges", () => {
     const machine = await known(k, "moved")
     // Someone removed the work's machine and made another under the same name.
     k.counter.fake.update((state) => void (state.machines.find((entry) => entry.id === machine.id)!.status = "destroyed"))
-    k.counter.fake.machine({ name: "oc-moved", region: "fra", labels: { owner: "opencode-boxd", work: "moved" } })
+    k.counter.fake.machine({ name: "oc-moved", region: "fra", labels: { owner: "boxd", work: "moved" } })
     k.reset()
     const error = await errorOf(k.runs.boxd_ensure({ workId: "moved", size: "4x16", repair: "reboot" }, k.call()))
     expect(error.code).toBe("NOT_OURS")
@@ -348,8 +340,8 @@ describe("boxd_golden (design §2.3, §3.11)", () => {
     expect(builder).toMatchObject({ status: "destroyed", labels: { role: "golden-builder" }, deleteAfter: "2h" })
     const image = state.snapshots.find((snapshot) => snapshot.name === IMAGE)!
     // The helper is in the image; the password and the work folders are not.
-    expect(existsSync(join(image.disk!, "home/boxd/.opencode-boxd/guest.py"))).toBe(true)
-    expect(existsSync(join(image.disk!, "home/boxd/.opencode-boxd/password"))).toBe(false)
+    expect(existsSync(join(image.disk!, "home/boxd/.boxd-plugin/guest.py"))).toBe(true)
+    expect(existsSync(join(image.disk!, "home/boxd/.boxd-plugin/password"))).toBe(false)
     expect(existsSync(join(image.disk!, "home/boxd/work"))).toBe(false)
 
     expect(await k.runs.boxd_golden({ region: "fra" }, k.call())).toMatchObject({ state: "present" })
@@ -398,7 +390,7 @@ describe("boxd_golden (design §2.3, §3.11)", () => {
     expect(await k.runs.boxd_golden({ region: "fra" }, k.call())).toMatchObject({ state: "built" })
     const image = k.counter.fake.read().snapshots.find((snapshot) => snapshot.name === IMAGE)!
     expect(readFileSync(join(image.disk!, "home/boxd/.tools/marker"), "utf8").trim()).toBe("ok")
-    expect(existsSync(join(image.disk!, "home/boxd/.opencode-boxd-golden-setup.sh"))).toBe(false)
+    expect(existsSync(join(image.disk!, "home/boxd/.boxd-plugin-golden-setup.sh"))).toBe(false)
 
     const failing = await kit({ optionsFor: script("exit 3\n") })
     const error = await errorOf(failing.runs.boxd_golden({ region: "fra" }, failing.call()))
@@ -414,21 +406,21 @@ describe("boxd_golden (design §2.3, §3.11)", () => {
 
   test("prune removes unused images of other versions, never the current one or one an open work records", async () => {
     const k = await kit()
-    k.counter.fake.snapshot({ region: "fra", name: "oc-golden-2.2.4-2x8" })
-    k.counter.fake.snapshot({ region: "fra", name: "oc-golden-2.2.5-2x8" })
+    k.counter.fake.snapshot({ region: "fra", name: "oc-golden-2.4.2-2x8" })
+    k.counter.fake.snapshot({ region: "fra", name: "oc-golden-2.4.3-2x8" })
     k.counter.fake.snapshot({ region: "fra", name: IMAGE })
     k.counter.fake.snapshot({ region: "fra", name: "someone-elses" })
-    await k.write(workRecord("keeper", { image: { name: "oc-golden-2.2.5-2x8", opencode: "2.2.5" } }))
+    await k.write(workRecord("keeper", { image: { name: "oc-golden-2.4.3-2x8", opencode: "2.4.3" } }))
     const result = (await k.runs.boxd_golden({ prune: true }, k.call())) as GoldenResult
     expect(result.state).toBe("pruned")
-    expect(result.removed?.map((image) => image.name)).toEqual(["oc-golden-2.2.4-2x8"])
-    expect(k.counter.fake.read().snapshots.map((snapshot) => snapshot.name).sort()).toEqual(["oc-golden-2.2.5-2x8", IMAGE, "someone-elses"].sort())
+    expect(result.removed?.map((image) => image.name)).toEqual(["oc-golden-2.4.2-2x8"])
+    expect(k.counter.fake.read().snapshots.map((snapshot) => snapshot.name).sort()).toEqual(["oc-golden-2.4.3-2x8", IMAGE, "someone-elses"].sort())
   })
 
   test("ensure picks only <prefix>-<version>-<size>: another snapshot is never a work's image", async () => {
     const k = await kit({ options: { buildGolden: "never" } })
     k.counter.fake.snapshot({ region: "fra", name: "my-work-saved" })
-    k.counter.fake.snapshot({ region: "fra", name: `oc-golden-2.2.5-2x8` })
+    k.counter.fake.snapshot({ region: "fra", name: `oc-golden-2.4.3-2x8` })
     expect((await errorOf(k.runs.boxd_ensure({ workId: "picky", region: "fra" }, k.call()))).code).toBe("GOLDEN_MISSING")
   })
 })
@@ -587,16 +579,16 @@ describe("the regions option pins new placement", () => {
 
   test("a prune covers a region outside the allowlist: deleting is not placement", async () => {
     const k = await kit({ options: { regions: ["fra"] } })
-    k.counter.fake.snapshot({ region: "nyc", name: "oc-golden-2.2.4-2x8" })
-    k.counter.fake.snapshot({ region: "fra", name: "oc-golden-2.2.3-2x8" })
+    k.counter.fake.snapshot({ region: "nyc", name: "oc-golden-2.4.2-2x8" })
+    k.counter.fake.snapshot({ region: "fra", name: "oc-golden-2.4.4-2x8" })
     const one = (await k.runs.boxd_golden({ region: "nyc", prune: true }, k.call())) as GoldenResult
     expect(one.state).toBe("pruned")
-    expect(one.removed?.map((image) => image.name)).toEqual(["oc-golden-2.2.4-2x8"])
-    k.counter.fake.snapshot({ region: "nyc", name: "oc-golden-2.2.2-2x8" })
+    expect(one.removed?.map((image) => image.name)).toEqual(["oc-golden-2.4.2-2x8"])
+    k.counter.fake.snapshot({ region: "nyc", name: "oc-golden-2.4.5-2x8" })
     k.reset()
     const all = (await k.runs.boxd_golden({ prune: true }, k.call())) as GoldenResult
     expect(all.state).toBe("pruned")
-    expect(all.removed?.map((image) => `${image.region}/${image.name}`).sort()).toEqual(["fra/oc-golden-2.2.3-2x8", "nyc/oc-golden-2.2.2-2x8"])
+    expect(all.removed?.map((image) => `${image.region}/${image.name}`).sort()).toEqual(["fra/oc-golden-2.4.4-2x8", "nyc/oc-golden-2.4.5-2x8"])
     expect(k.calls().some((entry) => entry.startsWith("machine new"))).toBe(false)
   })
 
@@ -664,7 +656,7 @@ describe("boxd_reassign (design §3.10)", () => {
     const k = await kit()
     const machine = await known(k, "repointed")
     k.counter.fake.update((state) => void (state.machines.find((entry) => entry.id === machine.id)!.status = "destroyed"))
-    k.counter.fake.machine({ name: "oc-repointed", region: "fra", labels: { owner: "opencode-boxd" } })
+    k.counter.fake.machine({ name: "oc-repointed", region: "fra", labels: { owner: "boxd" } })
     k.reset()
     expect((await errorOf(k.runs.boxd_reassign({ from: "repointed", to: "other" }, k.call()))).code).toBe("NOT_OURS")
     expect(k.calls().filter((entry) => /^machine (rename|label)/.test(entry))).toEqual([])
@@ -881,10 +873,6 @@ describe("integration lows (C1)", () => {
   })
 })
 
-describe("boxd_resume takes an imported v0 guest over before setup (review HIGH-2)", () => {
-
-})
-
 describe("auto counts the machines that landed (review MEDIUM-3)", () => {
   test("six creates where fra has the image and 3 free and nyc 40: three go to each region, none refused", async () => {
     const k = await kit()
@@ -1097,7 +1085,7 @@ describe("a get's label-based target only adopts a work with no recorded machine
     const k = await kit()
     const machine = await known(k, "pinned")
     k.counter.fake.update((state) => void (state.machines.find((entry) => entry.id === machine.id)!.status = "destroyed"))
-    const stranger = k.counter.fake.machine({ name: "oc-pinned", region: "fra", labels: { owner: "opencode-boxd", role: "session", work: "pinned" } })
+    const stranger = k.counter.fake.machine({ name: "oc-pinned", region: "fra", labels: { owner: "boxd", role: "session", work: "pinned" } })
     // The port would hand it out for adoption by its labels...
     expect((await k.services.boxd.get("fra", "oc-pinned", op)).owned?.target.machineId as string | undefined).toBe(stranger.id)
     k.reset()
@@ -1113,7 +1101,7 @@ describe("a get's label-based target only adopts a work with no recorded machine
     await k.golden("fra")
     const machine = await known(k, "rebuilt")
     k.counter.fake.update((state) => void (state.machines.find((entry) => entry.id === machine.id)!.status = "destroyed"))
-    k.counter.fake.machine({ name: "oc-rebuilt", region: "fra", labels: { owner: "opencode-boxd", role: "session", work: "rebuilt" } })
+    k.counter.fake.machine({ name: "oc-rebuilt", region: "fra", labels: { owner: "boxd", role: "session", work: "rebuilt" } })
     lagListing(k, 2)
     expect((await errorOf(k.runs.boxd_resume({ workId: "rebuilt" }, k.call()))).code).toBe("NOT_OURS")
     expect((await k.record("rebuilt"))?.machineId as string | null | undefined).toBe(machine.id)
@@ -1121,9 +1109,9 @@ describe("a get's label-based target only adopts a work with no recorded machine
 
   test("a machine renamed by hand keeps another work's label: no adoption target, and ensure refuses NOT_OURS", async () => {
     const k = await kit()
-    k.counter.fake.machine({ name: "oc-renamed", region: "fra", labels: { owner: "opencode-boxd", role: "session", work: "original" } })
+    k.counter.fake.machine({ name: "oc-renamed", region: "fra", labels: { owner: "boxd", role: "session", work: "original" } })
     expect((await k.services.boxd.get("fra", "oc-renamed", op)).owned).toBeUndefined()
-    k.counter.fake.machine({ name: "oc-proper", region: "fra", labels: { owner: "opencode-boxd", role: "session", work: "proper" } })
+    k.counter.fake.machine({ name: "oc-proper", region: "fra", labels: { owner: "boxd", role: "session", work: "proper" } })
     expect((await k.services.boxd.get("fra", "oc-proper", op)).owned).toBeDefined()
     k.reset()
     expect((await errorOf(k.runs.boxd_ensure({ workId: "renamed" }, k.call()))).code).toBe("NOT_OURS")
@@ -1132,7 +1120,7 @@ describe("a get's label-based target only adopts a work with no recorded machine
 
   test("a shared machine gets no adoption target, and is refused MACHINE_SHARED", async () => {
     const k = await kit()
-    k.counter.fake.machine({ name: "oc-common", region: "fra", sharing: "shared", labels: { owner: "opencode-boxd", role: "session", work: "common" } })
+    k.counter.fake.machine({ name: "oc-common", region: "fra", sharing: "shared", labels: { owner: "boxd", role: "session", work: "common" } })
     expect((await k.services.boxd.get("fra", "oc-common", op)).owned).toBeUndefined()
     expect((await errorOf(k.runs.boxd_ensure({ workId: "common" }, k.call()))).code).toBe("MACHINE_SHARED")
   })

@@ -45,7 +45,7 @@ export interface HostServices {
   /** This machine's OpenCode: a golden image, and a guest that moves a transcript, must match it. */
   readonly hostVersion: string | null
   readonly projectDirectory: string
-  /** The ledger's root, `~/.local/share/opencode-boxd` unless a test says otherwise. */
+  /** The ledger's root, `~/.local/share/boxd-plugin` unless a test says otherwise. */
   readonly ledgerRoot: string
   readonly clock: Clock
   readonly sessions: SessionAccess

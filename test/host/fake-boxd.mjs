@@ -6,11 +6,11 @@
 //
 // - Machines live in regions (`fra`, `nyc`), have ids, labels, a size and a status; names are unique per region.
 // - `machine exec` runs the real guest helper (`python3 <path>`) against a folder that stands in for the machine's disk
-//   (OPENCODE_BOXD_FAKE_ROOT) and the test's loopback guest server (the request's `base`); any other command runs in a
+//   (BOXD_FAKE_ROOT) and the test's loopback guest server (the request's `base`); any other command runs in a
 //   shell in that folder. An exec wakes a hibernated machine, as boxd does: that is what the read rule guards against.
 // - `faults` in the state injects one failure per verb (its stderr and exit code), `agentSilent` on a machine answers
 //   "cannot connect to VM agent", and `latencyMs` delays every call.
-// - Every spawn is logged to `<state>.spawns.jsonl` with its call tag (OPENCODE_BOXD_CALL), its argv and its start and
+// - Every spawn is logged to `<state>.spawns.jsonl` with its call tag (BOXD_PLUGIN_CALL), its argv and its start and
 //   end, which is how the spawn-count harness counts and times a call's children. `log` in the state holds every boxd
 //   call but `--help`, as one string each.
 import { spawnSync } from "node:child_process"
@@ -31,7 +31,7 @@ const argv = process.argv.slice(asOpencode ? 3 : 2)
 const spawnId = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 const spawnLog = `${statePath}.spawns.jsonl`
 const logLine = (value) => appendFileSync(spawnLog, `${JSON.stringify(value)}\n`)
-logLine({ phase: "start", id: spawnId, pid: process.pid, call: process.env.OPENCODE_BOXD_CALL ?? null, bin: asOpencode ? "opencode" : "boxd", argv, at: Date.now() })
+logLine({ phase: "start", id: spawnId, pid: process.pid, call: process.env.BOXD_PLUGIN_CALL ?? null, bin: asOpencode ? "opencode" : "boxd", argv, at: Date.now() })
 const ended = () => logLine({ phase: "end", id: spawnId, at: Date.now() })
 process.on("exit", ended)
 for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, () => process.exit(143))
@@ -419,8 +419,8 @@ function exec() {
   if (machine.agentSilent) fail("error: cannot connect to VM agent: connection refused")
   const root = machineRoot(state, machine)
   const timeoutMs = flags["--timeout"] ? Number(flags["--timeout"]) * 1000 : undefined
-  const env = { ...process.env, OPENCODE_BOXD_FAKE_ROOT: root, PATH: `${join(dirname(statePath), "guest-bin")}:${process.env.PATH}`, HOME: join(root, HOME) }
-  delete env.OPENCODE_BOXD_CALL
+  const env = { ...process.env, BOXD_FAKE_ROOT: root, PATH: `${join(dirname(statePath), "guest-bin")}:${process.env.PATH}`, HOME: join(root, HOME) }
+  delete env.BOXD_PLUGIN_CALL
   const helper = /^python3 (\/[\w./-]+)( --install)?$/.exec(command)
   let result
   if (helper) {

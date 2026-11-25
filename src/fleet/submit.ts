@@ -37,7 +37,7 @@ import {
 
 const SESSION = /^ses_[A-Za-z0-9_-]{1,80}$/
 /** Where a file waits on the guest until the `prompt` exec moves it into the work tree. */
-const STAGING = "/home/boxd/.opencode-boxd/staging"
+const STAGING = "/home/boxd/.boxd-plugin/staging"
 /** The most `parentID` steps the root walk takes (design §3.5). */
 const ROOT_WALK = 16
 /** How often a woken machine's guest is read while its OpenCode starts: the second `untilRunning` polls at. */

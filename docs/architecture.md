@@ -21,7 +21,7 @@ input and the answer, asserts the permission, and maps a failure to the contract
 
 `src/provider/` is the only place a binary is named: `boxd` and this machine's `opencode`. Every child process goes
 through one runner with a pool and a cap, an explicit timeout, the call's signal and an output cap. The boxd CLI port
-parses `--json` answers and maps stderr through one error table. The guest port runs `python3 ~/.opencode-boxd/guest.py`
+parses `--json` answers and maps stderr through one error table. The guest port runs `python3 ~/.boxd-plugin/guest.py`
 over `boxd machine exec`, uploads the helper with `machine cp` when it is missing or older, and never uploads on a read.
 `guest/guest.py` is the helper itself; it talks to the guest's OpenCode server and imports/export sessions.
 

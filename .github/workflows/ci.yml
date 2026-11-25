@@ -1,23 +1,31 @@
-name: ci
+name: CI
+
+# One job, named ci: the org ruleset requires a check with that name. It runs the whole gate, so the required check
+# covers typecheck, build, tests, the pack check, conformance, docs drift and the forbidden scan.
+#
+# It runs locally too: npm ci --ignore-scripts && npm run check
+#
+# Public repository: a pull request from a fork must never reach a self-hosted runner. The runner rule below keeps
+# every fork pull request on ubuntu-24.04, and lets this repository's own runs use the org's public runner when set.
 
 on:
-  push:
-    branches: [master]
   pull_request:
-  workflow_dispatch:
+  push:
+    branches:
+      - master
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.event_name }}-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   ci:
     name: ci
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (vars.CI_RUNNER_PUBLIC || 'ubuntu-24.04') || 'ubuntu-24.04' }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -25,11 +33,14 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-          cache: npm
+          package-manager-cache: false
       - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2.0.2
         with:
           bun-version: 1.4.4
           no-cache: true
+      - name: Fetch the contract over HTTPS
+        # The contract is a public repository, and npm records its GitHub dependency over ssh. A runner has no key.
+        run: git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
       - run: npm ci --ignore-scripts
       - name: actionlint
         run: |

@@ -1,8 +1,8 @@
 // Text from OpenCode, boxd or the network, made safe to show in status, the dialog, the status RPC and the session.
-// No imports: status.ts, which the terminal UI bundle inlines, uses it too. Ported from opencode-wisprflow's redact.ts.
+// No imports: status.ts, which the terminal UI bundle inlines, uses it too.
 
 /**
- * Token shapes, the same as the tools RPC's for upstream errors (the source contract's `tools-rpc`): bearer and basic values,
+ * Token shapes: bearer and basic values,
  * `key=value` secrets, JWTs, vendor-prefixed keys, and any long run of key characters; then email addresses and the
  * owner's name in a home folder (macOS, Linux or Windows), which becomes `~`.
  */

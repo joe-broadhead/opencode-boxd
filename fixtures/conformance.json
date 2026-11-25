@@ -76,7 +76,7 @@
                 "hash": "sha256:a37ee68e8220e11cb06fe115d752a3555d8887f5b74e015996b42fbae4c2a63c"
               }
             ],
-            "cursor": "eyJ2IjoyLCJzIjoid29ya3MiLCJiIjoiNmYxYzlmZWFiOWIzNjgwYSIsInEiOjMsInQiOiIyMDI2LTExLTE2VDA5OjUwOjAwLjAwMFoifQ",
+            "cursor": "eyJ2IjoyLCJzIjoid29ya3MiLCJiIjoiNmYxYzlmZWFiOWIzNjgwYSIsInEiOjMsInQiOiIyMDI2LTExLTE2VDAwOjAwOjAwLjAwMFoifQ",
             "more": false,
             "trust": "untrusted",
             "plugin": "@we-the-rebel-alliance/boxd-plugin",

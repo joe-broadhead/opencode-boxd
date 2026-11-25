@@ -474,7 +474,7 @@ export async function fleetStatus(services: FleetServices, input: StatusInput, c
   const recorded = new Set(open.map((record) => `${record.region}/${record.machine}`))
   const orphans = (listing?.machines ?? [])
     .filter((machine) => machine.name.startsWith("oc-") && !machine.name.startsWith("oc-gb-") && machine.status !== "destroyed")
-    .filter((machine) => machine.labels.owner === "opencode-boxd" || (machine.labels.role === "session" && machine.labels.work !== undefined))
+    .filter((machine) => machine.labels.owner === "boxd" || (machine.labels.role === "session" && machine.labels.work !== undefined))
     .filter((machine) => !recorded.has(`${machine.region}/${machine.name}`))
     .filter((machine) => !input.region || machine.region === input.region)
     .map((machine) => {

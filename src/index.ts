@@ -37,7 +37,7 @@ export interface BoxdSeam extends ProviderOptions {
 }
 
 /** Where the ledger lives, unless the seam says otherwise. */
-const ledgerRoot = () => join(homedir(), ".local", "share", "opencode-boxd")
+const ledgerRoot = () => join(homedir(), ".local", "share", "boxd-plugin")
 
 /** How many methods are not reads, for the report's access sentence. */
 const CHANGES = Object.values(manifest.methods).filter((method) => method.class !== "read").length

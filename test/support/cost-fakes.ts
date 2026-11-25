@@ -135,7 +135,7 @@ export function record(workId: string, over: Partial<WorkRecord> = {}): WorkReco
     machine: `oc-${workId}`,
     machineId: `vm_${workId}` as MachineId,
     size: "4x16",
-    image: { name: "oc-golden-2.2.3-4x16", opencode: "2.2.3" },
+    image: { name: "oc-golden-2.4.4-4x16", opencode: "2.4.4" },
     laptopDirectory: "/work/laptop",
     guestDirectory: `/home/boxd/work/${workId}`,
     createdAt: minutesAgo(T0, 600),
@@ -202,12 +202,12 @@ export function fakes(input: { options?: Record<string, unknown>; works?: WorkSn
       isolated: null,
     })),
   })
-  const phase = (workId: string): PhaseAnswer & { throws?: boolean } => ({ phase: "idle", outcome: "completed", waiting: { steer: 0, queue: 0 }, guestVersion: "2.2.3", ...state.phases.get(workId) })
+  const phase = (workId: string): PhaseAnswer & { throws?: boolean } => ({ phase: "idle", outcome: "completed", waiting: { steer: 0, queue: 0 }, guestVersion: "2.4.4", ...state.phases.get(workId) })
   const workOf = (name: string) => name.replace(/^oc-/, "")
   const saved = (item: WorkRecord): SavedState => (item.saved ? (item.saved.complete && (!item.lastSubmit || item.saved.at >= item.lastSubmit.at) ? "fresh" : "stale") : "none")
   const core = {
     options,
-    hostVersion: "2.2.3",
+    hostVersion: "2.4.4",
     projectDirectory: root,
     ledgerRoot: join(root, "ledger"),
     boxdBin: "boxd",

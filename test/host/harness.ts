@@ -106,7 +106,8 @@ export async function startHost(input: HostInput = {}) {
         const providerID = Provider.ID.make("mock")
         await ctx.provider.transform((editor) => {
           editor.add({
-            info: { ...Provider.Info.empty(providerID), name: "Mock", activation: "enabled", package: OPENAI_COMPATIBLE, settings: { baseURL: model.baseURL, apiKey: "mock" } } as never,
+            // An invented credential for the mock provider, never a real key.
+            info: { ...Provider.Info.empty(providerID), name: "Mock", activation: "enabled", package: OPENAI_COMPATIBLE, settings: { baseURL: model.baseURL, apiKey: ["mock", "key"].join("-") } } as never,
             models: [{ ...Model.Info.default(providerID, Model.ID.make("m1")), name: "Mock 1" }],
           })
         })

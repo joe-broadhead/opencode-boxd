@@ -3,7 +3,8 @@
  * method takes one (none do: boxd's one account is the machine's own identity) and validates every door against it.
  */
 import type { JsonSchema } from "@we-the-rebel-alliance/plugin-contract/manifest"
-import { REGIONS, SIZES } from "../ports.js"
+import { LIST_MAX_ITEMS, REGIONS, SIZES } from "../ports.js"
+import { WORK_PATTERN } from "../call.js"
 
 const object = (properties: Record<string, JsonSchema>, required: readonly string[] = []): JsonSchema => ({
   type: "object",
@@ -14,7 +15,6 @@ const object = (properties: Record<string, JsonSchema>, required: readonly strin
 
 export const EMPTY: JsonSchema = object({})
 
-export const WORK_PATTERN = "^[a-z][a-z0-9-]{0,24}$"
 export const SESSION_PATTERN = "^ses_[A-Za-z0-9_-]{1,80}$"
 
 export const WORK = { type: "string", pattern: WORK_PATTERN, description: 'A short lowercase work id, such as "review-api". Its machine is oc-<id>.' }
@@ -37,7 +37,6 @@ export const REPO = string("An https://github.com/owner/repo URL, cloned into th
 export const REF = string("A branch or tag for the clone.")
 export const DIRECTORY = string("The folder here for the work, inside the project or an allowed root; the project by default. The guest always works in /home/boxd/work/<work id>.")
 export const TITLE = string("The guest session's title; the work id by default.")
-export const LIST_MAX_ITEMS = 300
 
 /**
  * A single form and a list form in one object schema: exactly one of `workId` and `works` (or a selector, in `extra`).

@@ -44,7 +44,7 @@ import { runOne, type ItemContext } from "./list.js"
 import { regionsText } from "./regions.js"
 
 /** Where `goldenSetup` lands on the builder, in boxd's home; it is removed by the same exec that runs it. */
-const SETUP_FILE = ".opencode-boxd-golden-setup.sh"
+const SETUP_FILE = ".boxd-plugin-golden-setup.sh"
 const SETUP_PATH = `/home/boxd/${SETUP_FILE}`
 /** The builder's safety net, whatever happens to the laptop. */
 const BUILDER_LEASE = "2h"

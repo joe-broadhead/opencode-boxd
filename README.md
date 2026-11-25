@@ -4,9 +4,6 @@ Runs OpenCode sessions on private [boxd](https://boxd.sh) machines, one work per
 its files and its git back here. A work is one task with one id, one machine (`oc-<workId>`) and one root session plus
 the child sessions its subagents start; the machine is a cache with more CPU, and this machine is the source of truth.
 
-Unofficial; not affiliated with boxd. boxd is a trademark of Azin Tech Operating Company B.V.; this unofficial plugin is
-not endorsed by them.
-
 ## Requirements
 
 - OpenCode `>=2.4.1 <2.5.0`, tested on 2.4.1.
@@ -16,9 +13,9 @@ not endorsed by them.
 
 ## Install
 
-Install from a release tag: `opencode plugin add github:we-the-rebel-alliance/boxd-plugin#v0.0.0`. The first release
-on plugin-contract v0 is v0.0.0. A Git install does not update by itself: remove the exact tag you installed and add the
-new one.
+Install from a release tag: `opencode plugin add github:we-the-rebel-alliance/boxd-plugin#v0.0.0`. The tag is `v0.0.0`
+and the package is `@we-the-rebel-alliance/boxd-plugin`. A Git install does not update by itself: remove the exact tag
+you installed and add the new one.
 
 Then run `opencode reload`, or restart OpenCode, and run `/boxd`.
 
@@ -33,6 +30,13 @@ your own signed-in `boxd` CLI and never reads your boxd account or credentials. 
 asks first, and `read-only` turns changes off. `exec` asks even at `all`, because it runs arbitrary argv on the guest.
 The plugin's methods, their classes and their operations are in the capabilities table below and in
 [docs/capabilities.md](docs/capabilities.md).
+
+## Options
+
+Set options under the plugin entry in `opencode.json`: `access` (`all`, `ask-changes` or `read-only`), `regions` (where a
+new machine and a new golden image may be placed), `region`, `size`, `automation` (the plugin's own harvest and
+hibernation of finished works), `autoSleepMinutes`, `budget`, `git` and `allowUntestedHost`. Every option and its default
+is in [docs/configuration.md](docs/configuration.md).
 
 ## Capabilities
 
@@ -103,6 +107,20 @@ is the contract's whole set.
 | `UNAVAILABLE` | the provider could not be reached |
 <!-- /generated:errors -->
 
+## Troubleshooting
+
+| What you see | What to do |
+|---|---|
+| `NEEDS_SIGN_IN` | Run `boxd auth login` in a terminal, then check that the `boxd` CLI is on OpenCode's `PATH`. |
+| `HOST_UNTESTED` | Use OpenCode 2.4.1, or set `allowUntestedHost: true` if you accept an untested release. |
+| `PERMISSION_DENIED` | The access level or a session rule refused the call; change `access`, or ask the person to allow it. |
+| `UNAVAILABLE` | The machine, the CLI or the guest could not answer; read the sentence and its next step, then retry. A drop refused for unpushed commits says to push first. |
+| `INPUT_INVALID` | The input or the work id is not what the method describes; read the field the message names. |
+| `BUDGET_EXCEEDED` | Today's machine cost reached `budget.daily` with `action: "refuse"`; sleep or drop unused works, or raise the budget. |
+
+Run `/boxd` for the fleet, the cost and the one next step, and `boxd_status` from an agent session for the contract
+status.
+
 ## Docs
 
 - [Capabilities](docs/capabilities.md): every method, source, action and bus event, with notes.
@@ -111,3 +129,5 @@ is the contract's whole set.
 - [Automations](docs/automations.md): the timer recipe for the works source.
 - [Architecture](docs/architecture.md): layers, the provider client, caches and host APIs.
 - [Security](docs/security.md): what leaves the machine, redaction and the drop guard.
+- [plugin-contract](https://github.com/we-the-rebel-alliance/plugin-contract): the manifest, accounts, methods and access
+  the plugin implements.

@@ -41,7 +41,7 @@ describe("a finished work is harvested, then slept, after autoSleepMinutes", () 
       expect(call.context.call.source).toBe("automation")
     }
     // The harvest's own export is the one guest read: no separate phase read, one listing to skip a sleeping machine.
-    expect(f.calls.filter((call) => call.startsWith("phase") || call.startsWith("v0-phase"))).toEqual([])
+    expect(f.calls.filter((call) => call.startsWith("phase"))).toEqual([])
     expect(f.calls.filter((call) => call === "list")).toEqual(["list"])
   })
 
@@ -341,7 +341,7 @@ describe("lease renewals (§C.2, L-2)", () => {
   })
 
   test("a saved idle work is not renewed; renewals need no automation consent", async () => {
-    const saved = { at: T0.toISOString(), complete: true, guestVersion: "2.2.3", sessions: [] }
+    const saved = { at: T0.toISOString(), complete: true, guestVersion: "2.4.4", sessions: [] }
     const { f, loop } = setup({ options: { leaseDays: 2, access: "read-only" }, works: [work("s", { saved: "fresh" }), work("u", { phase: "busy" })], records: [record("s", { saved, lease: lease(10, 2) }), record("u", { lease: lease(10, 2) })] })
     await loop().tick()
     expect(f.calls.filter((call) => call.startsWith("renewLease"))).toEqual(["renewLease vm_u 2d"])

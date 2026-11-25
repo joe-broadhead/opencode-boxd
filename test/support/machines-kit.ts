@@ -1,6 +1,5 @@
-// Package C1's test kit: the plugin's own services (the runtime on the fake boxd CLI, the v0 import and the ledger as
-// the plugin builds them) with a fake guest server, narrow fakes for the watcher, cost and the host's sessions, and
-// C1's runs. A test seeds machines, snapshots and faults on the fake, and reads back the calls, the spawns and the
+// Package C1's test kit: the plugin's own services (the provider on the fake boxd CLI and the ledger as the plugin
+// builds them) with a fake guest server, narrow fakes for the watcher, cost and the host's sessions, and C1's runs. A test seeds machines, snapshots and faults on the fake, and reads back the calls, the spawns and the
 // ledger.
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -19,7 +18,7 @@ import type { CallContext } from "../../src/call.js"
 import { startFakeGuest, type FakeGuest } from "../host/fake-guest.js"
 import { startSpawnCounter, type CountingFake } from "../host/spawn-counter.js"
 
-export const VERSION = "2.2.6"
+export const VERSION = "2.4.1"
 
 export interface Kit {
   readonly guest: FakeGuest
@@ -43,11 +42,6 @@ export interface Kit {
   reset(): void
   record(workId: string): Promise<WorkRecord | undefined>
   write(record: WorkRecord): Promise<void>
-  /**
-   * The v0 takeovers the runs made, in order, and whether the v1 password was still absent at each (a takeover runs
-   * before any v1 setup). The kit stands in for `ADOPT_COMMAND` on the fake disk: the real command's absolute paths
-   * would reach this laptop's own home through the fake's shell.
-   */
   /** Runs `fn` as the plugin would on a machine it owns: under its lock, on a target checked by id. */
   change<T>(region: Region, name: string, id: string, fn: (target: ChangeTarget) => Promise<T>): Promise<T>
   /** Installs the plugin's helper on a seeded machine, as a golden image carries it. */

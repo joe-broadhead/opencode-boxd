@@ -16,7 +16,7 @@ let runtime: PluginProvider
 const DIRECTORY = "/home/boxd/work/review-api"
 
 beforeAll(() => {
-  guestServer = startFakeGuest({ version: "2.2.6" })
+  guestServer = startFakeGuest({ version: "2.4.1" })
 })
 afterAll(async () => {
   await runtime?.dispose()
@@ -35,8 +35,8 @@ const row = (call: string, scenario: string): BudgetRow => SPAWN_BUDGETS.find((e
 
 /** Puts a running work with the helper installed on the fake, as the steady state has it. */
 async function work(name = "oc-review-api") {
-  const machine = counter.fake.machine({ name, region: "fra", labels: { owner: "opencode-boxd", role: "session", work: name.slice(3) } })
-  await change(machine.id, "setup", (target) => runtime.guest.setup(target, { directory: DIRECTORY, opencode: "2.2.6" }, context("setup")))
+  const machine = counter.fake.machine({ name, region: "fra", labels: { owner: "boxd", role: "session", work: name.slice(3) } })
+  await change(machine.id, "setup", (target) => runtime.guest.setup(target, { directory: DIRECTORY, opencode: "2.4.1" }, context("setup")))
   guestServer.next(`ses_${name.slice(3).replace(/-/g, "_")}`)
   await change(machine.id, "setup", (target) => runtime.guest.prompt(target, { directory: DIRECTORY, sessionId: null, title: "t", text: "start", delivery: "steer" }, context("setup")))
   guestServer.complete(`ses_${name.slice(3).replace(/-/g, "_")}`)
@@ -123,21 +123,21 @@ describe("the steady-state sequences fit their rows", () => {
   })
 
   test("boxd_ensure of a new work from its image: one listing, the create, setup, and a fresh listing for one serve poll", async () => {
-    counter.fake.snapshot({ region: "fra", name: "oc-golden-2.2.6-2x8" })
+    counter.fake.snapshot({ region: "fra", name: "oc-golden-2.4.1-2x8" })
     // The image carries the helper, as a golden build installs it.
     const seed = counter.fake.machine({ name: "oc-seed", region: "fra" })
-    await change(seed.id, "seed", (target) => runtime.guest.setup(target, { directory: "/home/boxd/work/seed", opencode: "2.2.6" }, context("seed")), "oc-seed")
-    await change(seed.id, "seed", (target) => runtime.boxd.saveSnapshot(target, "oc-golden-2.2.6-2x8", context("seed")), "oc-seed")
+    await change(seed.id, "seed", (target) => runtime.guest.setup(target, { directory: "/home/boxd/work/seed", opencode: "2.4.1" }, context("seed")), "oc-seed")
+    await change(seed.id, "seed", (target) => runtime.boxd.saveSnapshot(target, "oc-golden-2.4.1-2x8", context("seed")), "oc-seed")
     await runtime.boxd.snapshots(context("seed"))
     counter.reset()
     const call = "call_ensure"
     await runtime.boxd.list({ maxAgeMs: 0 }, context(call, "boxd_ensure"))
     const info = await runtime.runner.withMachineLock({ create: { region: "fra", name: "oc-fresh" } }, context(call), () =>
-      runtime.boxd.create({ kind: "work", region: "fra", name: "oc-fresh", workId: "fresh", image: "oc-golden-2.2.6-2x8", autoSuspendSeconds: 0, autoHibernateSeconds: 7200 }, context(call, "boxd_ensure")),
+      runtime.boxd.create({ kind: "work", region: "fra", name: "oc-fresh", workId: "fresh", image: "oc-golden-2.4.1-2x8", autoSuspendSeconds: 0, autoHibernateSeconds: 7200 }, context(call, "boxd_ensure")),
     )
     // The create hands back its own target for the id boxd gave; the by-id check is not repeated in the same call.
     const target = info.owned.target
-    const setup = await runtime.runner.withMachineLock({ id: info.id }, context(call), () => runtime.guest.setup(target, { directory: "/home/boxd/work/fresh", opencode: "2.2.6" }, context(call, "boxd_ensure")))
+    const setup = await runtime.runner.withMachineLock({ id: info.id }, context(call), () => runtime.guest.setup(target, { directory: "/home/boxd/work/fresh", opencode: "2.4.1" }, context(call, "boxd_ensure")))
     expect(setup).toMatchObject({ server: "up", workspace: "ready", helperUploaded: false })
     // The wait's serve poll is a read: it needs a listing at most 2 s old that holds the new machine.
     const listing = await runtime.boxd.list({ maxAgeMs: 0 }, context(call, "boxd_ensure"))

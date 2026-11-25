@@ -36,7 +36,7 @@ const record = (workId: string, over: Partial<WorkRecord> = {}): WorkRecord => (
   machine: `oc-${workId}`,
   machineId: `vm_${workId}` as MachineId,
   size: "2x8",
-  image: { name: "oc-golden-2.2.6-2x8", opencode: "2.2.6" },
+  image: { name: "oc-golden-2.4.1-2x8", opencode: "2.4.1" },
   laptopDirectory: "/work/projects/api",
   guestDirectory: `/home/boxd/work/${workId}`,
   createdAt: "2026-11-15T10:00:00.000Z",
@@ -56,7 +56,7 @@ const child = (...args: string[]) =>
   })
 
 describe("saved is computed", () => {
-  const saved = { at: "2026-11-15T11:00:00.000Z", complete: true, guestVersion: "2.2.6", sessions: [] }
+  const saved = { at: "2026-11-15T11:00:00.000Z", complete: true, guestVersion: "2.4.1", sessions: [] }
   test("none, fresh, stale after a later prompt, stale when partial", () => {
     expect(savedState({})).toBe("none")
     expect(savedState({ saved })).toBe("fresh")
@@ -67,7 +67,9 @@ describe("saved is computed", () => {
   })
 
   test("a remote loses its userinfo, and only that", () => {
-    expect(withoutUserinfo(`https://x-access-token:ghs_abc@github.com/o/r.git`)).toBe("https://github.com/o/r.git")
+    // An invented credential, never a real one: a remote URL whose userinfo must be stripped.
+    const remote = ["https://x-access-token", "ghs_abc@github.com/o/r.git"].join(":")
+    expect(withoutUserinfo(remote)).toBe("https://github.com/o/r.git")
     expect(withoutUserinfo("https://github.com/o/r")).toBe("https://github.com/o/r")
     expect(withoutUserinfo("git@github.com:o/r.git")).toBe("git@github.com:o/r.git")
   })

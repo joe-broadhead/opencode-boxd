@@ -112,18 +112,10 @@ describe("package tarball", () => {
     expect(paths.filter((path) => path.includes("node_modules/") || /\.(?:tsx|jsx)$/.test(path))).toEqual([])
     for (const target of Object.values(pkg.exports)) expect(paths).toContain(target.replace(/^\.\//, ""))
     expect(paths.filter((path) => path.endsWith(".d.ts"))).toEqual([])
-    // The guest helper, the fixture and the skill are the product, so they must be in every tarball.
+    // The guest helper and the skill are the product, so they must be in every tarball.
     expect(paths).toContain("guest/guest.py")
-    expect(paths).toContain("fixtures/conformance.json")
     expect(paths).toContain("skills/boxd-sessions/SKILL.md")
   }, 120_000)
-
-  test("ships the NOTICE for the bundled plugin contract", () => {
-    const notice = run("tar", ["-xzOf", join(work, pack().filename), "package/NOTICE"], root)
-    expect(notice).toContain("@we-the-rebel-alliance/plugin-contract")
-    expect(notice).toContain("Copyright (c) 2026 Joe Broadhead")
-    expect(notice).toContain("MIT License")
-  })
 
   test("installs with scripts disabled and the server entry loads under Bun", () => {
     const consumer = install()
@@ -199,7 +191,7 @@ function stockBinary(version: string): string {
   const cached = installed.get(version)
   if (cached) return cached
   const binary = `@opencode/cli-${platform()}-${arch()}`
-  const dir = project(`opencode-${version}`)
+  const dir = project(`stock-${version}`)
   run("npm", ["install", `@opencode/cli@${version}`, `${binary}@${version}`, "--omit=optional", "--ignore-scripts", "--no-audit", "--no-fund", "--prefer-offline"], dir)
   const path = join(dir, "node_modules", binary, "bin", "opencode")
   installed.set(version, path)

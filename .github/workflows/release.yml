@@ -1,52 +1,84 @@
-name: release
+name: Release
 
-# Publishes v<package.json version> from a master commit CI passed. Cut the tag locally with
-# `npx plugin-kit release <version>` on a green master, push it, and this workflow builds, checks and publishes the
-# GitHub release. Agents never approve or cut a release; the maintainer does.
+# A tag v<package.json version> on a master commit whose CI passed creates the GitHub Release. Releases are not
+# published to npm: a consumer pins the tag, github:we-the-rebel-alliance/boxd-plugin#v<version>, and dist/ is built by
+# this workflow. Only the owner decides a release; an agent never pushes a tag on its own.
+
 on:
   push:
-    tags: ["v*"]
+    tags:
+      - "v*"
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   release:
     name: release
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    env:
-      TAG: ${{ github.ref_name }}
+    timeout-minutes: 30
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-          cache: npm
+          package-manager-cache: false
       - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2.0.2
         with:
           bun-version: 1.4.4
           no-cache: true
+      - name: Fetch the contract over HTTPS
+        # The contract is a public repository, and npm records its GitHub dependency over ssh. A runner has no key.
+        run: git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
       - run: npm ci --ignore-scripts
-      - name: The tag is the package version
+      - name: actionlint
         run: |
-          version="$(node -p 'require("./package.json").version')"
-          [ "$TAG" = "v$version" ] || { echo "::error::$TAG is not v$version"; exit 1; }
-      - name: Check
-        run: node scripts/check.mjs typecheck build unit kit conformance
-      - name: Pack
+          set -euo pipefail
+          version=1.7.12
+          base="https://github.com/rhysd/actionlint/releases/download/v${version}"
+          curl -sSfLO "${base}/actionlint_${version}_linux_amd64.tar.gz"
+          curl -sSfLO "${base}/actionlint_${version}_checksums.txt"
+          grep " actionlint_${version}_linux_amd64.tar.gz$" "actionlint_${version}_checksums.txt" | sha256sum -c -
+          tar xzf "actionlint_${version}_linux_amd64.tar.gz" actionlint
+          mkdir -p "$RUNNER_TEMP/bin"
+          mv actionlint "$RUNNER_TEMP/bin/actionlint"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/bin/actionlint" -color .github/workflows/ci.yml .github/workflows/release.yml
+      - name: The stock OpenCode the tests run against
         run: |
-          mkdir -p "$RUNNER_TEMP/release"
-          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/release"
-          node_modules/.bin/plugin-kit conformance --json > "$RUNNER_TEMP/release/conformance-report.json"
-          find "$RUNNER_TEMP/release" -type f ! -name SHA256SUMS | sed "s#^$RUNNER_TEMP/release/##" | sort > "$RUNNER_TEMP/files.txt"
-          (cd "$RUNNER_TEMP/release" && while IFS= read -r file; do sha256sum "$file"; done < "$RUNNER_TEMP/files.txt" > "$RUNNER_TEMP/SHA256SUMS")
-          mv "$RUNNER_TEMP/SHA256SUMS" "$RUNNER_TEMP/release/SHA256SUMS"
-          cat "$RUNNER_TEMP/release/SHA256SUMS"
-      - name: Publish
+          platform="$(node -p 'process.platform')-$(node -p 'process.arch')"
+          dir="$RUNNER_TEMP/stock-2.4.1"
+          mkdir -p "$dir"
+          (cd "$dir" && npm init -y >/dev/null && npm install "@opencode/cli@2.4.1" "@opencode/cli-$platform@2.4.1" --omit=optional --ignore-scripts --no-audit --no-fund)
+          echo "OPENCODE_BIN_2_4_1=$dir/node_modules/@opencode/cli-$platform/bin/opencode" >> "$GITHUB_ENV"
+      - run: npm run check
+      - name: The tag names this package's version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          test "v${version}" = "$TAG"
+      - name: Pack the release files
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          npx plugin-kit check --json > release/conformance.json
+          npm pack --pack-destination release
+          sha256sum release/*.tgz release/conformance.json > release/SHA256SUMS
+      - name: Create the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$TAG" "$RUNNER_TEMP"/release/* --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes-file CHANGELOG.md
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" release/*.tgz release/conformance.json release/SHA256SUMS --repo "$REPO" --verify-tag --title "$TAG" --generate-notes

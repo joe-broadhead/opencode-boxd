@@ -12,7 +12,7 @@ export function execHandler(runs: ToolRuns): MethodHandler {
     guarded(async () => {
       const value = await settle(() => runs.boxd_exec(input, callOf(call)))
       await nudge(call)
-      return value
+      return { ...value, trust: "untrusted" as const }
     }),
   )
 }

@@ -418,7 +418,7 @@ export function isChangeTarget(target: ReadTarget | ChangeTarget): target is Cha
 }
 
 /**
- * The plugin's ownership labels (design §3.4 step 2): `owner=opencode-boxd` and `work=<id>`, whose `oc-<id>` is the
+ * The plugin's ownership labels (design §3.4 step 2): `owner=boxd` and `work=<id>`, whose `oc-<id>` is the
  * machine's name. A machine renamed by hand keeps the `work` label of the work it belonged to, so its name no longer
  * matches and it gets no adoption target.
  */

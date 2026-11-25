@@ -18,7 +18,7 @@
  *   converges. In a known region, one `machine get oc-<id>` under the name's machine lock comes first, and a machine
  *   that landed there is adopted. A create boxd refuses because the name is taken is adopted the same way. Since boxd
  *   keeps names unique per region, no path makes a second `oc-<id>`. Adoption needs the plugin's labels
- *   (`owner=opencode-boxd` with `work=<id>`), or `adopt: true`; two regions holding the name are
+ *   (`owner=boxd` with `work=<id>`), or `adopt: true`; two regions holding the name are
  *   `NOT_OURS`.
  * - **The VM agent** (#14 §6): `cannot connect to VM agent` on a machine this plugin created, resized or renamed in the
  *   last 10 minutes and has not rebooted since is rebooted once, and the step retried. Otherwise `AGENT_UNREACHABLE`,
@@ -205,7 +205,7 @@ export function roomFor(context: ItemContext, stepMs: number, state: "creating" 
  * same rule as the boxd port's `ownsLabels`, for the work being adopted.
  */
 export function carriesLabels(labels: Readonly<Record<string, string>>, workId: string): boolean {
-  return labels.work === workId && (labels.owner === WORK_LABELS.owner || labels.role === WORK_LABELS.role)
+  return labels.work === workId && labels.owner === WORK_LABELS.owner
 }
 
 /** The labels a machine still needs to be this work's: owner, role and work. */
@@ -464,7 +464,7 @@ async function fetchIfThere(machines: Machines, region: Region, name: MachineNam
  */
 async function land(machines: Machines, found: FetchedMachine, input: { readonly workId: string; readonly adopt: boolean }, op: OpContext): Promise<Landed> {
   if (!carriesLabels(found.labels, input.workId) && !input.adopt) {
-    throw boxdError("NOT_OURS", `${found.name} in ${found.region} does not carry this plugin's labels (owner=opencode-boxd, or role=session with work=${input.workId}), so it is not adopted. Pass adopt: true to take it over.`, { region: found.region })
+    throw boxdError("NOT_OURS", `${found.name} in ${found.region} does not carry this plugin's labels (owner=boxd and work=${input.workId}), so it is not adopted. Pass adopt: true to take it over.`, { region: found.region })
   }
   if (found.sharing === "shared") throw boxdError("MACHINE_SHARED", `${found.name} in ${found.region} is shared with the organisation.`)
   if (found.isolated) throw boxdError("MACHINE_ISOLATED", `${found.name} in ${found.region} is isolated.`)
@@ -636,7 +636,7 @@ async function createOrAdopt(machines: Machines, item: EnsureItem, context: Item
   }
   const shown = found[0]
   if (shown && !carriesLabels(shown.labels, item.workId) && !item.adopt) {
-    throw boxdError("NOT_OURS", `${name} in ${shown.region} does not carry this plugin's labels (owner=opencode-boxd, or role=session with work=${item.workId}), so it is not adopted. Pass adopt: true to take it over.`, { region: shown.region })
+    throw boxdError("NOT_OURS", `${name} in ${shown.region} does not carry this plugin's labels (owner=boxd and work=${item.workId}), so it is not adopted. Pass adopt: true to take it over.`, { region: shown.region })
   }
   const adopted = async (landed: Landed) => {
     const record = await recordLanded(machines, item, landed, previous?.state === "open" ? previous : fresh(landed.info.region), size, op)

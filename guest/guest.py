@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""opencode-boxd guest helper, protocol 1.
+"""boxd guest helper, protocol 1.
 
 One JSON object on stdin, one JSON line on stdout: {"ok": true, "protocol": 1, ...} or
 {"ok": false, "protocol": 1, "error": "<CODE>", "detail": "..."}. It lives at the stable path
-~/.opencode-boxd/guest.py, talks only to the guest's own OpenCode server on localhost, and uses the standard
+~/.boxd-plugin/guest.py, talks only to the guest's own OpenCode server on localhost, and uses the standard
 library only.
 
 Read actions (phase, read, health, serve) never start, write or upload anything. Change actions (setup, prompt,
@@ -34,7 +34,7 @@ PORT = 4096
 DEFAULT_BASE = f"http://127.0.0.1:{PORT}"
 
 # The tests run this helper against a folder that stands in for the machine's disk; on a machine it is empty.
-ROOT = os.environ.get("OPENCODE_BOXD_FAKE_ROOT", "")
+ROOT = os.environ.get("BOXD_FAKE_ROOT", "")
 
 
 def local(path):
@@ -49,7 +49,7 @@ def guest(path):
 
 HOME = "/home/boxd"
 WORK_ROOT = HOME + "/work"
-HELPER_HOME = local(HOME + "/.opencode-boxd")
+HELPER_HOME = local(HOME + "/.boxd-plugin")
 HELPER_PATH = HELPER_HOME + "/guest.py"
 PASSWORD_PATH = HELPER_HOME + "/password"
 SERVER_LOG = HELPER_HOME + "/server.log"
@@ -846,7 +846,7 @@ def major(version):
 def action_upgrade(request):
     target = request.get("version")
     if not isinstance(target, str) or not VERSION.fullmatch(target):
-        fail("NAME_INVALID", "version must be a release such as 2.2.6")
+        fail("NAME_INVALID", "version must be a release such as 2.4.1")
     current = opencode_version()
     if current != target:
         if major(current) < major(target):
@@ -1139,7 +1139,7 @@ def action_scrub(request):
             # boxd writes it as root at every boot; the helper runs as boxd, which has passwordless sudo.
             subprocess.run(["sudo", "-n", "rm", "-f", env_file], check=True, capture_output=True)
         removed.append(env_file)
-    for path in (PASSWORD_PATH, EXPORTS, HARVEST, STAGING, IMPORTS, CLONES, SERVER_LOG, SETUP_LOG, local("/tmp/opencode-boxd"), local(WORK_ROOT)):
+    for path in (PASSWORD_PATH, EXPORTS, HARVEST, STAGING, IMPORTS, CLONES, SERVER_LOG, SETUP_LOG, local(WORK_ROOT)):
         if remove(path):
             removed.append(guest(path))
     emit({"removed": removed})

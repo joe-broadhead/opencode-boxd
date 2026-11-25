@@ -140,7 +140,7 @@ describe("the host", () => {
 
 describe("versions", () => {
   test("parses the CLI's own version line", () => {
-    expect(parseVersion("opencode v2.2.6")).toEqual([2, 2, 6])
-    expect(parseVersion("2.2.6-dev.1")).toBeUndefined()
+    expect(parseVersion("opencode v2.4.1")).toEqual([2, 4, 1])
+    expect(parseVersion("2.4.1-dev.1")).toBeUndefined()
   })
 })

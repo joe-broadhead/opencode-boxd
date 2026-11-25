@@ -33,7 +33,7 @@ export interface SelectionSpec {
   readonly selects?: readonly string[]
 }
 
-const WORK_PATTERN = "^[a-z][a-z0-9-]{0,24}$"
+export const WORK_PATTERN = "^[a-z][a-z0-9-]{0,24}$"
 const WORK_ID = new RegExp(WORK_PATTERN)
 
 /** The work a call named, when it is a valid id: a refusal says which work it is about. */

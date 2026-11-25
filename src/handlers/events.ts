@@ -7,9 +7,9 @@
  *   write lock. `probe` reads nothing at all.
  * - **The plugin's own words.** An event's title is the plugin's sentence for the change; its labels are the same facts.
  *   Nothing a guest wrote, no prompt, no transcript and no work title reaches an event.
- * - **The cursor** is the log's own sequence number, bound to the plugin, the source and the local account. A sequence
- *   number the log no longer keeps (it rotates at 5 MiB) is the ledger's `cursorExpired`: the page starts again at the
- *   oldest kept event and carries `gap: { reason: "expired", since }`.
+ * - **The cursor** carries the log's own sequence number and the read's original time window, bound to the plugin, the
+ *   source and the local account. A sequence number the log no longer keeps (it rotates at 5 MiB) is the ledger's
+ *   `cursorExpired`: the page starts again at the oldest kept event and carries `gap: { reason: "expired", since }`.
  */
 import { decodeBoundCursor, encodeBoundCursor, type CursorBinding } from "@we-the-rebel-alliance/plugin-contract/cursor"
 import {
@@ -34,6 +34,7 @@ import {
 } from "@we-the-rebel-alliance/plugin-contract/events"
 import type { MethodHandler } from "@we-the-rebel-alliance/plugin-contract/register"
 import { PLUGIN_ID } from "../constants.js"
+import { PACKAGE } from "../manifest.js"
 import type { MachineIdentity } from "../accounts.js"
 import { ownerOf } from "../accounts.js"
 import type { CallContext } from "../call.js"
@@ -41,12 +42,8 @@ import { BoxdError } from "../errors.js"
 import type { LedgerPort, OpContext, WorkEvent } from "../ports.js"
 import { PROBE_INPUT } from "./schemas.js"
 
-/** The plugin's package name, which every page names. */
-export const PACKAGE = "@we-the-rebel-alliance/boxd-plugin"
 /** The source every event names. */
 export const SOURCE = "works"
-/** The declared source's id. */
-export const SOURCE_ID = "boxd.works"
 /** Every event's kind: boxd's own, one phase change of one work. */
 export const KIND = "x-boxd/work"
 /** The most bytes of JSON one page holds: the source's `maxBytes`. */
@@ -60,7 +57,7 @@ export interface SourceDeps {
   readonly now: () => Date
 }
 
-/** The cursor's state: the last sequence number it covers (`q`), and that event's time or the window's start (`t`). */
+/** The cursor's state: the last sequence number it covers (`q`), and the window's start (`t`). */
 interface CursorState {
   readonly q: number
   readonly t: string
@@ -175,17 +172,15 @@ export async function listWorks(deps: SourceDeps, input: unknown, call?: Pick<Ca
     throw ledgerFailure(error)
   }
 
-  let lines: readonly WorkEvent[] = page.events
   let gap: EventsGap | undefined
-  let start: string
+  // The window start is the first page's `since` (or its default), and it stays in every cursor: `q` advances by the
+  // ledger's sequence number, while `t` keeps the original lower time bound. Every page applies both.
+  const windowStart = from ? Date.parse(from.t) : startTime(request, now.getTime())
+  const start = new Date(windowStart).toISOString()
+  const lines = page.events.filter((line) => Date.parse(line.at) >= windowStart)
   if (from) {
-    start = from.t
-    if (page.cursorExpired) gap = { reason: "expired", since: from.t }
+    if (page.cursorExpired) gap = { reason: "expired", since: start }
   } else {
-    const windowStart = startTime(request, now.getTime())
-    start = new Date(windowStart).toISOString()
-    const first = lines.findIndex((line) => Date.parse(line.at) >= windowStart)
-    lines = first === -1 ? [] : lines.slice(first)
     const oldest = page.events[0]
     if (page.cursorExpired && oldest !== undefined && Date.parse(oldest.at) > windowStart) gap = { reason: "expired", since: start }
   }
@@ -206,7 +201,7 @@ export async function listWorks(deps: SourceDeps, input: unknown, call?: Pick<Ca
     covered++
   }
   const events = oldestFirst(kept)
-  const state: CursorState = last ? { q: last.seq, t: last.at } : { q: page.cursor, t: start }
+  const state: CursorState = { q: last?.seq ?? page.cursor, t: start }
   const more = lines.length > covered
   const whose: EventsListIdentity = { source: SOURCE, account: "default", owner: ownerOf(identity) }
   return eventsListResult(whose, events, encodeWorksCursor(state), more, {

@@ -1,5 +1,5 @@
 /**
- * The laptop ledger, format 1 (design §2.2): `~/.local/share/opencode-boxd/v1/`, published whole by one rename, with
+ * The laptop ledger, format 1 (design §2.2): `~/.local/share/boxd-plugin/v1/`, published whole by one rename, with
  * one folder per work. This module is its only reader and writer of work records, stored exports, patches and untracked
  * files, and `index.json`.
  *
@@ -78,7 +78,7 @@ export interface LedgerOptions {
 
 /** The laptop ledger. Every record is written copy-on-write under its work lock. */
 export class Ledger {
-  /** `~/.local/share/opencode-boxd`. */
+  /** `~/.local/share/boxd-plugin`. */
   readonly root: string
   /** `<root>/v1`. */
   readonly dir: string

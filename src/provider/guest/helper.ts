@@ -9,7 +9,7 @@ import { readFile } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
 
 /** Where `machine cp` puts a new helper: the guest's home, which always exists. `--install` moves it from there. */
-export const HELPER_UPLOAD_PATH = "/home/boxd/.opencode-boxd-upload.py"
+export const HELPER_UPLOAD_PATH = "/home/boxd/.boxd-plugin-upload.py"
 
 export interface HelperFile {
   readonly path: string

@@ -61,7 +61,7 @@ describe("reads", () => {
   })
 
   test("get hands back a change target only for a machine whose labels show the plugin owns it", async () => {
-    const ours = fake.machine({ name: "oc-a", region: "fra", labels: { role: "session", owner: "opencode-boxd", work: "a" } })
+    const ours = fake.machine({ name: "oc-a", region: "fra", labels: { role: "session", owner: "boxd", work: "a" } })
     fake.machine({ name: "oc-b", region: "fra", labels: { role: "session", work: "b" } })
     fake.machine({ name: "oc-c", region: "fra", labels: { role: "session", work: "other" } })
     fake.machine({ name: "oc-d", region: "fra" })
@@ -72,7 +72,7 @@ describe("reads", () => {
   })
 
   test("get never hands back a change target for a shared or isolated machine, whatever its labels", async () => {
-    const labels = { role: "session", owner: "opencode-boxd", work: "s" }
+    const labels = { role: "session", owner: "boxd", work: "s" }
     fake.machine({ name: "oc-s", region: "fra", labels, sharing: "shared" })
     fake.machine({ name: "oc-i", region: "fra", labels: { ...labels, work: "i" }, isolated: true })
     expect(await boxd.get("fra", "oc-s", context())).toMatchObject({ sharing: "shared" })
@@ -121,8 +121,8 @@ describe("reads", () => {
   })
 
   test("snapshots in every region, cached; secrets by name, scope and hosts only", async () => {
-    fake.snapshot({ region: "nyc", name: "oc-golden-2.2.6-2x8" })
-    expect(await boxd.snapshots(context())).toEqual([{ region: "nyc", name: "oc-golden-2.2.6-2x8", storage: "local", status: "ready" }])
+    fake.snapshot({ region: "nyc", name: "oc-golden-2.4.1-2x8" })
+    expect(await boxd.snapshots(context())).toEqual([{ region: "nyc", name: "oc-golden-2.4.1-2x8", storage: "local", status: "ready" }])
     await boxd.snapshots(context())
     expect(fake.calls().filter((call) => call.startsWith("snapshots list"))).toHaveLength(1)
     fake.update((state) => void (state.secrets = [{ name: "OPENCODE_API_KEY", scope: "private", domains: ["api.example.com"] }]))
@@ -132,17 +132,17 @@ describe("reads", () => {
 
 describe("changes", () => {
   test("a work's create carries the labels and the cost bounds, records the id, and never a size", async () => {
-    fake.snapshot({ region: "nyc", name: "oc-golden-2.2.6-4x16", vcpu: 4, labels: { role: "golden-builder", tier: "x" } })
+    fake.snapshot({ region: "nyc", name: "oc-golden-2.4.1-4x16", vcpu: 4, labels: { role: "golden-builder", tier: "x" } })
     const key = { create: { region: "nyc" as const, name: "oc-review-api" as const } }
     const info = await runner.withMachineLock(key, context(), () =>
-      boxd.create({ kind: "work", region: "nyc", name: "oc-review-api", workId: "review-api", image: "oc-golden-2.2.6-4x16", autoSuspendSeconds: 0, autoHibernateSeconds: 7200 }, context()),
+      boxd.create({ kind: "work", region: "nyc", name: "oc-review-api", workId: "review-api", image: "oc-golden-2.4.1-4x16", autoSuspendSeconds: 0, autoHibernateSeconds: 7200 }, context()),
     )
     const stored = fake.read().machines[0]!
     expect(info).toMatchObject({ id: stored.id, name: "oc-review-api", region: "nyc", sharing: "private", isolated: false })
     // This process made it with this id, so the create hands back a change target: no second get to act on it.
     expect(info.owned).toMatchObject({ target: { region: "nyc", name: "oc-review-api", machineId: stored.id }, status: "starting" })
     expect(isChangeTarget(info.owned.target)).toBe(true)
-    expect(stored).toMatchObject({ vcpu: 4, autoSuspend: 0, autoHibernate: 7200, ignoreOutbound: "off", labels: { role: "session", owner: "opencode-boxd", work: "review-api", tier: "x" } })
+    expect(stored).toMatchObject({ vcpu: 4, autoSuspend: 0, autoHibernate: 7200, ignoreOutbound: "off", labels: { role: "session", owner: "boxd", work: "review-api", tier: "x" } })
     expect(stored.deleteAfter).toBeUndefined()
   })
 
@@ -184,24 +184,24 @@ describe("changes", () => {
       await boxd.wake(target, context())
       await boxd.resize(target, "4x16", context())
       await boxd.reboot(target, context())
-      await boxd.setLabels(target, { work: "b", owner: "opencode-boxd" }, context())
+      await boxd.setLabels(target, { work: "b", owner: "boxd" }, context())
       await boxd.renewLease(target, 1, context())
       await boxd.rename(target, "oc-b", context())
-      await boxd.saveSnapshot(target, "oc-golden-2.2.6-4x16", context())
+      await boxd.saveSnapshot(target, "oc-golden-2.4.1-4x16", context())
     })
     const id = machine.id
     expect(fake.calls().filter((call) => !call.startsWith("machine get"))).toEqual([
       `machine wake ${id} --region nyc --json`,
       `machine resize ${id} --vcpu 4 -y --region nyc --json`,
       `machine reboot ${id} --region nyc --json`,
-      `machine label set ${id} owner opencode-boxd --region nyc`,
+      `machine label set ${id} owner boxd --region nyc`,
       `machine label set ${id} work b --region nyc`,
       `machine config set ${id} delete-after 1d --region nyc`,
       `machine rename ${id} oc-b -y --region nyc --json`,
-      `snapshots save ${id} oc-golden-2.2.6-4x16 --region nyc --json`,
+      `snapshots save ${id} oc-golden-2.4.1-4x16 --region nyc --json`,
     ])
-    expect(fake.read().machines[0]).toMatchObject({ name: "oc-b", vcpu: 4, status: "running", deleteAfter: "1d", labels: { work: "b", owner: "opencode-boxd" } })
-    expect(fake.read().snapshots[0]).toMatchObject({ region: "nyc", name: "oc-golden-2.2.6-4x16", vcpu: 4 })
+    expect(fake.read().machines[0]).toMatchObject({ name: "oc-b", vcpu: 4, status: "running", deleteAfter: "1d", labels: { work: "b", owner: "boxd" } })
+    expect(fake.read().snapshots[0]).toMatchObject({ region: "nyc", name: "oc-golden-2.4.1-4x16", vcpu: 4 })
   })
 
   test("checkOwned yields the target and the status the same get showed", async () => {

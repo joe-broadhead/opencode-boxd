@@ -43,8 +43,8 @@ export type MachineId = string & { readonly [machineIdBrand]: true }
 /** The machine name a work owns: `oc-<workId>`. */
 export type MachineName = `oc-${string}`
 
-/** The labels the plugin sets on a work's machine; adoption needs `owner=opencode-boxd`. */
-export const WORK_LABELS = { role: "session", owner: "opencode-boxd" } as const
+/** The labels the plugin sets on a work's machine; adoption needs `owner=boxd`. */
+export const WORK_LABELS = { role: "session", owner: "boxd" } as const
 /** The label a golden builder carries; restores inherit it under the work's own `role=session`. */
 export const BUILDER_LABELS = { role: "golden-builder" } as const
 
@@ -80,7 +80,7 @@ export interface Owned {
 }
 
 /**
- * A machine this process just read, with `owned` when its labels carry the plugin's ownership (`owner=opencode-boxd`)
+ * A machine this process just read, with `owned` when its labels carry the plugin's ownership (`owner=boxd`)
  * and it is private and not isolated. Labels are a claim,
  * not a proof: anyone in the organisation can set them, and another laptop's plugin sets the same ones. So `owned` is
  * **only for adopting a work that has no recorded `machineId`** (design §3.4 step 2), where there is no record to
@@ -228,7 +228,7 @@ export const OUTPUT_CAP_BYTES = 8 * 1024 * 1024
  * The environment variable the runner sets on every child it starts, holding the call's id. The spawn-count harness's
  * fake CLI reads it to count spawns per call (`test/support/spawn-count.ts`); the real CLI ignores it.
  */
-export const CALL_TAG_ENV = "OPENCODE_BOXD_CALL"
+export const CALL_TAG_ENV = "BOXD_PLUGIN_CALL"
 
 /** Which call a child belongs to: a tool call's id, or a named background job. */
 export interface CallTag {
@@ -413,7 +413,7 @@ export interface BoxdPort {
 // ── The guest port: the v1 helper's actions ───────────────────────────────────────────────────────────────────────
 
 /** The v1 helper's stable home on the guest, and the protocol version it answers. */
-export const GUEST_HELPER_PATH = "/home/boxd/.opencode-boxd/guest.py"
+export const GUEST_HELPER_PATH = "/home/boxd/.boxd-plugin/guest.py"
 export const GUEST_PROTOCOL = 1
 /**
  * The most characters a `phase` read's `lastText` carries with `full: true`. The guest cuts the message to this, and the
@@ -519,7 +519,7 @@ export interface PromptAnswer {
 /**
  * `export`, with its own busy check in the same exec (no phase read first): a running tree answers `busy` with the
  * reason and writes nothing, unless the call is `partial`. Otherwise each session of the tree is written to
- * `~/.opencode-boxd/exports/<id>.json` on the guest, with its marks, and the root's last run (`run`) comes back too.
+ * `~/.boxd-plugin/exports/<id>.json` on the guest, with its marks, and the root's last run (`run`) comes back too.
  */
 /*
  * A harvest records `saved.complete = !input.partial && !answer.busy` (design §3.6): a partial harvest, or an export

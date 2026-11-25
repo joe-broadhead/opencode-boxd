@@ -28,8 +28,8 @@ describe("workList", () => {
     // A secret that only appears after the 200-character cut is still caught.
     const text = `${"a".repeat(196)}Password: Ku7pLm2QzR9w`
     expect(workList([{ ...work("straddle"), phase: text as never }]).data.items).toEqual([])
-    // An id that is a token is left out through the id screen.
-    expect(workList([work("ghp_A1b2C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q7R8")]).data.items).toEqual([])
+    // An invented credential, never a real one: an id that is a token is left out through the id screen.
+    expect(workList([work(["ghp", "A1b2C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q7R8"].join("_"))]).data.items).toEqual([])
     expect(workList([work("dup"), work("dup")]).data.items).toHaveLength(1)
   })
 

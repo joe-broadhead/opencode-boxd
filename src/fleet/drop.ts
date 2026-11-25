@@ -1,6 +1,6 @@
 /**
  * `boxd_drop` (design §3.9): destroy a work's machine, by its recorded id, and close the work. Destructive, so its
- * guard runs per work whatever asked (a tool call, a `select`, or `/boxd-cleanup`), and nothing automatic calls it.
+ * guard runs per work whatever asked (a tool call, a `select` or `exec`), and nothing automatic calls it.
  *
  * The guard: `saved: fresh` here; then, in one `git` exec on
  * the guest, a known git tree, no commit on a local ref or HEAD that no remote ref contains (`UNPUSHED`, #39), and a

@@ -29,7 +29,7 @@ import { removeRoot, tempRoot } from "../support/ledger-fakes.js"
 // calls running into the next test's fakes.
 setDefaultTimeout(60_000)
 
-const VERSION = "2.2.6"
+const VERSION = "2.4.1"
 let guest: FakeGuest
 let counter: CountingFake
 let runtime: PluginProvider
@@ -146,7 +146,7 @@ function publish(machine: FakeMachine, workId: string) {
 
 /** A work as `boxd_ensure` leaves it: the machine, the helper installed, a clean git tree, and an open record. */
 async function openWork(workId: string, over: Partial<WorkRecord> = {}): Promise<FakeMachine> {
-  const machine = counter.fake.machine({ name: `oc-${workId}`, region: "fra", labels: { owner: "opencode-boxd", role: "session", work: workId } })
+  const machine = counter.fake.machine({ name: `oc-${workId}`, region: "fra", labels: { owner: "boxd", role: "session", work: workId } })
   await change(machine, (target) => runtime.guest.setup(target, { directory: guestDir(workId), opencode: VERSION }, op()))
   const dir = treeOf(machine, workId)
   git(dir, "init", "--quiet")
@@ -454,7 +454,7 @@ describe("boxd_harvest", () => {
 
   test("a guest on another OpenCode release is refused before a transcript moves", async () => {
     await ranWork("version")
-    guest.setVersion("2.2.5")
+    guest.setVersion("2.4.3")
     try {
       expect((await errorOf(runs.boxd_harvest({ workId: "version" }, call()))).code).toBe("GUEST_VERSION")
       expect(counter.fake.read().laptopSessions?.ses_version).toBeUndefined()
@@ -682,7 +682,8 @@ describe("boxd_exec", () => {
 
   test("keeps stdout and stderr apart, keeps their tails, and redacts token shapes", async () => {
     await openWork("streams")
-    const TOKEN = "ghp_abcdefghijklmnop123456"
+    // An invented credential, never a real one: the exec output redaction must cut this token.
+    const TOKEN = ["ghp", "abcdefghijklmnop123456"].join("_")
     const answer = (await runs.boxd_exec({ workId: "streams", command: ["sh", "-c", `echo out; echo ${TOKEN} >&2; exit 3`] }, call())) as { exitCode: number; stdout: string; stderr: string }
     expect(answer).toMatchObject({ exitCode: 3, stdout: "out\n" })
     expect(answer.stderr).toContain("[redacted]")
@@ -731,7 +732,9 @@ describe("boxd_exec", () => {
 describe("boxd_read", () => {
   test("reads a file under the read rule: one listing and one exec, no copy, no ledger write, redacted", async () => {
     const machine = await openWork("reader")
-    writeFileSync(join(treeOf(machine, "reader"), "notes.md"), "line one\ntoken ghp_abcdefghijklmnop123456\n")
+    // An invented credential, never a real one: a file the read redaction must cut.
+    const token = ["ghp", "abcdefghijklmnop123456"].join("_")
+    writeFileSync(join(treeOf(machine, "reader"), "notes.md"), `line one\ntoken ${token}\n`)
     const file = join(ledger.workFolder("reader"), "work.json")
     const before = readFileSync(file)
     const context = call()

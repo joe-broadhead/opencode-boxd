@@ -20,7 +20,7 @@ import type { WarningCode } from "../errors.js"
 
 export const LEDGER_FORMAT = 1
 
-/** The paths under `~/.local/share/opencode-boxd/`, relative to it. */
+/** The paths under `~/.local/share/boxd-plugin/`, relative to it. */
 export const LEDGER_PATHS = {
   v1: "v1",
   works: "v1/works",

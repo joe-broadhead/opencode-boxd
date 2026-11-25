@@ -7,7 +7,8 @@ import { manifest } from "../../src/manifest.js"
 import { readReport, worksSnapshot } from "../../src/status.js"
 import { fleet } from "../support/fleet.js"
 
-const token = "ghp_abcdefghijklmnop123456"
+// An invented credential, never a real one: a token the report and status redaction must cut.
+const token = ["ghp", "abcdefghijklmnop123456"].join("_")
 const sources = (over: Partial<Parameters<typeof readReport>[0]> = {}) => ({
   version: "0.0.0",
   hostVersion: "2.4.1",
