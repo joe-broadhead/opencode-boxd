@@ -31,7 +31,7 @@ export default {
 } satisfies Automation
 ```
 
-- The cursor is bound to the plugin, the source and the account; a cursor from another source or account is
+- The cursor is bound to the plugin, the source and the local identity; a cursor from another source or identity is
   `CURSOR_INVALID`. A log rotation answers `gap: { reason: "expired", since }` and starts again at the oldest kept event.
 - `events_list` never calls boxd and never wakes a machine. A change that needs a decision is a `boxd_job` or `/boxd`
   read, not an event's text.

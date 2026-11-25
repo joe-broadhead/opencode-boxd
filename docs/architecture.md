@@ -14,8 +14,9 @@
 | Status | `src/status.ts` | the `/boxd` report and the works list snapshot |
 
 Every method is declared in `package.json` `capabilities.methods` and written once in `src/handlers/`. The contract's
-`register` builds the tool, the Code Mode entry and the RPC method from that one table, resolves the account, checks the
-input and the answer, asserts the permission, and maps a failure to the contract's codes.
+`register` builds the tool, the Code Mode entry and the RPC method from that one table, checks the input and the answer,
+asserts the permission, and maps a failure to the contract's codes. The plugin declares no accounts, so there is no
+account to resolve; the local identity is only via `probe`/status.
 
 ## The provider client
 

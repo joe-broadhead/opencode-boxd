@@ -40,9 +40,10 @@ None.
 
 ## Notes
 
-- **Reads.** `status` answers the contract's plugin status (host range, the one account, agents missing the access rules,
-  one next step). `events_list` reads the local ledger's phase changes, oldest first, with a cursor bound to the plugin,
-  the source and the account; it makes no boxd call and never wakes a machine. `job` reads one work or many live.
+- **Reads.** `status` answers the contract's plugin status (host range, no plugin-held accounts, agents missing the
+  access rules, one next step). `events_list` reads the local ledger's phase changes, oldest first, with a cursor bound
+  to the plugin, the source and the local identity; it makes no boxd call and never wakes a machine. `job` reads one
+  work or many live.
   `read` reads one file or the guest's server log without a harvest. `probe` says whose ledger this is.
 - **The works list.** `status` with `{ list: "works" }` answers the `boxd.works.list` snapshot: at most 50 works, newest
   activity first, as the contract's `list` output.
