@@ -21,8 +21,6 @@ export interface Budget {
 export interface Options {
   /** What the plugin's own tools may do without asking: everything, ask for changes, or reads only. */
   readonly access: Access
-  /** The one local account's profile, or an empty map: a local plugin has one account, `default`. */
-  readonly accounts: Readonly<Record<string, Readonly<Record<string, unknown>>>>
   /** Laptop roots a work may name or write besides the project: paths outside both are refused. */
   readonly allowedRoots: readonly string[]
   /** Run on an OpenCode version outside the supported range, with a warning in status. */
@@ -61,7 +59,6 @@ export interface Options {
 
 export const DEFAULT_OPTIONS: Options = {
   access: "all",
-  accounts: {},
   allowedRoots: [],
   allowUntestedHost: false,
   regions: [...REGIONS],
@@ -92,7 +89,6 @@ const quoted = (values: readonly string[]) => values.map((value) => `"${value}"`
 
 const ACCEPTED = {
   access: '"all" (the default), "ask-changes" or "read-only"',
-  accounts: 'an object with one profile per alias; a local plugin has only "default" (an empty object)',
   allowedRoots: "an array of absolute folders here that work files may use besides the project (empty by default)",
   allowUntestedHost: "true or false (the default)",
   regions: `a non-empty array of unique regions from ${quoted(REGIONS)}, where new works and golden images may be placed (${quoted(REGIONS)} by default)`,
@@ -144,12 +140,6 @@ export function parseOptions(raw: unknown): Options {
   const input = { ...DEFAULT_OPTIONS, ...raw } as Record<keyof Options, unknown>
 
   if (typeof input.allowUntestedHost !== "boolean") throw wrong("allowUntestedHost", input.allowUntestedHost)
-  const { accounts: accountMap } = input
-  if (!isObject(accountMap)) throw wrong("accounts", accountMap)
-  for (const [alias, profile] of Object.entries(accountMap)) {
-    if (alias !== "default") throw invalid(`The option "accounts" names "${alias}", and a local plugin has one account, "default"`)
-    if (!isObject(profile) || Object.keys(profile).length > 0) throw invalid('The option "accounts"."default" must be an empty object: the local profile has no fields')
-  }
   const access = oneOf("access", input.access, ACCESS_VALUES)
   const { allowedRoots } = input
   if (!Array.isArray(allowedRoots) || allowedRoots.some((root) => typeof root !== "string" || !root.startsWith("/"))) throw wrong("allowedRoots", allowedRoots)
@@ -204,7 +194,6 @@ export function parseOptions(raw: unknown): Options {
 
   return {
     access,
-    accounts: accountMap as Readonly<Record<string, Readonly<Record<string, unknown>>>>,
     allowedRoots: allowedRoots as readonly string[],
     allowUntestedHost: input.allowUntestedHost as boolean,
     regions,

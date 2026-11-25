@@ -28,9 +28,9 @@ const works: readonly WorkBrief[] = [
 ]
 
 describe("the recorded conformance fixture", () => {
-  test("is the installed package's, and records the one local account", () => {
+  test("is the installed package's, and declares no plugin-held accounts", () => {
     expect(fixture.plugin).toBe(PACKAGE)
-    expect(fixture.accounts.aliases).toEqual(["default"])
+    expect(fixture).not.toHaveProperty("accounts")
     expect(fixture.namespace).toBe(manifest.plugin.summary)
   })
 
@@ -42,7 +42,7 @@ describe("the recorded conformance fixture", () => {
   })
 
   test("records the status answer the contract's statusAnswer builds", () => {
-    const answer = statusAnswer({ manifest, version: VERSION, hostVersion: "2.4.1", accounts: [{ alias: "default", state: "ready", owner }], problems: [], unguardedAgents: { ok: true, agents: [] } })
+    const answer = statusAnswer({ manifest, version: VERSION, hostVersion: "2.4.1", accounts: [], problems: [], unguardedAgents: { ok: true, agents: [] } })
     expect(answer).toEqual(fixture.events.status)
   })
 

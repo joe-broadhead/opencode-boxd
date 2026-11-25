@@ -2,11 +2,6 @@
   "$comment": "Recorded from the plugin's own handlers: one local account, the works source's page and probe, the works list snapshot, the status answer, and the inputs each non-read method is refused with over RPC.",
   "plugin": "@we-the-rebel-alliance/boxd-plugin",
   "namespace": "Parallel OpenCode sessions on private boxd machines, one work per machine; harvest brings each transcript and git back here. Load the boxd-sessions skill first. Not for a helper on this machine: use the subagent tool.",
-  "accounts": {
-    "aliases": [
-      "default"
-    ]
-  },
   "sources": {
     "boxd.works": {
       "cases": [
@@ -146,16 +141,7 @@
         ]
       },
       "state": "ready",
-      "accounts": [
-        {
-          "alias": "default",
-          "state": "ready",
-          "owner": {
-            "id": "os-user:ana@studio",
-            "label": "ana on studio"
-          }
-        }
-      ],
+      "accounts": [],
       "unguardedAgents": [],
       "nextStep": null
     }

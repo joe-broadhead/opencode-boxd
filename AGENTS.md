@@ -10,7 +10,8 @@ silent, they decide.
 Runs OpenCode sessions on private boxd machines, one work per machine, and brings each transcript, its files and its git
 back here. The provider is the signed-in `boxd` CLI on this machine's `PATH`, driven through a typed port in
 `src/provider/`; the guest runs the package's own `guest/guest.py` helper over `boxd machine exec`. There is no MCP
-server and no integration: the account is the machine's own identity (`accounts.via: "local"`), one account, `default`.
+server and no integration: the plugin holds no account or credential; the boxd CLI's sign-in is external, and probe reports the
+local machine identity.
 
 ## Names
 
@@ -18,7 +19,7 @@ server and no integration: the account is the machine's own identity (`accounts.
 |---|---|
 | Plugin id, tool namespace, RPC id | `boxd` |
 | Capability ids | `boxd.works`, `boxd.works.list` |
-| Accounts | `local`: one account, `default` |
+| Accounts | none held by the plugin; the boxd CLI signs in separately |
 | Permission actions | `boxd.<method>`, on resources `<alias>:<operation>` |
 
 ## Commands
@@ -38,7 +39,7 @@ server and no integration: the account is the machine's own identity (`accounts.
 src/index.ts        one Plugin.define -> assertHost -> register, and the setup order
 src/handlers/       one file per method: schema, description, run
 src/provider/       the runner, the boxd CLI port, the guest helper port, this machine's opencode
-src/accounts.ts     the local identity and the owner a status or probe answers
+src/accounts.ts     the local machine identity and owner a probe answers
 src/manifest.ts     capabilities from package.json, one value with the installed package
 src/options.ts      the option schema's parser
 src/status.ts       the /boxd report and the works list snapshot
@@ -56,7 +57,7 @@ fixtures/conformance.json   what the plugin's own handlers answered
 
 1. **The manifest is the source of truth.** Add or change a method, source or action in `package.json` `capabilities`
    first, then its handler, then its tests. Never register a tool by hand: `contract.register` does it.
-2. **Every method is `accounts: "none"`.** There is one local account; nothing takes an `account` input. Do not invent
+2. **Every method is `accounts: "none"`.** The plugin holds no account; nothing takes an `account` input. Do not invent
    aliases.
 3. **Classify every method truthfully.** `drop` is `delete`, `harvest` is `export`, `exec` is `admin` with `effect:
    "ask"`. If in doubt, choose the stricter class.
@@ -78,8 +79,8 @@ fixtures/conformance.json   what the plugin's own handlers answered
   `options.allowUntestedHost` is true.
 - **Emit through `call.bus`.** `register` builds the typed writer from its one RPC registration and gives every handler
   call `call.bus`. Do not call `ctx.rpc.register` a second time. Only the manifest's declared events are registered.
-- **Answer status with `statusAnswer`.** `statusAnswer` from `accounts` takes the manifest, the installed and host
-  versions, the account states, the problems setup recorded and `await call.unguardedAgents()`, and builds the
+- **Answer status with `statusAnswer`.** `statusAnswer` takes the manifest, the installed and host versions, an empty
+  account list (`NO_ACCOUNTS`), the problems setup recorded and `await call.unguardedAgents()`, and builds the
   `STATUS_SCHEMA` answer. Keep no state between `register` and the handler.
 - **Reuse the output schemas.** `STATUS_SCHEMA` from `accounts` is the `status` answer; `PAGE_SCHEMA` and
   `PROBE_SCHEMA` from `events` are `events_list` and `probe`. Copying those shapes into the plugin is drift.

@@ -20,8 +20,9 @@ Then run `opencode reload`, or restart OpenCode, and run `/boxd`.
 
 ## Sign in
 
-Nothing to sign in to in the plugin. There is one account, `default`: this machine and its OS user. The plugin runs
-your own signed-in `boxd` CLI and never reads your boxd account or credentials. `/boxd` says whether the CLI answered.
+There is no sign-in in the plugin: it holds no account or credential. Sign in with the boxd CLI; the plugin runs your
+own signed-in `boxd` CLI and never reads your boxd account or credentials. `probe` reports the local machine identity,
+and `/boxd` says whether the CLI answered.
 
 ## Access
 
@@ -124,7 +125,7 @@ status.
 
 - [Capabilities](docs/capabilities.md): every method, source, action and bus event, with notes.
 - [Configuration](docs/configuration.md): every option and examples.
-- [Accounts](docs/accounts.md): the local account and its identity.
+- [Accounts](docs/accounts.md): no plugin-held accounts, and the local identity probe reports.
 - [Automations](docs/automations.md): the timer recipe for the works source.
 - [Architecture](docs/architecture.md): layers, the provider client, caches and host APIs.
 - [Security](docs/security.md): what leaves the machine, redaction and the drop guard.

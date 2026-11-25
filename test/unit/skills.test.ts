@@ -46,7 +46,7 @@ describe("the boxd-sessions skill", () => {
 
   test("states the account, the access levels and the error form", () => {
     const text = readSkills()[0]!.content
-    for (const phrase of ["one account, `default`", "`all`", "`ask-changes`", "`read-only`", "CODE: What happened. Next step: What to do."]) expect(text).toContain(phrase)
+    for (const phrase of ["no plugin-held account", "`all`", "`ask-changes`", "`read-only`", "CODE: What happened. Next step: What to do."]) expect(text).toContain(phrase)
   })
 
   test("parses folded and literal block descriptions, and a quoted colon description, as YAML text", () => {

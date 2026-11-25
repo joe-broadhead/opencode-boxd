@@ -2,16 +2,15 @@
  * The plugin's one setup: `Plugin.define` → `assertHost` → `contract.register`.
  *
  * Everything a caller can reach is one method in the manifest, written once in `src/handlers/` and wired through the
- * contract's doors (agent tool, Code Mode, RPC). The account is the machine's own identity (`accounts.via: "local"`), so
- * there is nothing to sign in and one account, `default`. The provider client lives in `src/provider/`.
+ * contract's doors (agent tool, Code Mode, RPC). The plugin holds no account or credential: the boxd CLI's sign-in is
+ * external, and probe/status report the local machine identity. The provider client lives in `src/provider/`.
  */
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { Plugin } from "@opencode/plugin"
-import { accountsOf } from "@we-the-rebel-alliance/plugin-contract/accounts"
 import { rulesFor } from "@we-the-rebel-alliance/plugin-contract/access"
 import { assertHost, register } from "@we-the-rebel-alliance/plugin-contract/register"
-import { machineIdentity, ownerOf } from "./accounts.js"
+import { machineIdentity } from "./accounts.js"
 import { startAutomation } from "./automation.js"
 import { PLUGIN_ID } from "./constants.js"
 import { createCost } from "./cost/index.js"
@@ -78,9 +77,6 @@ export function createBoxdPlugin(seam: BoxdSeam = {}) {
       const { runs, selectors, actions } = createRuns(fleet)
       const cost: CostServices = { ...fleet, actions }
 
-      const identity = machineIdentity()
-      const accounts = accountsOf(manifest, ctx.options ?? {})
-      const profiles = accounts.ok ? accounts.value.accounts : []
       let reads = 0
       const fleetRead = () =>
         fleetStatus(fleet, { view: "attention", limit: 10, include: [], order: "activity" }, { tag: { callId: `status-${++reads}`, source: "status-command" }, guestReads: false })
@@ -88,8 +84,6 @@ export function createBoxdPlugin(seam: BoxdSeam = {}) {
         fleetStatus(fleet, { view: "all", limit: 300, include: [], order: "activity" }, { tag: { callId: `list-${++reads}`, source: "status-command" }, guestReads: false })
       const status: StatusDeps = {
         hostVersion: host.version ?? ctx.app.version,
-        profiles,
-        owner: ownerOf(identity),
         problems: () => [...problems.values()],
         fleet: fleetRead,
         works: worksRead,

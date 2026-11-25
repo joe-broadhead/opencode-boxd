@@ -1,15 +1,11 @@
 /**
- * The local account (contract §5): this machine and the OS user running OpenCode.
+ * The local machine identity: this machine and the OS user running OpenCode.
  *
- * `accounts.via` is `local`, so there is exactly one account, `default`, and its owner is the machine's identity,
- * `os-user:<user>@<host>`. Nothing here signs in, stores a credential or touches the boxd CLI's own sign-in: that
- * belongs to the person and the CLI.
+ * The plugin declares no accounts and holds no credential; the identity, `os-user:<user>@<host>`, is what probe reports.
+ * The boxd CLI's own sign-in belongs to the person and the CLI.
  */
 import type { Owner } from "@we-the-rebel-alliance/plugin-contract/manifest"
-import { localIdentity, type AccountProfile } from "@we-the-rebel-alliance/plugin-contract/accounts"
-
-/** The one account alias a local plugin has. */
-export const LOCAL_ALIAS = "default"
+import { localIdentity } from "@we-the-rebel-alliance/plugin-contract/accounts"
 
 export interface MachineIdentity {
   /** `os-user:<user>@<host>`, the owner id a probe answers and a host keys its cache on. */
@@ -34,6 +30,3 @@ export const machineIdentity = (): MachineIdentity => identityOf(localIdentity()
 
 /** The owner a status and a probe answer, from an identity. */
 export const ownerOf = (identity: MachineIdentity): Owner => ({ id: identity.id, label: identity.label })
-
-/** The one local account of a plan, or `undefined` when the manifest declares none. */
-export const localAccount = (accounts: readonly AccountProfile[]): AccountProfile | undefined => accounts.find((account) => account.alias === LOCAL_ALIAS)

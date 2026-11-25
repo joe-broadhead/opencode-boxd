@@ -62,13 +62,6 @@
         ]
       }
     },
-    "accounts": {
-      "via": "local",
-      "profile": {
-        "$ref": "#/options/properties/accounts/additionalProperties"
-      },
-      "owner": "os-user"
-    },
     "options": {
       "type": "object",
       "properties": {
@@ -81,15 +74,6 @@
           ],
           "default": "all",
           "description": "How much the plugin's methods may do: every method, changes ask first, or reads only."
-        },
-        "accounts": {
-          "type": "object",
-          "description": "One profile per account alias. A local plugin has one account, default, the identity of this machine.",
-          "additionalProperties": {
-            "type": "object",
-            "properties": {},
-            "additionalProperties": false
-          }
         },
         "allowUntestedHost": {
           "type": "boolean",

@@ -40,7 +40,8 @@ order. `tools.boxd.sleep({ select: "finished" })` sleeps every idle work whose l
 
 ## Account and access
 
-There is one account, `default`: this machine's own identity. No sign-in and no `account` input. `access` is `all`,
+There is no plugin-held account: sign in with the boxd CLI, and `probe` reports this machine's local identity. No `account`
+input. `access` is `all`,
 `ask-changes` or `read-only`: reads always run; `all` runs every change, `ask-changes` asks first, and `read-only`
 turns changes off. `tools.boxd.exec` asks even at `all`, because it runs arbitrary argv on the guest.
 

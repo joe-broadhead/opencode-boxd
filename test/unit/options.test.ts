@@ -5,7 +5,6 @@ import { SUPPORTED_HOST, TESTED_HOSTS } from "../../src/constants.js"
 
 const DEFAULTS: Options = {
   access: "all",
-  accounts: {},
   allowedRoots: [],
   allowUntestedHost: false,
   regions: ["fra", "nyc"],

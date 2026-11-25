@@ -6,7 +6,6 @@ Every option is optional. Set them under the plugin entry in `opencode.json`.
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `access` | `all` \| `ask-changes` \| `read-only` | `"all"` | How much the plugin's methods may do: every method, changes ask first, or reads only. |
-| `accounts` | object | — | One profile per account alias. A local plugin has one account, default, the identity of this machine. |
 | `allowUntestedHost` | boolean | `false` | Start outside the tested OpenCode range. |
 | `allowedRoots` | array | `[]` | Absolute folders here, besides the project, that work files may read or write. |
 | `regions` | array | `["fra","nyc"]` | The regions a new work's machine or a golden image may be placed in. |

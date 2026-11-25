@@ -1,18 +1,15 @@
 /** `status`: the contract's status answer, and the `boxd.works.list` snapshot a consumer reads with `{ list: "works" }`. */
-import { accountStatuses, STATUS_SCHEMA, statusAnswer, type AccountStatus } from "@we-the-rebel-alliance/plugin-contract/accounts"
+import { NO_ACCOUNTS, STATUS_SCHEMA, statusAnswer } from "@we-the-rebel-alliance/plugin-contract/accounts"
 import type { JsonSchema } from "@we-the-rebel-alliance/plugin-contract/manifest"
 import type { MethodHandler } from "@we-the-rebel-alliance/plugin-contract/register"
 import { manifest, VERSION } from "../manifest.js"
 import type { StatusResult } from "../results.js"
 import { worksSnapshot } from "../status.js"
 import { STATUS_INPUT } from "./schemas.js"
-import type { AccountProfile } from "@we-the-rebel-alliance/plugin-contract/accounts"
 
-/** What the status handler knows at setup: the installed host, the one local account, and its problems. */
+/** What the status handler knows at setup: the installed host and its problems. */
 export interface StatusDeps {
   readonly hostVersion: string
-  readonly profiles: readonly AccountProfile[]
-  readonly owner: { readonly id: string; readonly label: string }
   readonly problems: () => readonly string[]
   /** One fleet read for the status answer: the listing's sign-in state. */
   readonly fleet: () => Promise<StatusResult>
@@ -51,9 +48,7 @@ const LIST: JsonSchema = {
 const OUTPUT: JsonSchema = { anyOf: [STATUS_SCHEMA, LIST] }
 
 const DESCRIPTION =
-  "The plugin's own state: its host range, its one local account, the agents that lack its access rules, and the one next step. It never reads a guest, so it never wakes a machine. Pass list: \"works\" for the works list (id and phase) a consumer binds as the boxd.works.list snapshot. For the fleet's counts, cost and per-work next calls, a person runs /boxd and an agent uses boxd_job or boxd_events_list."
-
-const statuses = (deps: StatusDeps, state: "ready" | "needs_sign_in"): readonly AccountStatus[] => accountStatuses(deps.profiles, { default: { state, owner: deps.owner } })
+  "The plugin's own state: its host range, its problems, the agents that lack its access rules, and the one next step. It holds no account or credential; sign in with the boxd CLI, and use probe for the local machine identity. It never reads a guest, so it never wakes a machine. Pass list: \"works\" for the works list (id and phase) a consumer binds as the boxd.works.list snapshot. For the fleet's counts, cost and per-work next calls, a person runs /boxd and an agent uses boxd_job or boxd_events_list."
 
 /** The status handler. */
 export function statusHandler(deps: StatusDeps): MethodHandler {
@@ -74,10 +69,9 @@ export function statusHandler(deps: StatusDeps): MethodHandler {
         (error: unknown) => ({ error }) as const,
       )
       const problems = [...deps.problems()]
-      let signedIn = true
       if ("error" in fleet) problems.push(`the boxd CLI could not answer its machine listing: ${fleet.error instanceof Error ? fleet.error.message.split("\n", 1)[0] : String(fleet.error)}`)
-      else signedIn = fleet.value.cli.signedIn
-      return statusAnswer({ manifest, version: VERSION, hostVersion: deps.hostVersion, accounts: statuses(deps, signedIn ? "ready" : "needs_sign_in"), problems, unguardedAgents: await call.unguardedAgents() })
+      else if (!fleet.value.cli.signedIn) problems.push("the boxd CLI is not signed in; run boxd auth login, then read status again.")
+      return statusAnswer({ manifest, version: VERSION, hostVersion: deps.hostVersion, accounts: NO_ACCOUNTS, problems, unguardedAgents: await call.unguardedAgents() })
     },
   }
 }

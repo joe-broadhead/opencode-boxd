@@ -12,7 +12,7 @@ afterAll(cleanup)
 const PACKAGE_VERSION: string = JSON.parse(readFileSync(join(import.meta.dir, "..", "..", "package.json"), "utf8")).version
 const MANIFEST: {
   exports: Record<string, string>
-  capabilities: { plugin: { name: string }; accounts: { via: string }; methods: Record<string, { class: string; effect?: string }>; options: { properties: Record<string, unknown> }; sources: { id: string; kind: string }[] }
+  capabilities: { plugin: { name: string }; methods: Record<string, { class: string; effect?: string }>; options: { properties: Record<string, unknown> }; sources: { id: string; kind: string }[] }
 } = JSON.parse(readFileSync(join(import.meta.dir, "..", "..", "package.json"), "utf8"))
 const METHODS = Object.keys(MANIFEST.capabilities.methods)
 /** The twelve tools v0.1.4 gave a user; every one must still be reachable as a boxd tool. */
@@ -37,7 +37,7 @@ describe("the plugin on OpenCode 2.4.1", () => {
       expect(status["name"]).toBe("boxd")
       expect(status["version"]).toBe(PACKAGE_VERSION)
       expect(status["host"]).toEqual({ version: HOST_VERSION, range: ">=2.4.1 <2.5.0", tested: ["2.4.1"] })
-      expect(status["accounts"]).toEqual([{ alias: "default", state: "ready", owner: expect.objectContaining({ id: expect.stringMatching(/^os-user:/) }) }])
+      expect(status["accounts"]).toEqual([])
       const probe = await attempt(host, sessionID, "build", "boxd_probe", "reject", {})
       expect(probe.ok).toBe(true)
       expect(probe.output).toMatchObject({ source: "works", account: "default", trust: "untrusted" })
@@ -61,7 +61,8 @@ describe("the plugin on OpenCode 2.4.1", () => {
       expect(tools).toEqual(expect.arrayContaining(OLD_TOOLS.map((tool) => `boxd_${tool}`)))
       expect(tools).toHaveLength(METHODS.length)
       expect(OLD_TOOLS).toHaveLength(12)
-      expect(MANIFEST.capabilities.accounts.via).toBe("local")
+      expect(MANIFEST.capabilities).not.toHaveProperty("accounts")
+      expect(MANIFEST.capabilities.options.properties).not.toHaveProperty("accounts")
       expect(JSON.stringify(MANIFEST.capabilities)).not.toContain('"mcp"')
       expect(MANIFEST.capabilities.sources.map((source) => source.id).sort()).toEqual(["boxd.works", "boxd.works.list"])
 

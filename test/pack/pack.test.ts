@@ -162,7 +162,7 @@ describe.each(TESTED_HOSTS)("installed alone, in stock OpenCode %s", (version) =
       expect(output).toMatchObject({ name: "boxd", version: pkg.version, host: { version, range: SUPPORTED_HOST, tested: [version] } })
       expect(["ready", "needs_sign_in", "error"]).toContain(String(output["state"]))
       expect(output["nextStep"] === null || typeof output["nextStep"] === "string").toBe(true)
-      expect(output["accounts"]).toEqual([{ alias: "default", state: expect.stringMatching(/^(ready|needs_sign_in|error)$/), owner: expect.objectContaining({ id: expect.stringMatching(/^os-user:/) }) }])
+      expect(output["accounts"]).toEqual([])
 
       // Every method has its generated rule on the build agent, after its base allow.
       const build = await host.until("the build agent has the generated rules", async () => {

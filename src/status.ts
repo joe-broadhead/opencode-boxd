@@ -1,7 +1,7 @@
 /**
  * The `/boxd` report a person reads: the fleet overview, cost, machine headroom and the permission posture.
  *
- * The contract's `status` method answers the fixed contract shape (`statusAnswer` in the accounts module); the fleet
+ * The contract's `status` method answers the fixed contract shape from `statusAnswer`; the fleet
  * numbers and the cost are the plugin's own status, so they live here rather than as extra keys on that answer. One
  * fleet read fills the report, and nothing here reads a guest, so opening the report never wakes a machine.
  */

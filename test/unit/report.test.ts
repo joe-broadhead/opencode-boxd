@@ -15,7 +15,6 @@ const sources = (over: Partial<Parameters<typeof readReport>[0]> = {}) => ({
   access: "all" as const,
   options: {
     access: "all" as const,
-    accounts: {},
     allowedRoots: [],
     allowUntestedHost: false,
     regions: ["fra", "nyc"] as const,
@@ -66,11 +65,11 @@ describe("the works list snapshot", () => {
 })
 
 describe("the contract status answer", () => {
-  test("redacts a problem and reports the host range and the one account", () => {
-    const answer = statusAnswer({ manifest, version: "0.0.0", hostVersion: "2.4.1", accounts: [{ alias: "default", state: "ready" }], problems: [`the CLI said ${token}`], unguardedAgents: { ok: true, agents: [] } })
+  test("redacts a problem and reports the host range with no account profiles", () => {
+    const answer = statusAnswer({ manifest, version: "0.0.0", hostVersion: "2.4.1", accounts: [], problems: [`the CLI said ${token}`], unguardedAgents: { ok: true, agents: [] } })
     expect(answer.state).toBe("error")
     expect(answer.nextStep).not.toContain(token)
     expect(answer.host).toEqual({ version: "2.4.1", range: ">=2.4.1 <2.5.0", tested: ["2.4.1"] })
-    expect(answer.accounts).toEqual([{ alias: "default", state: "ready" }])
+    expect(answer.accounts).toEqual([])
   })
 })
