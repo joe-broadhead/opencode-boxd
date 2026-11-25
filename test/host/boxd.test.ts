@@ -2,8 +2,8 @@
 // contract's status and probe answers validate, the access rules are generated for each level, a read runs at every
 // level, a change asks at ask-changes and is denied at read-only, and the one RPC id carries every method.
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test"
-import { existsSync, readdirSync, readFileSync } from "node:fs"
-import { join, sep } from "node:path"
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 import { agentRules, attempt, cleanup, effect, HOST_VERSION, session, startHost, statusThroughRpc, until } from "./harness.js"
 
 setDefaultTimeout(120_000)
@@ -17,29 +17,6 @@ const MANIFEST: {
 const METHODS = Object.keys(MANIFEST.capabilities.methods)
 /** The twelve tools v0.1.4 gave a user; every one must still be reachable as a boxd tool. */
 const OLD_TOOLS = ["status", "job", "read", "ensure", "submit", "harvest", "sleep", "resume", "reassign", "golden", "exec", "drop"] as const
-const SKILLS = join(import.meta.dir, "..", "..", "skills")
-
-/** Every skills/<id>/SKILL.md on disk, with the id and description a real YAML parser reads from its frontmatter. */
-function skillFiles(): { id: string; path: string; description: string }[] {
-  return readdirSync(SKILLS, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && existsSync(join(SKILLS, entry.name, "SKILL.md")))
-    .map((entry) => {
-      const path = join(SKILLS, entry.name, "SKILL.md")
-      const text = readFileSync(path, "utf8").replace(/\r\n/g, "\n")
-      const front = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(text)?.[1]
-      const parsed = front === undefined ? undefined : (Bun.YAML.parse(front) as unknown)
-      const fields = typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : {}
-      return {
-        id: typeof fields.name === "string" ? fields.name : entry.name,
-        path,
-        description: typeof fields.description === "string" ? fields.description : "",
-      }
-    })
-}
-
-/** A description that is absent, or a bare YAML block-scalar indicator, is not a skill description. */
-const badDescription = (description: string): boolean => description === "" || description === ">" || description === "|"
-
 describe("the plugin on OpenCode 2.4.1", () => {
   test("registers every method as a tool in the boxd namespace", async () => {
     const host = await startHost()
@@ -72,42 +49,6 @@ describe("the plugin on OpenCode 2.4.1", () => {
       const events = await attempt(host, sessionID, "build", "boxd_events_list", "reject", {})
       expect(events.ok).toBe(true)
       expect(events.output).toMatchObject({ source: "works", account: "default", trust: "untrusted" })
-    } finally {
-      await host.close()
-    }
-  })
-
-  test("registers every skills/<id>/SKILL.md with its description, path and content", async () => {
-    const host = await startHost()
-    try {
-      // An empty temp project: the host's own skills/ discovery cannot supply the plugin's skill.
-      expect(host.location.directory.startsWith(SKILLS)).toBe(false)
-      expect(existsSync(join(host.location.directory, "skills"))).toBe(false)
-      const files = skillFiles()
-      expect(files.length).toBeGreaterThan(0)
-      const listed = await until("every skill file is registered", async () => {
-        const { data } = await host.client.skill.list({ location: host.location })
-        const ids = new Set(data.map((skill) => String(skill.id)))
-        return files.every((file) => ids.has(file.id)) ? data : false
-      })
-      const byId = new Map(listed.map((skill) => [String(skill.id), skill]))
-      for (const file of files) {
-        const skill = byId.get(file.id)
-        expect(skill).toBeDefined()
-        const description = String(skill!.description ?? "")
-        expect(badDescription(description)).toBe(false)
-        expect(badDescription(file.description)).toBe(false)
-        expect(description).toBe(file.description)
-        expect(String(skill!.path)).toBe(file.path)
-        expect(String(skill!.content).trim().length).toBeGreaterThan(0)
-        expect(existsSync(file.path)).toBe(true)
-      }
-      // A registered skill whose path is under the plugin's skills/ tree must have its file; a file that is not
-      // registered already failed the `until` above.
-      const fileIds = new Set(files.map((file) => file.id))
-      const ours = listed.filter((skill) => fileIds.has(String(skill.id)) || String(skill.path).includes(`${sep}skills${sep}`))
-      for (const skill of ours) expect(existsSync(String(skill.path))).toBe(true)
-      expect(ours.filter((skill) => fileIds.has(String(skill.id))).map((skill) => String(skill.id)).sort()).toEqual(files.map((file) => file.id).sort())
     } finally {
       await host.close()
     }

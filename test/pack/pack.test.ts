@@ -6,6 +6,7 @@ import { afterAll, describe, expect, test } from "bun:test"
 import { spawn, spawnSync } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { isBuiltin } from "node:module"
 import { createServer } from "node:net"
 import { arch, platform } from "node:os"
 import { basename, join, relative, resolve, sep } from "node:path"
@@ -325,7 +326,7 @@ const relativeImports = (source: string) => [
   ...[...source.matchAll(/(?<![\w$.])(?:import|require)\s*\(/g)].map((match) => match[0]),
 ]
 
-const foreign = (file: string, allowed: RegExp[]) => [...new Set(specifiers(readFileSync(file, "utf8")).filter((specifier) => !allowed.some((pattern) => pattern.test(specifier))))].sort()
+const foreign = (file: string, allowed: RegExp[]) => [...new Set(specifiers(readFileSync(file, "utf8")).filter((specifier) => !isBuiltin(specifier) && !allowed.some((pattern) => pattern.test(specifier))))].sort()
 
 function run(command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv = { ...process.env, npm_config_update_notifier: "false" }): string {
   const result = spawnSync(command, args, { cwd, encoding: "utf8", env })

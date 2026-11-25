@@ -26,7 +26,7 @@ import { manifest, VERSION } from "./manifest.js"
 import { parseOptions } from "./options.js"
 import { createProvider, type ProviderOptions } from "./provider/index.js"
 import { stopAll, type CoreServices, type CostServices, type Dispose, type FleetServices, type HostServices } from "./services.js"
-import { loadSkills, registerSkills } from "./skills.js"
+import { readSkills, registerSkills } from "./skills.js"
 import { readReport, registerStatusCommand } from "./status.js"
 import { createWatch } from "./watch.js"
 
@@ -49,9 +49,15 @@ export function createBoxdPlugin(seam: BoxdSeam = {}) {
       const options = parseOptions(ctx.options)
       assertHost(ctx, manifest)
       const host = checkHost(ctx.app.version, options.allowUntestedHost)
-      const { skills, problems: skillProblems } = await loadSkills(seam.skillsDir)
+      let skills: ReturnType<typeof readSkills> = []
+      let skillProblem: string | undefined
+      try {
+        skills = readSkills(seam.skillsDir)
+      } catch (error) {
+        skillProblem = error instanceof Error ? error.message : String(error)
+      }
       // Transforms replay on every rebuild, so each one overwrites its own entry rather than appending.
-      const problems = new Map<string, string>(skillProblems.map((problem, index) => [`skill:${index}`, problem]))
+      const problems = new Map<string, string>(skillProblem === undefined ? [] : [["skill", skillProblem]])
       const report = (area: string, problem: string | undefined) => void (problem ? problems.set(area, problem) : problems.delete(area))
 
       // The services, in order: each stage sees only what the stages before it built (src/services.ts).
@@ -92,7 +98,7 @@ export function createBoxdPlugin(seam: BoxdSeam = {}) {
       const stops: Dispose[] = [
         () => provider.dispose(),
         () => core.ledger.dispose(),
-        await registerSkills(ctx.skill, skills).then((registration) => registration.dispose),
+        await registerSkills(ctx, skills).then((registration) => registration.dispose),
         watcher.dispose,
       ]
       const registration = await register(ctx, manifest, createHandlers({ runs, selectors, source, status }))

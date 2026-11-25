@@ -13,7 +13,9 @@ The first release: an OpenCode plugin for boxd, on OpenCode 2.4.1 and plugin-con
   `all`.
 - Every write emits `changed`.
 - The ledger records every work; `/boxd` reports the cost, the fleet and one next step, and the `boxd-sessions` skill
-  guides an agent through ensure, submit, harvest, sleep and drop.
+  guides an agent through ensure, submit, harvest, sleep and drop. Its loader parses YAML frontmatter with `yaml@2.9.1`,
+  so folded and literal descriptions register their text.
+
 - The docs are generated from the manifest with `plugin-kit docs`.
 - Tests: unit, the contract's conformance with the one local account, the host proof on 2.4.1 (tools, skill, command and
   every v0.1.4 capability), and pack.

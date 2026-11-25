@@ -491,7 +491,8 @@
     "@types/node": "24.19.2",
     "@we-the-rebel-alliance/plugin-contract": "github:we-the-rebel-alliance/plugin-contract#v0.0.0",
     "esbuild": "0.28.2",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "yaml": "2.9.1"
   },
   "engines": {
     "node": ">=24"

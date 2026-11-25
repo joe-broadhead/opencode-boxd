@@ -5,12 +5,13 @@
 // names each function.
 import { build } from "esbuild"
 import { readdirSync, rmSync } from "node:fs"
+import { isBuiltin } from "node:module"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const root = fileURLToPath(new URL("..", import.meta.url))
 const HOST = ["@opencode/plugin", "@opencode/plugin/*", "@opentui/*", "solid-js", "solid-js/*"]
-const provided = (path) => path.startsWith("node:") || HOST.some((name) => (name.endsWith("/*") ? path.startsWith(name.slice(0, -1)) : path === name))
+const provided = (path) => path.startsWith("node:") || isBuiltin(path) || HOST.some((name) => (name.endsWith("/*") ? path.startsWith(name.slice(0, -1)) : path === name))
 
 rmSync(join(root, "dist"), { recursive: true, force: true })
 const result = await build({
@@ -28,6 +29,8 @@ const result = await build({
   logLevel: "warning",
   minifyWhitespace: true,
   minifySyntax: true,
+  // The YAML parser is CommonJS and reads `process` with require(); the bundle is ESM, so give it a real require.
+  banner: { js: `import { createRequire } from "node:module";\nconst require = createRequire(import.meta.url);` },
 })
 
 const problems = Object.entries(result.metafile.outputs).flatMap(([file, output]) =>
