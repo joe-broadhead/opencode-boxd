@@ -466,6 +466,7 @@
     "pack": "bun test ./test/pack",
     "docs": "plugin-kit docs",
     "conformance": "plugin-kit conformance",
+    "record:check": "plugin-kit record --check",
     "check": "node scripts/check.mjs",
     "test": "npm run unit"
   },
