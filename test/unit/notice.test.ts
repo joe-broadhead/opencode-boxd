@@ -53,21 +53,17 @@ async function bundledPackages(): Promise<Bundled[]> {
     metafile: true,
     logLevel: "silent",
   })
-  const found = new Set<string>()
+  // plugin-contract is inlined by every plugin, whatever the metafile lists: the bundle imports its runtime modules.
+  const found = new Set<string>(["@we-the-rebel-alliance/plugin-contract"])
   const inputs = Object.keys(result.metafile.inputs)
   for (const path of inputs) {
     const name = packageOf(path)
     if (keep(name)) found.add(name)
   }
-  // A bundled dist can inline its own dependencies; plugin-contract's chunks carry the original module path in a
-  // comment (`// node_modules/zod/v4/...`). Those packages are redistributed by this bundle too.
-  for (const path of inputs) {
-    if (!path.startsWith("node_modules/")) continue
-    const text = readFileSync(join(root, path), "utf8")
-    for (const match of text.matchAll(/\/\/\s*node_modules\/((?:@[^/\s]+\/)?[^/\s]+)\//g)) {
-      if (keep(match[1])) found.add(match[1])
-    }
-  }
+  // plugin-contract's dist carries zod pre-bundled, so zod has no node_modules input of its own. Detect its code in
+  // the bundle (`$ZodType`/`ZodError` definitions), never a metafile name, and require its notice when present.
+  const output = result.outputFiles?.map((file) => file.text).join("\n") ?? ""
+  if (/\$ZodType|ZodError/.test(output)) found.add("zod")
   return [...found].sort().map(metaOf)
 }
 
