@@ -723,6 +723,8 @@ export interface LedgerPort {
    * Every work's machine carries it as the `ledger` label.
    */
   id(context: OpContext): Promise<string>
+  /** This ledger's id when it already has one, without making one: undefined on a ledger that never registered a work. */
+  currentId(context: OpContext): Promise<string | undefined>
   /** One record, or undefined for an id the ledger has never seen (open or closed). */
   get(workId: string, context: OpContext): Promise<WorkRecord | undefined>
   /**

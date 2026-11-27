@@ -17,7 +17,7 @@ export function fleet(overrides: Partial<StatusResult> = {}): StatusResult {
     attention: [],
     more: 0,
     cursorExpired: false,
-    orphans: [],
+    machines: { counts: { work: 0, "other-ledger": 0, kept: 0, golden: 0, orphan: 0 }, orphans: [], more: 0 },
     fleet: {},
     cost: {
       currency: "EUR",

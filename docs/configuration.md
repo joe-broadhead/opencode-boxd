@@ -11,6 +11,7 @@ Every option is optional. Set them under the plugin entry in `opencode.json`.
 | `regions` | array | `["fra","nyc"]` | The regions a new work's machine or a golden image may be placed in. |
 | `region` | `auto` \| `fra` \| `nyc` | `"auto"` | Where a new work goes within regions; auto picks the region with the most free machines. |
 | `keepFree` | object | `{"fra":0,"nyc":0}` | Machines auto leaves free in each region for the organisation's CI pool. |
+| `keep` | array | `[]` | Label selectors ("key=value", or a bare key) for machines owned elsewhere: a match is kept, never an orphan. |
 | `size` | `1x4` \| `2x8` \| `4x16` \| `8x32` | `"2x8"` | A new work's machine size, vCPU x GiB. |
 | `git` | object | — | The guest's git identity for every new work. Never a token. |
 | `goldenPrefix` | string | `"oc-golden"` | Golden image names are <goldenPrefix>-<opencode version>-<size>. |
@@ -25,6 +26,26 @@ Every option is optional. Set them under the plugin entry in `opencode.json`.
 | `leaseDays` | integer | `0` | A delete-after lease renewed on activity, in days; 0 is off. |
 | `budget` | object | — | Machine cost per day, warned about or refused at, in the organisation's billing currency. |
 <!-- /generated:configuration -->
+
+## Machine classes
+
+The status read classifies every machine in the organisation, not only the machines the plugin made. A machine is one
+of:
+
+- a work in this ledger;
+- a work in another ledger, when its `ledger=` label names another ledger;
+- kept, when it matches a selector in `keep`;
+- a golden builder;
+- an orphan.
+
+`/boxd` lists each orphan with its region, status and why: no `ledger` label, this ledger's label with no record, or
+the plugin's legacy labels only. Only a session machine is actionable. Any other orphan is left alone, with the next
+step "label it, or add a selector to keep". Counts by class sit beside the list, and the list is capped with `more`.
+
+`keep` is how you declare the machines you own elsewhere, such as a lead's or a runner's. Each entry is a boxd label
+selector: `key=value` matches that value, and a bare key matches the label's presence. For example,
+`"keep": ["role=lead", "runner"]` keeps a machine whose `role` is `lead`, and any machine that carries a `runner`
+label.
 
 ## Examples
 

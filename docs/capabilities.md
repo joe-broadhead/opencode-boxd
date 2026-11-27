@@ -56,3 +56,21 @@ None.
   path was harvested, and every commit on a local branch, tag, stash or detached HEAD is on a remote ref.
 - **No plans or actions.** Every method is one call. The contract permits a method without `plans`/`commits`, and boxd's
   destructive guard is part of the call it protects.
+
+## Machine classes
+
+The status read behind `/boxd` classifies every machine in the organisation by its labels and the records in this
+ledger:
+
+| Class | What it means |
+|---|---|
+| a work in this ledger | an open record names the machine, by its id or its `oc-<work id>` name |
+| a work in another ledger | its `ledger=` label names a ledger other than this one |
+| kept | it matches a selector in the `keep` option |
+| a golden builder | its `role` is `golden-builder`, or its name starts with `oc-gb-` |
+| an orphan | none of the above |
+
+Each orphan carries its region, status, why and whether the plugin may act on it. The why is one of "no ledger label",
+"this ledger's label with no record" or "legacy labels only". Only a session machine is actionable; any other orphan
+has the next step "label it, or add a selector to keep". Counts by class sit beside the list, which is capped with
+`more`.

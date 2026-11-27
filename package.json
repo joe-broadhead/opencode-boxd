@@ -132,6 +132,14 @@
           },
           "description": "Machines auto leaves free in each region for the organisation's CI pool."
         },
+        "keep": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Label selectors (\"key=value\", or a bare key) for machines owned elsewhere: a match is kept, never an orphan."
+        },
         "size": {
           "type": "string",
           "enum": [

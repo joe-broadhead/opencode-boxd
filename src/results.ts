@@ -6,7 +6,7 @@
 import type { Code, ErrorState, WarningCode } from "./errors.js"
 import type { Phase, SavedState } from "./ledger/types.js"
 import type { RegionChoice } from "./options.js"
-import type { MachineId, MachineName, Region, RunOutcome, SecretInfo, Size } from "./ports.js"
+import type { MachineId, MachineName, MachineStatus, Region, RunOutcome, SecretInfo, Size } from "./ports.js"
 
 /** The facts a refusal can carry beside its code (§3, §5). Plain JSON values only. */
 export interface ErrorFacts {
@@ -167,6 +167,29 @@ export interface BudgetState {
   readonly state: "ok" | "reached" | "unknown"
 }
 
+/** How status accounts for one machine in the organisation. */
+export type MachineClass = "work" | "other-ledger" | "kept" | "golden" | "orphan"
+
+/** Why a machine is an orphan: no `ledger` label, this ledger's label with no record, or the plugin's legacy labels only. */
+export type OrphanReason = "no-ledger" | "no-record" | "legacy-labels"
+
+/** One orphan as status lists it, with whether any rule may act on it and its one next step. */
+export interface OrphanMachine {
+  readonly machine: string
+  readonly region: Region
+  readonly status: MachineStatus
+  readonly why: OrphanReason
+  readonly actionable: boolean
+  readonly next: string
+}
+
+/** Every machine's class counted, with the orphans listed and capped. */
+export interface MachineSummary {
+  readonly counts: Readonly<Record<MachineClass, number>>
+  readonly orphans: readonly OrphanMachine[]
+  readonly more: number
+}
+
 export interface StatusResult {
   readonly state: "ok"
   readonly cursor: number
@@ -183,7 +206,8 @@ export interface StatusResult {
   readonly works?: readonly WorkBrief[]
   readonly more: number
   readonly cursorExpired: boolean
-  readonly orphans: ReadonlyArray<{ readonly machine: string; readonly region: Region; readonly next: string }>
+  /** Every machine in the organisation, classified, with the orphans listed and capped. */
+  readonly machines: MachineSummary
   readonly fleet: { readonly authFailures?: { readonly count: number; readonly since: string; readonly note: string } }
   readonly credentials?: { readonly secrets: readonly SecretInfo[]; readonly setAt: null; readonly missing: string }
   /** Always: the estimate per hour and today; per work with `include: ["cost"]`. */
