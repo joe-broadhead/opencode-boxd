@@ -798,8 +798,82 @@ def git_identity(value):
         subprocess.run(["git", "config", "--global", key, text], check=True, capture_output=True)
 
 
+# A work acts only with an identity it was given: a boxd secret bound to one host reaches the guest as a placeholder.
+PLACEHOLDER = "bxds_"
+IDENTITY_ENV = (
+    ("GitHub", ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN")),
+    (
+        "model",
+        ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENCODE_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"),
+    ),
+    ("cloud", ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AZURE_CLIENT_SECRET", "DIGITALOCEAN_ACCESS_TOKEN", "CLOUDFLARE_API_TOKEN")),
+)
+# Each file, with the pattern that picks out the value of the login it holds (a user name stands in for a token given
+# without a password); a placeholder there is the identity given. A file with content the pattern cannot read is refused.
+IDENTITY_FILES = (
+    ("GitHub", HOME + "/.git-credentials", r"://(?:[^:/@\s]*:)?([^:/@\s]+)@"),
+    ("GitHub", HOME + "/.config/gh/hosts.yml", r"oauth_token[\"']?\s*[:=]\s*[\"']?([^\s\"',]+)"),
+    ("cloud", HOME + "/.aws/credentials", r"(?i)aws_secret_access_key\s*[:=]\s*(\S+)"),
+    ("cloud", HOME + "/.config/gcloud/application_default_credentials.json", r"refresh_token[\"']?\s*[:=]\s*[\"']?([^\s\"',]+)"),
+)
+CREDENTIAL_SECONDS = 10
+
+
+def file_holds(path, pattern):
+    """Whether the file may hold a real login: it has content, and it is not shown to hold only bound placeholders."""
+    try:
+        with open(local(path), "r", errors="replace") as handle:
+            text = handle.read(65536)
+    except OSError:
+        return False
+    if not text.strip():
+        return False
+    values = re.findall(pattern, text)
+    return not values or any(not value.startswith(PLACEHOLDER) for value in values)
+
+
+def git_github_login():
+    """Whether git would be handed a GitHub login for github.com, as the boxd git integration does: "yes", "unknown" or "no". The value is never read out."""
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never", "GIT_ASKPASS": "", "SSH_ASKPASS": ""}
+    try:
+        done = subprocess.run(["git", "credential", "fill"], input="protocol=https\nhost=github.com\n\n", env=env, capture_output=True, text=True, timeout=CREDENTIAL_SECONDS)
+    except FileNotFoundError:
+        return "no"
+    except subprocess.TimeoutExpired:
+        return "unknown"
+    values = [line[len("password="):] for line in done.stdout.splitlines() if line.startswith("password=")]
+    given = done.returncode == 0 and any(value and not value.startswith(PLACEHOLDER) for value in values)
+    return "yes" if given else "no"
+
+
+def operator_findings():
+    """What would make this machine act as its operator, as short names with no secret value in them."""
+    found = []
+    for kind, names in IDENTITY_ENV:
+        for name in names:
+            value = os.environ.get(name, "")
+            if value and not value.startswith(PLACEHOLDER):
+                found.append(f"{name} is a real {kind} credential")
+    for kind, path, pattern in IDENTITY_FILES:
+        if file_holds(path, pattern):
+            found.append(f"{path.replace(HOME, '~')} holds a {kind} login")
+    login = git_github_login()
+    if login == "yes":
+        found.append("git is given a GitHub login for github.com")
+    elif login == "unknown":
+        found.append(f"git did not say within {CREDENTIAL_SECONDS} s whether it is given a GitHub login")
+    return found
+
+
+def refuse_operator():
+    found = operator_findings()
+    if found:
+        fail("ACTS_AS_OPERATOR", "; ".join(found))
+
+
 def action_setup(request):
     directory = work_directory(request.get("directory"))
+    refuse_operator()
     ensure_password()
     names = env_names(request.get("env"))
     version = opencode_version()
@@ -850,6 +924,7 @@ def wait_idle(request, sid, seconds=5):
 
 def action_prompt(request):
     directory = work_directory(request.get("directory"))
+    refuse_operator()
     text = request.get("text")
     if not isinstance(text, str) or not text:
         fail("NAME_INVALID", "empty prompt")

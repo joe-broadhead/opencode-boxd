@@ -350,6 +350,119 @@ describe("boxd_ensure: an existing work converges", () => {
   })
 })
 
+describe("boxd_ensure: a work acts only with the identity it was given", () => {
+  const GIVEN = "bxds_0123456789abcdef"
+  const REAL = "operators-own-value"
+  const LOGIN = ["oauth", "token"].join("_")
+  const AWS = ["AWS", "SECRET", "ACCESS", "KEY"].join("_")
+  const FIELD = ["pass", "word"].join("")
+  const integration = (k: Kit, machine: { id: string }) => {
+    // What boxd's git integration does on a private machine: git is handed a GitHub login for github.com.
+    const helper = `"!f() { echo username=operator; echo ${FIELD}=${REAL}; }; f"`
+    writeFileSync(join(k.counter.fake.disk(machine as never), "home/boxd/.gitconfig"), `[credential "https://github.com"]\n\thelper = ${helper}\n`)
+  }
+  const refused = async (k: Kit, workId: string) => {
+    k.reset()
+    const error = await errorOf(k.runs.boxd_ensure({ workId }, k.call()))
+    expect(error.code).toBe("ACTS_AS_OPERATOR")
+    return error as { what: string }
+  }
+
+  test("a work whose GitHub identity would be the operator's, through the git integration, is refused with the reason", async () => {
+    const k = await kit()
+    const machine = await known(k, "as-owner")
+    integration(k, machine)
+    const error = await refused(k, "as-owner")
+    expect(error.what).toContain("git is given a GitHub login for github.com")
+    expect(error.what).not.toContain(REAL)
+    expect((await k.record("as-owner"))?.session).toBeUndefined()
+  })
+
+  test("a raw GitHub token is refused by name, and the value is never said", async () => {
+    const k = await kit()
+    await known(k, "raw-token")
+    k.counter.fake.update((state) => { state.guestEnv = { GH_TOKEN: REAL } })
+    const error = await refused(k, "raw-token")
+    expect(error.what).toContain("GH_TOKEN is a real GitHub credential")
+    expect(error.what).not.toContain(REAL)
+  })
+
+  test("a real model key, a cloud key and the operator's gh login are each refused", async () => {
+    const k = await kit()
+    const machine = await known(k, "many")
+    k.counter.fake.update((state) => { state.guestEnv = { ANTHROPIC_API_KEY: REAL, AWS_SECRET_ACCESS_KEY: REAL } })
+    mkdirSync(join(k.counter.fake.disk(machine), "home/boxd/.config/gh"), { recursive: true })
+    writeFileSync(join(k.counter.fake.disk(machine), "home/boxd/.config/gh/hosts.yml"), `github.com:\n  ${LOGIN}: ${REAL}\n`)
+    const error = await refused(k, "many")
+    expect(error.what).toContain("ANTHROPIC_API_KEY is a real model credential")
+    expect(error.what).toContain("AWS_SECRET_ACCESS_KEY is a real cloud credential")
+    expect(error.what).toContain("holds a GitHub login")
+  })
+
+  test("a work given placeholders bound to one host passes", async () => {
+    const k = await kit()
+    await known(k, "given")
+    k.counter.fake.update((state) => { state.guestEnv = { GH_TOKEN: GIVEN, ANTHROPIC_API_KEY: GIVEN, AWS_SECRET_ACCESS_KEY: GIVEN } })
+    const result = (await k.runs.boxd_ensure({ workId: "given" }, k.call())) as EnsureResult
+    expect(result).toMatchObject({ state: "ready", workId: "given" })
+  })
+
+  test("a work given the App's placeholder through git, gh's login or a stored credential passes", async () => {
+    const k = await kit()
+    const machine = await known(k, "app")
+    const home = join(k.counter.fake.disk(machine), "home/boxd")
+    // gh's credential helper with a placeholder GH_TOKEN hands git the placeholder as its password.
+    const helper = `"!f() { echo username=app; echo ${FIELD}=${GIVEN}; }; f"`
+    writeFileSync(join(home, ".gitconfig"), `[credential "https://github.com"]\n\thelper = ${helper}\n`)
+    mkdirSync(join(home, ".config/gh"), { recursive: true })
+    writeFileSync(join(home, ".config/gh/hosts.yml"), `github.com:\n  ${LOGIN}: ${GIVEN}\n`)
+    writeFileSync(join(home, ".git-credentials"), `https://app:${GIVEN}@github.com\nhttps://${GIVEN}@github.com\n`)
+    mkdirSync(join(home, ".aws"), { recursive: true })
+    writeFileSync(join(home, ".aws/credentials"), `[default]\n${AWS}=${GIVEN}\n`)
+    const result = (await k.runs.boxd_ensure({ workId: "app" }, k.call())) as EnsureResult
+    expect(result).toMatchObject({ state: "ready", workId: "app" })
+  })
+
+  test("a real value in a stored credential is still refused beside a placeholder", async () => {
+    const k = await kit()
+    const machine = await known(k, "mixed")
+    const home = join(k.counter.fake.disk(machine), "home/boxd")
+    writeFileSync(join(home, ".git-credentials"), `https://app:${GIVEN}@github.com\nhttps://operator:${REAL}@github.com\n`)
+    const error = await refused(k, "mixed")
+    expect(error.what).toContain(".git-credentials holds a GitHub login")
+    expect(error.what).not.toContain(REAL)
+  })
+
+  test("a stored login in a form that is not a placeholder is refused, whatever its shape", async () => {
+    const k = await kit()
+    const machine = await known(k, "shapes")
+    const home = join(k.counter.fake.disk(machine), "home/boxd")
+    // A token as the user name, with nothing after it: GitHub accepts it.
+    writeFileSync(join(home, ".git-credentials"), `https://${REAL}@github.com\n`)
+    // The AWS tools read option names without regard to case.
+    mkdirSync(join(home, ".aws"), { recursive: true })
+    writeFileSync(join(home, ".aws/credentials"), `[default]\n${AWS}=${REAL}\n`)
+    // A file the check cannot read as a placeholder is refused rather than passed.
+    mkdirSync(join(home, ".config/gh"), { recursive: true })
+    writeFileSync(join(home, ".config/gh/hosts.yml"), "github.com:\n  user: operator\n")
+    const error = await refused(k, "shapes")
+    expect(error.what).toContain(".git-credentials holds a GitHub login")
+    expect(error.what).toContain(".aws/credentials holds a cloud login")
+    expect(error.what).toContain("hosts.yml holds a GitHub login")
+    expect(error.what).not.toContain(REAL)
+  })
+
+  test("a new work is made, then refused at setup before it is cloned or its server started", async () => {
+    const k = await kit()
+    await k.golden("fra")
+    k.counter.fake.update((state) => { state.guestEnv = { GITHUB_TOKEN: REAL } })
+    const error = await errorOf(k.runs.boxd_ensure({ workId: "fresh", repo: "https://github.com/we-the-rebel-alliance/example" }, k.call()))
+    expect(error.code).toBe("ACTS_AS_OPERATOR")
+    const machine = k.counter.fake.read().machines.find((entry) => entry.name === "oc-fresh")!
+    expect(existsSync(join(k.counter.fake.disk(machine), "home/boxd/work/fresh"))).toBe(false)
+  })
+})
+
 describe("boxd_golden (design §2.3, §3.11)", () => {
   test("builds from stock with the recipe, removes the builder, and warns when no provider key is set", async () => {
     const k = await kit()
