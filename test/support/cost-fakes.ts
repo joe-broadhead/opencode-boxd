@@ -267,6 +267,7 @@ export function fakes(input: { options?: Record<string, unknown>; works?: WorkSn
     },
     ledger: {
       id: async () => LEDGER_ID,
+      currentId: async () => LEDGER_ID,
       get: async (workId: string) => records.get(workId),
       list: async () => [...records.values()].filter((item) => item.state === "open"),
       saved,

@@ -20,6 +20,7 @@ const sources = (over: Partial<Parameters<typeof readReport>[0]> = {}) => ({
     regions: ["fra", "nyc"] as const,
     region: "auto" as const,
     keepFree: { fra: 0, nyc: 0 },
+    keep: [],
     size: "2x8" as const,
     goldenPrefix: "oc-golden",
     goldenBase: "stock",
@@ -53,6 +54,25 @@ describe("the /boxd report", () => {
     expect(model.report).toContain("- Access: every method is allowed without asking")
     expect(model.report).toContain("- Cost:")
     expect(model.report).toContain('- Regions: default "auto"; allowed "fra", "nyc"')
+    expect(model.report).toContain("- Machine classes: 0 works, 0 works in another ledger, 0 kept machines, 0 golden builders, 0 orphans")
+    expect(model.report).toContain("- Orphans: none")
+  })
+
+  test("lists each orphan with its region, status, why and whether a rule may act on it", async () => {
+    const model = await readReport(
+      sources({
+        fleet: async () =>
+          fleet({
+            machines: {
+              counts: { work: 1, "other-ledger": 1, kept: 0, golden: 0, orphan: 1 },
+              orphans: [{ machine: "oc-stray", region: "nyc", status: "hibernated", why: "legacy-labels", actionable: true, next: 'boxd_ensure({ workId: "stray" }) adopts it' }],
+              more: 0,
+            },
+          }),
+      }),
+    )
+    expect(model.report).toContain("- Machine classes: 1 work, 1 work in another ledger, 0 kept machines, 0 golden builders, 1 orphan")
+    expect(model.report).toContain("- Orphans: oc-stray (nyc, hibernated, legacy labels only, actionable)")
   })
 })
 

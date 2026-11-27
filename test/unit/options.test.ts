@@ -10,6 +10,7 @@ const DEFAULTS: Options = {
   regions: ["fra", "nyc"],
   region: "auto",
   keepFree: { fra: 0, nyc: 0 },
+  keep: [],
   size: "2x8",
   goldenPrefix: "oc-golden",
   goldenBase: "stock",
@@ -39,6 +40,8 @@ describe("plugin options", () => {
     for (const notices of ["wake", "queue", "off"]) expect(parseOptions({ notices })).toMatchObject({ notices })
     for (const buildGolden of ["auto", "never"]) expect(parseOptions({ buildGolden })).toMatchObject({ buildGolden })
     expect(parseOptions({ keepFree: { fra: 4 } })).toMatchObject({ keepFree: { fra: 4, nyc: 0 } })
+    expect(parseOptions({ keep: ["role=lead", "runner", "owner=boxd", "role=lead"] })).toMatchObject({ keep: ["role=lead", "runner", "owner=boxd"] })
+    expect(parseOptions({ keep: [] })).toMatchObject({ keep: [] })
     expect(parseOptions({ git: { name: "Review Bot", email: "bot@example.invalid" } })).toMatchObject({ git: { name: "Review Bot", email: "bot@example.invalid" } })
     expect(parseOptions({ goldenPrefix: "team-golden", goldenBase: "opencode-golden", goldenSetup: "/srv/setup.sh" })).toMatchObject({
       goldenPrefix: "team-golden",
@@ -68,6 +71,12 @@ describe("plugin options", () => {
       { keepFree: { fra: -1 } },
       { keepFree: { fra: 1.5 } },
       { keepFree: 3 },
+      { keep: "role=lead" },
+      { keep: ["Role=Lead"] },
+      { keep: [""] },
+      { keep: ["role lead"] },
+      { keep: ["role=lead=extra"] },
+      { keep: [1] },
       { git: { name: "x" } },
       { git: { name: "", email: "a@b.c" } },
       { git: { name: "x", email: "not an email" } },

@@ -112,36 +112,44 @@ export class Ledger {
   // ── Identity ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
   /**
+   * This ledger's id when its file already holds one, without making one: `undefined` on a ledger that never registered
+   * a work. A malformed file is a failure, never an absent id.
+   */
+  async currentId(): Promise<string | undefined> {
+    if (this.ledgerId) return this.ledgerId
+    const path = join(this.root, LEDGER_PATHS.id)
+    try {
+      const text = (await readFile(path, "utf8")).trim()
+      if (!LEDGER_ID.test(text)) throw boxdError("LEDGER_FAILED", `The ledger's id file ${path} does not hold a ledger id (ten lowercase hex digits).`)
+      this.ledgerId = text
+      return text
+    } catch (error) {
+      if (errnoOf(error) === "ENOENT") return undefined
+      throw ledgerError("read its id", error)
+    }
+  }
+
+  /**
    * This ledger's id: ten lowercase hex digits in `<root>/ledger-id`, made once. The file is written whole beside the
    * id and linked into place, so a process that loses the race reads the winner's id and never a half-written one.
    */
   async id(): Promise<string> {
-    if (this.ledgerId) return this.ledgerId
+    const existing = await this.currentId()
+    if (existing) return existing
     const path = join(this.root, LEDGER_PATHS.id)
     try {
-      const read = async () => {
-        const text = (await readFile(path, "utf8")).trim()
-        if (!LEDGER_ID.test(text)) throw boxdError("LEDGER_FAILED", `The ledger's id file ${path} does not hold a ledger id (ten lowercase hex digits).`)
-        return text
+      await ensureDir(this.root)
+      const temp = tempBeside(path)
+      await writeFileAtomic(temp, `${randomBytes(5).toString("hex")}\n`)
+      try {
+        await link(temp, path)
+      } catch (error) {
+        if (errnoOf(error) !== "EEXIST") throw error
+      } finally {
+        await unlink(temp).catch(() => undefined)
       }
-      let found: string | undefined = await read().catch((error) => {
-        if (errnoOf(error) === "ENOENT") return undefined
-        throw error
-      })
-      if (!found) {
-        await ensureDir(this.root)
-        const temp = tempBeside(path)
-        await writeFileAtomic(temp, `${randomBytes(5).toString("hex")}\n`)
-        try {
-          await link(temp, path)
-        } catch (error) {
-          if (errnoOf(error) !== "EEXIST") throw error
-        } finally {
-          await unlink(temp).catch(() => undefined)
-        }
-        found = await read()
-      }
-      this.ledgerId = found
+      const found = await this.currentId()
+      if (!found) throw boxdError("LEDGER_FAILED", "The ledger's id file is missing after it was written.")
       return found
     } catch (error) {
       throw ledgerError("read its id", error)

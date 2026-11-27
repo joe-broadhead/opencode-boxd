@@ -475,6 +475,14 @@ describe("the ledger's id", () => {
     expect(readdirSync(ledger.root).filter((name) => name.endsWith(".tmp"))).toEqual([])
   })
 
+  test("currentId reads an existing id, and never makes one", async () => {
+    const ledger = await emptyLedger()
+    expect(await ledger.currentId()).toBeUndefined()
+    expect(readdirSync(ledger.root)).not.toContain("ledger-id")
+    const id = await ledger.id()
+    expect(await ledger.currentId()).toBe(id)
+  })
+
   test("several ledgers starting at once on one root agree on one id", async () => {
     const first = await emptyLedger()
     const ids = await Promise.all(Array.from({ length: 8 }, () => new Ledger(first.root).id()))

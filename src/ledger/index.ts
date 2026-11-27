@@ -17,6 +17,7 @@ export function createLedger(core: HostServices & Provider): LedgerPort {
 export function ledgerPort(store: Ledger): LedgerPort {
   return {
     id: (_context) => store.id(),
+    currentId: (_context) => store.currentId(),
     get: (workId, _context) => store.get(workId),
     async phases(filter, _context) {
       const { works } = await store.refresh()

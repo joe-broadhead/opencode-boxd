@@ -94,7 +94,6 @@ interface ReportInput {
   readonly nextStep: string
 }
 
-const list = (names: readonly string[]) => (names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`)
 const SYMBOLS: Readonly<Record<string, string>> = { EUR: "€", USD: "$", GBP: "£" }
 const money = (amount: number, currency: string) => (SYMBOLS[currency] ? `${SYMBOLS[currency]}${amount.toFixed(2)}` : `${amount.toFixed(2)} ${currency}`)
 
@@ -104,6 +103,30 @@ function costText(cost: CostBlock | undefined): string {
   const hour = `~${money(cost.perHour.estimate, cost.currency)}/h (an estimate)`
   const today = cost.today.machines === null ? "" : `; today ${money(cost.today.machines, cost.currency)} on machines`
   return `${machines}, ${hour}${today}${cost.today.unavailable ? ` (${cut(cost.today.unavailable, 120)})` : ""}`
+}
+
+const ORPHAN_WHY: Readonly<Record<string, string>> = { "no-ledger": "no ledger label", "no-record": "this ledger's label with no record", "legacy-labels": "legacy labels only" }
+
+/** Every machine's class, counted, in a person's words. */
+function machineClassesText(counts: StatusResult["machines"]["counts"]): string {
+  const count = (value: number, one: string, many: string) => `${value} ${value === 1 ? one : many}`
+  return [
+    count(counts.work, "work", "works"),
+    count(counts["other-ledger"], "work in another ledger", "works in another ledger"),
+    count(counts.kept, "kept machine", "kept machines"),
+    count(counts.golden, "golden builder", "golden builders"),
+    count(counts.orphan, "orphan", "orphans"),
+  ].join(", ")
+}
+
+/** The orphans, worst first (actionable first), each with its region, status, why and whether a rule may act on it. */
+function orphansText(machines: StatusResult["machines"]): string {
+  if (!machines.orphans.length) return machines.more ? `${machines.more} more` : "none"
+  const items = machines.orphans.map((orphan) => {
+    const action = orphan.actionable ? "actionable" : "not actionable: label it, or add a selector to keep"
+    return `${orphan.machine} (${orphan.region}, ${orphan.status}, ${ORPHAN_WHY[orphan.why] ?? orphan.why}, ${action})`
+  })
+  return `${items.join("; ")}${machines.more ? `; and ${machines.more} more` : ""}`
 }
 
 function automationText(automation: AutomationState | undefined, notices: Options["notices"]): string {
@@ -150,10 +173,12 @@ function reportText(input: ReportInput): string {
     `- Access: ${posture}; ${unguarded.length ? "the default rules are missing in the agents listed below" : "no agent runs a boxd tool unasked"}`,
     `- Image: ${sources.options.goldenPrefix}-${sources.hostVersion ?? "unknown"}-${sources.options.size}`,
     `- Guest: OpenCode ${sources.hostVersion ?? "unknown"}, the version here, to move a transcript`,
-    `- Works: ${openWorks === 0 ? "no open work" : `${openWorks} open: ${phases.join(", ")}`}${value?.orphans.length ? `; machines no ledger records: ${list(value.orphans.map((orphan) => `${orphan.machine} (${orphan.region})`))}` : ""}`,
+    `- Works: ${openWorks === 0 ? "no open work" : `${openWorks} open: ${phases.join(", ")}`}`,
     `- Attention: ${attentionText}`,
     `- Regions: default ${JSON.stringify(sources.options.region)}; allowed ${sources.options.regions.map((region) => `"${region}"`).join(", ") || "no region: nothing new is placed"}`,
     `- Machines: ${machines}`,
+    `- Machine classes: ${value ? (value.cli.signedIn ? machineClassesText(value.machines.counts) : "not read: the machine listing failed") : "not read"}`,
+    `- Orphans: ${value ? (value.cli.signedIn ? orphansText(value.machines) : "not read: the machine listing failed") : "not read"}`,
     `- Cost: ${costText(value?.cost)}`,
     `- Automation: ${automationText(value?.automation, sources.options.notices)}`,
     `- Health: event-loop delay at most ${value?.health.loopLagMaxMs ?? 0} ms; ${value?.health.children.now ?? 0} of ${value?.health.children.cap ?? CAPS.shared} boxd processes`,

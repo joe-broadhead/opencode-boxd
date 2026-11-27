@@ -31,6 +31,8 @@ export interface Options {
   readonly region: RegionChoice
   /** Machines `auto` leaves free in each region, for the organisation's CI pool. */
   readonly keepFree: Readonly<Record<Region, number>>
+  /** Label selectors (`key=value`, or a bare key) for machines owned elsewhere: a match is kept, never an orphan. */
+  readonly keep: readonly string[]
   /** A new work's size. */
   readonly size: Size
   /** The guest's git identity for every new work; none by default. */
@@ -64,6 +66,7 @@ export const DEFAULT_OPTIONS: Options = {
   regions: [...REGIONS],
   region: "auto",
   keepFree: { fra: 0, nyc: 0 },
+  keep: [],
   size: "2x8",
   goldenPrefix: "oc-golden",
   goldenBase: "stock",
@@ -84,6 +87,8 @@ const BUDGET_ACTIONS: readonly Budget["action"][] = ["warn", "refuse"]
 /** The longest prefix that still leaves room for `-<version>-<size>` in a 64-character snapshot name. */
 const PREFIX = /^[a-z][a-z0-9-]{0,31}$/
 const EMAIL = /^[^\s@<>]+@[^\s@<>]+$/
+/** A `keep` selector: a boxd label key, with an optional `=value`. */
+const SELECTOR = /^[a-z0-9._/-]{1,63}(?:=[A-Za-z0-9._/@:-]{0,63})?$/
 
 const quoted = (values: readonly string[]) => values.map((value) => `"${value}"`).join(", ")
 
@@ -94,6 +99,7 @@ const ACCEPTED = {
   regions: `a non-empty array of unique regions from ${quoted(REGIONS)}, where new works and golden images may be placed (${quoted(REGIONS)} by default)`,
   region: `${quoted(REGION_CHOICES)} ("auto" by default); a named region must be one of "regions"`,
   keepFree: `an object with a whole number of machines, 0 or more, for each of ${quoted(REGIONS)} (0 by default)`,
+  keep: 'an array of label selectors, each "key=value" or a bare key (empty by default)',
   size: `${quoted(SIZES)} ("2x8" by default)`,
   git: "an object with a non-empty name and an email address",
   goldenPrefix: 'a lowercase name of up to 32 letters, digits or hyphens, starting with a letter ("oc-golden" by default)',
@@ -165,6 +171,9 @@ export function parseOptions(raw: unknown): Options {
   const free = { ...DEFAULT_OPTIONS.keepFree, ...keepFree } as Record<string, unknown>
   for (const value of Object.values(free)) if (typeof value !== "number" || !Number.isInteger(value) || value < 0) throw wrong("keepFree", keepFree)
 
+  const { keep } = input
+  if (!Array.isArray(keep) || keep.some((selector) => typeof selector !== "string" || !SELECTOR.test(selector))) throw wrong("keep", keep)
+
   const { git } = input
   if (git !== undefined) {
     if (!isObject(git) || Object.keys(git).sort().join() !== "email,name") throw wrong("git", git)
@@ -199,6 +208,7 @@ export function parseOptions(raw: unknown): Options {
     regions,
     region,
     keepFree: free as Record<Region, number>,
+    keep: [...new Set(keep as string[])],
     size,
     ...(git !== undefined ? { git: { name: (git as { name: string }).name, email: (git as { email: string }).email } } : {}),
     goldenPrefix,

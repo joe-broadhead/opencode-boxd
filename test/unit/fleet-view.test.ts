@@ -88,11 +88,29 @@ describe("boxd_status", () => {
     expect(expired.works!.map((work) => work.workId)).toEqual(["a", "b"])
   })
 
-  test("a labelled machine no work records is an orphan, with the call that adopts it", async () => {
-    world.counter.fake.machine({ name: "oc-stray", region: "nyc", labels: { owner: "boxd", role: "session", work: "stray" } })
-    world.counter.fake.machine({ name: "oc-someone-else", region: "fra", labels: {} })
+  test("every machine is one class: a work, another ledger's work, kept, golden, or an orphan with why and its action", async () => {
+    await world.dispose()
+    world = await startWorld({ options: { keep: ["role=lead", "runner"] } })
+    const ledgerId = await world.ledger.id(world.context("id"))
+    await world.bulk([{ workId: "lane" }])
+    world.counter.fake.machine({ name: "oc-other", region: "fra", labels: { ledger: "0123456789", owner: "boxd", role: "session", work: "other" } })
+    world.counter.fake.machine({ name: "lead-one", region: "fra", labels: { role: "lead" } })
+    world.counter.fake.machine({ name: "runner-one", region: "fra", labels: { runner: "yes" } })
+    world.counter.fake.machine({ name: "oc-gb-fra-2x8-abc123", region: "fra", labels: { role: "golden-builder" } })
+    world.counter.fake.machine({ name: "ci-runner", region: "fra", labels: {} })
+    world.counter.fake.machine({ name: "oc-legacy", region: "fra", labels: { owner: "boxd", role: "session", work: "legacy" } })
+    world.counter.fake.machine({ name: "oc-leftover", region: "fra", labels: { ledger: ledgerId, owner: "boxd", role: "session", work: "leftover" } })
     const answer = await status()
-    expect(answer.orphans).toEqual([{ machine: "oc-stray", region: "nyc", next: 'boxd_ensure({ workId: "stray" }) adopts it' }])
+    expect(answer.machines.counts).toEqual({ work: 1, "other-ledger": 1, kept: 2, golden: 1, orphan: 3 })
+    expect(answer.machines.orphans).toEqual([
+      { machine: "oc-leftover", region: "fra", status: "running", why: "no-record", actionable: true, next: 'boxd_ensure({ workId: "leftover" }) adopts it' },
+      { machine: "oc-legacy", region: "fra", status: "running", why: "legacy-labels", actionable: true, next: 'boxd_ensure({ workId: "legacy" }) adopts it' },
+      { machine: "ci-runner", region: "fra", status: "running", why: "no-ledger", actionable: false, next: "label it, or add a selector to keep" },
+    ])
+    const capped = await status({ limit: 1 }, "capped")
+    expect(capped.machines.counts).toEqual(answer.machines.counts)
+    expect(capped.machines.orphans).toHaveLength(1)
+    expect(capped.machines.more).toBe(2)
   })
 
   test("the cost service is E's: until it answers, status still answers, and says so", async () => {
