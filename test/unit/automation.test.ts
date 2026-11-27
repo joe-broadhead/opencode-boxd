@@ -7,7 +7,7 @@ import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { automation, LEASE_RENEW_MS, startAutomation, type Automation } from "../../src/automation.js"
 import type { WorkSnapshot } from "../../src/ports.js"
-import { fakes, minutesAgo, record, T0, work, type Fakes } from "../support/cost-fakes.js"
+import { fakes, LEDGER_ID, minutesAgo, record, T0, work, type Fakes } from "../support/cost-fakes.js"
 
 let open: Array<{ f: Fakes; loops: Automation[] }> = []
 function setup(input: Parameters<typeof fakes>[0] = {}) {
@@ -40,9 +40,10 @@ describe("a finished work is harvested, then slept, after autoSleepMinutes", () 
       expect(call.context.by).toBe("automation")
       expect(call.context.call.source).toBe("automation")
     }
-    // The harvest's own export is the one guest read: no separate phase read, one listing to skip a sleeping machine.
+    // The harvest's own export is the one guest read: no separate phase read. One listing checks the ledger label (once
+    // per machine) and one skips a sleeping machine.
     expect(f.calls.filter((call) => call.startsWith("phase"))).toEqual([])
-    expect(f.calls.filter((call) => call === "list")).toEqual(["list"])
+    expect(f.calls.filter((call) => call === "list")).toEqual(["list", "list"])
   })
 
   test("each work is harvested and slept on its own, never a batch waiting on every harvest", async () => {
@@ -60,7 +61,8 @@ describe("a finished work is harvested, then slept, after autoSleepMinutes", () 
     const { f, loop } = setup({ works: [work("a", { idleSince: minutesAgo(T0, 9), touchedAt: minutesAgo(T0, 9) })], records: [record("a")] })
     await loop().tick()
     expect(acted(f)).toEqual([])
-    expect(f.calls.filter((call) => call.startsWith("phase") || call === "list")).toEqual([])
+    // Only the one listing that shows the machine already carries its ledger label.
+    expect(f.calls.filter((call) => call.startsWith("phase") || call === "list")).toEqual(["list"])
   })
 
   test("a new prompt in the window cancels it: busy in the snapshot, or the harvest's export finds the tree busy", async () => {
@@ -392,5 +394,69 @@ describe("lease renewals (§C.2, L-2)", () => {
     // Renewed 1 hour ago by a change call, so it is not renewed now; it ends in 23 hours.
     await one.tick()
     expect(acted(f)).toEqual(["harvest a"])
+  })
+})
+
+describe("the ledger label", () => {
+  const unlabelled = (f: Fakes, ...ids: string[]) => {
+    for (const id of ids) f.labels.set(`oc-${id}`, { owner: "boxd", role: "session", work: id })
+  }
+  const labelled = (f: Fakes) => f.calls.filter((call) => call.startsWith("setLabels"))
+
+  test("an open work whose machine lacks it gets ledger=<id>, by id, once", async () => {
+    const { f, loop } = setup({ works: [work("a", { phase: "busy", idleSince: undefined })], records: [record("a")] })
+    unlabelled(f, "a")
+    const one = loop()
+    await one.tick()
+    expect(labelled(f)).toEqual([`setLabels vm_a ledger=${LEDGER_ID}`])
+    expect(f.calls).toContain("checkOwned oc-a vm_a")
+    await one.tick()
+    await one.tick()
+    expect(labelled(f)).toHaveLength(1)
+    expect(f.calls.filter((call) => call === "list")).toHaveLength(1)
+  })
+
+  test("a machine that already has the label is left alone, and so is one that carries another ledger's", async () => {
+    const { f, loop } = setup({ works: [work("a"), work("b")], records: [record("a"), record("b")] })
+    f.labels.set("oc-b", { ledger: "ffffffffff" })
+    await loop().tick()
+    expect(labelled(f)).toEqual([])
+  })
+
+  test("only open works are labelled, and a failed label is retried after 30 minutes, not on every pass", async () => {
+    const { f, loop } = setup({ works: [work("a", { phase: "busy", idleSince: undefined })], records: [record("a"), record("z", { state: "closed", closed: { at: T0.toISOString(), how: "dropped" } } as never)] })
+    unlabelled(f, "a")
+    const boxd = f.services.boxd as unknown as { setLabels: (...args: unknown[]) => Promise<void> }
+    const set = boxd.setLabels
+    boxd.setLabels = async () => {
+      f.calls.push("label refused")
+      throw new Error("boxd said no")
+    }
+    const one = loop()
+    await one.tick()
+    await one.tick()
+    expect(f.calls.filter((call) => call === "label refused")).toHaveLength(1)
+    expect(f.reports.get("automation")).toContain("Could not label a's machine")
+    boxd.setLabels = set
+    f.clock.now = new Date(T0.getTime() + 31 * 60_000)
+    await one.tick()
+    expect(labelled(f)).toEqual([`setLabels vm_a ledger=${LEDGER_ID}`])
+  })
+
+  test("without consent nothing is labelled", async () => {
+    const { f, loop } = setup({ options: { access: "read-only" }, works: [work("a")], records: [record("a")] })
+    unlabelled(f, "a")
+    await loop().tick()
+    expect(labelled(f)).toEqual([])
+  })
+
+  test("a failing label never stops the lease renewals", async () => {
+    const { f, loop } = setup({ options: { leaseDays: 1 }, works: [work("a", { phase: "busy" })], records: [record("a", { lease: { days: 1, renewedAt: minutesAgo(T0, 7 * 60), expiresAt: new Date(T0.getTime() + 17 * 3_600_000).toISOString() } })] })
+    unlabelled(f, "a")
+    ;(f.services.ledger as unknown as { id: () => Promise<string> }).id = async () => {
+      throw new Error("no id")
+    }
+    await loop().tick()
+    expect(f.calls.some((call) => call.startsWith("renewLease"))).toBe(true)
   })
 })

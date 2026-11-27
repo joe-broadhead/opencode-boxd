@@ -26,6 +26,16 @@ parses `--json` answers and maps stderr through one error table. The guest port 
 over `boxd machine exec`, uploads the helper with `machine cp` when it is missing or older, and never uploads on a read.
 `guest/guest.py` is the helper itself; it talks to the guest's OpenCode server and imports/export sessions.
 
+## The ledger label
+
+Every work's machine carries the label `ledger=<id>`, next to `owner=boxd`, `role=session` and `work=<id>`. The id names
+the ledger that registered the machine. It is ten lowercase hex digits, made once on first use and kept in the file
+`ledger-id` in the ledger's root, so it is a valid boxd label value and survives restarts. `boxd_ensure` sets the label
+when it creates a machine and when it adopts one, and `boxd_reassign` sets it with the other labels. The automation pass,
+held by one process, sets it once on every open work's machine that has none; a machine that already carries another
+ledger's label is left alone. The label lets one operator tell another operator's live work from a machine that no work
+owns, because a ledger lives on its operator's machine.
+
 ## What is cached
 
 - One machine listing is shared by every caller that accepts an age; a read that needs a fresh one (the "gone" rule)

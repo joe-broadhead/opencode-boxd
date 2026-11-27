@@ -45,6 +45,8 @@ export type MachineName = `oc-${string}`
 
 /** The labels the plugin sets on a work's machine; adoption needs `owner=boxd`. */
 export const WORK_LABELS = { role: "session", owner: "boxd" } as const
+/** The label key that names the ledger that registered a work's machine; its value is `LedgerPort.id`. */
+export const LEDGER_LABEL = "ledger"
 /** The label a golden builder carries; restores inherit it under the work's own `role=session`. */
 export const BUILDER_LABELS = { role: "golden-builder" } as const
 
@@ -341,6 +343,8 @@ export interface CreateWork {
   readonly region: Region
   readonly name: MachineName
   readonly workId: string
+  /** The id of the ledger that registers this work, set as the `ledger` label. */
+  readonly ledger: string
   readonly image: string
   /** Always 0: standby bills resident RAM too, so it saves almost nothing (§C.1). */
   readonly autoSuspendSeconds: 0
@@ -714,6 +718,11 @@ export interface Expected {
  * append-only `events.jsonl`.
  */
 export interface LedgerPort {
+  /**
+   * This ledger's id: short, made once on first use and kept in the ledger's root, so it is a valid boxd label value.
+   * Every work's machine carries it as the `ledger` label.
+   */
+  id(context: OpContext): Promise<string>
   /** One record, or undefined for an id the ledger has never seen (open or closed). */
   get(workId: string, context: OpContext): Promise<WorkRecord | undefined>
   /**

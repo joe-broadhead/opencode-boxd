@@ -69,7 +69,7 @@ async function completeRename(machines: Machines, region: Region, from: string, 
     } else if (info.name !== toName) {
       throw boxdError("NOT_OURS", `Machine ${machineId} in ${region} is now named ${info.name}, neither ${fromName} nor ${toName}; nothing was renamed.`)
     }
-    const labels = missingLabels(info.labels, to)
+    const labels = missingLabels(info.labels, to, await ledger.id(op))
     if (Object.keys(labels).length > 0) await boxd.setLabels((await boxd.checkOwned(region, toName, machineId, op)).target, labels, op)
     return true
   })

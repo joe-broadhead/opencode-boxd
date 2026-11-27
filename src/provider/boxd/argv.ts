@@ -6,7 +6,7 @@
  */
 import { boxdError } from "../../errors.js"
 import type { ChangeTarget, CreateBuilder, CreateWork, MachineId, MachineName, Region, Size } from "../../ports.js"
-import { SIZE_VCPU, WORK_LABELS } from "../../ports.js"
+import { LEDGER_LABEL, SIZE_VCPU, WORK_LABELS } from "../../ports.js"
 
 const WORK_ID = /^[a-z][a-z0-9-]{0,24}$/
 const SNAPSHOT = /^[a-z0-9][a-z0-9._-]{0,63}$/
@@ -70,7 +70,7 @@ export function createWorkArgs(input: CreateWork): string[] {
     input.region,
     "--from-snapshot",
     snapshotArg(input.image),
-    ...labelArgs({ ...WORK_LABELS, work: input.workId }),
+    ...labelArgs({ ...WORK_LABELS, work: input.workId, [LEDGER_LABEL]: input.ledger }),
     "--auto-suspend-timeout",
     String(input.autoSuspendSeconds),
     "--auto-hibernate-timeout",

@@ -462,3 +462,30 @@ describe("one writer per work, across processes", () => {
     expect(nested?.title).toBe("nested")
   }, LEDGER_TEST_TIMEOUT_MS)
 })
+
+describe("the ledger's id", () => {
+  test("is made once, short and a valid boxd label value, and kept in the root across processes and restarts", async () => {
+    const ledger = await emptyLedger()
+    const id = await ledger.id()
+    expect(id).toMatch(/^[0-9a-f]{10}$/)
+    expect(await ledger.id()).toBe(id)
+    expect(readFileSync(join(ledger.root, "ledger-id"), "utf8").trim()).toBe(id)
+    expect(statSync(join(ledger.root, "ledger-id")).mode & 0o777).toBe(0o600)
+    expect(await new Ledger(ledger.root).id()).toBe(id)
+    expect(readdirSync(ledger.root).filter((name) => name.endsWith(".tmp"))).toEqual([])
+  })
+
+  test("several ledgers starting at once on one root agree on one id", async () => {
+    const first = await emptyLedger()
+    const ids = await Promise.all(Array.from({ length: 8 }, () => new Ledger(first.root).id()))
+    expect(new Set(ids).size).toBe(1)
+    expect(readdirSync(first.root).filter((name) => name.includes("ledger-id"))).toEqual(["ledger-id"])
+  })
+
+  test("a file that holds no id is refused, never replaced", async () => {
+    const ledger = await emptyLedger()
+    writeFileSync(join(ledger.root, "ledger-id"), "not an id\n")
+    await expect(ledger.id()).rejects.toThrow(/LEDGER_FAILED/)
+    expect(readFileSync(join(ledger.root, "ledger-id"), "utf8")).toBe("not an id\n")
+  })
+})

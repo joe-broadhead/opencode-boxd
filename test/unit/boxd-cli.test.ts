@@ -87,7 +87,7 @@ describe("reads", () => {
     const key = { create: { region: "fra" as const, name: "oc-asked" as const } }
     const error = await fail(
       runner.withMachineLock(key, context(), () =>
-        boxd.create({ kind: "work", region: "fra", name: "oc-asked", workId: "asked", image: "img", autoSuspendSeconds: 0, autoHibernateSeconds: 7200 }, context()),
+        boxd.create({ kind: "work", region: "fra", name: "oc-asked", workId: "asked", image: "img", ledger: "0a1b2c3d4e", autoSuspendSeconds: 0, autoHibernateSeconds: 7200 }, context()),
       ),
     )
     expect([error?.code, error?.what]).toEqual(["BOXD_FAILED", "boxd machine new oc-asked in fra answered for machine oc-someone-else. Nothing was recorded."])
@@ -135,14 +135,14 @@ describe("changes", () => {
     fake.snapshot({ region: "nyc", name: "oc-golden-2.4.1-4x16", vcpu: 4, labels: { role: "golden-builder", tier: "x" } })
     const key = { create: { region: "nyc" as const, name: "oc-review-api" as const } }
     const info = await runner.withMachineLock(key, context(), () =>
-      boxd.create({ kind: "work", region: "nyc", name: "oc-review-api", workId: "review-api", image: "oc-golden-2.4.1-4x16", autoSuspendSeconds: 0, autoHibernateSeconds: 7200 }, context()),
+      boxd.create({ kind: "work", region: "nyc", name: "oc-review-api", workId: "review-api", image: "oc-golden-2.4.1-4x16", ledger: "0a1b2c3d4e", autoSuspendSeconds: 0, autoHibernateSeconds: 7200 }, context()),
     )
     const stored = fake.read().machines[0]!
     expect(info).toMatchObject({ id: stored.id, name: "oc-review-api", region: "nyc", sharing: "private", isolated: false })
     // This process made it with this id, so the create hands back a change target: no second get to act on it.
     expect(info.owned).toMatchObject({ target: { region: "nyc", name: "oc-review-api", machineId: stored.id }, status: "starting" })
     expect(isChangeTarget(info.owned.target)).toBe(true)
-    expect(stored).toMatchObject({ vcpu: 4, autoSuspend: 0, autoHibernate: 7200, ignoreOutbound: "off", labels: { role: "session", owner: "boxd", work: "review-api", tier: "x" } })
+    expect(stored).toMatchObject({ vcpu: 4, autoSuspend: 0, autoHibernate: 7200, ignoreOutbound: "off", labels: { role: "session", owner: "boxd", work: "review-api", ledger: "0a1b2c3d4e", tier: "x" } })
     expect(stored.deleteAfter).toBeUndefined()
   })
 
@@ -150,7 +150,7 @@ describe("changes", () => {
     fake.snapshot({ region: "fra", name: "img" })
     const create = (workId: string, leaseDays?: number) =>
       runner.withMachineLock({ create: { region: "fra", name: `oc-${workId}` } }, context(), () =>
-        boxd.create({ kind: "work", region: "fra", name: `oc-${workId}`, workId, image: "img", autoSuspendSeconds: 0, autoHibernateSeconds: 7200, ...(leaseDays ? { leaseDays } : {}) }, context()),
+        boxd.create({ kind: "work", region: "fra", name: `oc-${workId}`, workId, image: "img", ledger: "0a1b2c3d4e", autoSuspendSeconds: 0, autoHibernateSeconds: 7200, ...(leaseDays ? { leaseDays } : {}) }, context()),
       )
     await create("a", 2)
     expect(fake.read().machines[0]!.deleteAfter).toBe("2d")
@@ -160,7 +160,7 @@ describe("changes", () => {
   })
 
   test("a create outside its lock is a bug, refused before it runs", async () => {
-    await expect(boxd.create({ kind: "work", region: "fra", name: "oc-a", workId: "a", image: "img", autoSuspendSeconds: 0, autoHibernateSeconds: 7200 }, context())).rejects.toThrow(/withMachineLock/)
+    await expect(boxd.create({ kind: "work", region: "fra", name: "oc-a", workId: "a", image: "img", ledger: "0a1b2c3d4e", autoSuspendSeconds: 0, autoHibernateSeconds: 7200 }, context())).rejects.toThrow(/withMachineLock/)
     expect(fake.calls()).toEqual([])
   })
 
