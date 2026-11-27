@@ -24,7 +24,8 @@ account to resolve; the local identity is only via `probe`/status.
 through one runner with a pool and a cap, an explicit timeout, the call's signal and an output cap. The boxd CLI port
 parses `--json` answers and maps stderr through one error table. The guest port runs `python3 ~/.boxd-plugin/guest.py`
 over `boxd machine exec`, uploads the helper with `machine cp` when it is missing or older, and never uploads on a read.
-`guest/guest.py` is the helper itself; it talks to the guest's OpenCode server and imports/export sessions.
+`guest/guest.py` is the helper itself; it talks to the guest's OpenCode server, imports and exports sessions, and
+writes one plugin into the guest's global plugins folder: `boxd_done`, the work's completion tool.
 
 ## The ledger label
 

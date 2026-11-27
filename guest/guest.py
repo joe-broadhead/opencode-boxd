@@ -62,6 +62,9 @@ EXPORTS = HELPER_HOME + "/exports"
 HARVEST = HELPER_HOME + "/harvest"
 STAGING = HELPER_HOME + "/staging"
 IMPORTS = HELPER_HOME + "/imports"
+# The work's OpenCode reads global plugins from ~/.config/opencode/plugins; setup puts the completion tool there.
+PLUGIN_HOME = local(HOME + "/.config/opencode/plugins")
+PLUGIN_PATH = PLUGIN_HOME + "/boxd-done.js"
 CLONE_SECONDS = 300
 TEXT_LIMIT = 2000
 # `phase` with `full`: the whole last assistant message, up to this many characters (line breaks kept).
@@ -70,6 +73,66 @@ TAIL_LIMIT = 20
 LIST_LIMIT = 1000
 # The server pages /api/session (50 a page by default). A work's whole tree is every page; this is the sane cap.
 SESSION_PAGES = 100
+
+# The completion tool, written into the guest OpenCode's global plugins folder by setup. Its arguments are the work's
+# claim of completion and the pull requests it opened; they stay in the transcript, which is where the laptop reads
+# them. It uses only the public @opencode/plugin 2.4.1 API.
+DONE_PLUGIN = r'''// boxd_done: the work's completion tool, written by the guest helper.
+import { Plugin } from "@opencode/plugin"
+
+const SUMMARY_LIMIT = 500
+const PR_LIMIT = 20
+const PR_URL = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+$/
+const PR_SHORT = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#\d+$/
+
+function refuse(message) {
+  throw new Error("boxd_done refused: " + message)
+}
+
+export default Plugin.define({
+  id: "boxd.done",
+  async setup(ctx) {
+    await ctx.tool.transform((editor) => {
+      editor.namespace({ name: "boxd", description: "Declare this work complete for the laptop." })
+      editor.add({
+        name: "done",
+        description:
+          "Call this once, as your last act, when the whole task is finished, including every subagent. " +
+          "Give a short summary of what changed and the pull requests you opened. Do not call it while work remains.",
+        input: {
+          type: "object",
+          properties: {
+            summary: { type: "string", description: "A short summary of the work, in one or two sentences." },
+            prs: {
+              type: "array",
+              items: { type: "string" },
+              description: "The pull requests this work opened, as https://github.com/owner/repo/pull/123 or owner/repo#123.",
+            },
+          },
+          required: ["summary"],
+          additionalProperties: false,
+        },
+        options: { namespace: "boxd", codemode: false },
+        execute: async (input) => {
+          const summary = typeof input?.summary === "string" ? input.summary.trim() : ""
+          if (summary === "") refuse("summary must be a non-empty string")
+          if (Array.from(summary).length > SUMMARY_LIMIT) refuse("summary must be at most " + SUMMARY_LIMIT + " characters")
+          const prs = input?.prs ?? []
+          if (!Array.isArray(prs)) refuse("prs must be an array of pull request URLs or owner/repo#n")
+          if (prs.length > PR_LIMIT) refuse("prs must list at most " + PR_LIMIT + " pull requests")
+          for (const pr of prs) {
+            if (typeof pr !== "string" || !(PR_URL.test(pr) || PR_SHORT.test(pr))) refuse(String(pr).slice(0, 80) + " is not a pull request URL or owner/repo#n")
+          }
+          const count = prs.length
+          return {
+            content: count === 0 ? "Done recorded." : "Done recorded: " + count + (count === 1 ? " pull request." : " pull requests."),
+          }
+        },
+      })
+    })
+  },
+})
+'''
 
 
 class GuestError(Exception):
@@ -879,10 +942,25 @@ def refuse_operator():
         fail("ACTS_AS_OPERATOR", "; ".join(found))
 
 
+def ensure_done_plugin():
+    """The completion tool in the guest OpenCode's global plugins folder: written once, and rewritten only when the
+    helper's text changed. The server is never restarted for it; OpenCode picks a plugin up from its config folder."""
+    data = DONE_PLUGIN.encode()
+    try:
+        size, sha = digest(PLUGIN_PATH)
+        if size == len(data) and sha == hashlib.sha256(data).hexdigest():
+            return
+    except OSError:
+        pass
+    os.makedirs(PLUGIN_HOME, mode=0o700, exist_ok=True)
+    write_file(PLUGIN_PATH, data, 0o600)
+
+
 def action_setup(request):
     directory = work_directory(request.get("directory"))
     refuse_operator()
     ensure_password()
+    ensure_done_plugin()
     names = env_names(request.get("env"))
     version = opencode_version()
     state = server_state(request)

@@ -67,6 +67,8 @@ export interface HostInput {
   readonly config?: Record<string, unknown>
   /** A guest version other than the host's, for the mismatch test. */
   readonly guestVersion?: string
+  /** Extra plugins to load beside the boxd plugin, such as the completion tool the guest helper writes. */
+  readonly plugins?: readonly Plugin.Plugin[]
   /** A loopback model, so a Code Mode program can be driven by a turn. */
   readonly model?: boolean
   /** Wraps the context the boxd plugin gets, so a test can watch what it registers. */
@@ -123,7 +125,7 @@ export async function startHost(input: HostInput = {}) {
   }
   const { OpenCode } = (await import(pathToFileURL(join(SDK, "dist", "index.js")).href)) as typeof import("@opencode/sdk")
   const client: Client = await OpenCode.create({
-    plugins: [withOptions, probe],
+    plugins: [withOptions, probe, ...(input.plugins ?? [])],
     // An embedded host reports "unknown" unless told, and the plugin's host guard refuses that.
     app: { version: HOST_VERSION },
     config: { content: JSON.stringify(config), directory: join(base, "config"), project: false, claude: false },
