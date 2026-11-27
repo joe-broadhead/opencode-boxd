@@ -98,6 +98,24 @@ export interface WorkCost {
   readonly model: number | null
 }
 
+/** Machine-hours from the ledger alone: time the machine existed, and time it ran. */
+export interface WorkHours {
+  /** Every phase but gone and closed, in hours to two decimals. */
+  readonly existed: number
+  /** The running phases of `cost/rates.ts`, in hours to two decimals. */
+  readonly running: number
+}
+
+/** The cost block's machine-hour sums, all from the ledger and needing no owner's sign-in. */
+export interface CostHours {
+  /** Every work this ledger records. */
+  readonly ledger: WorkHours
+  /** Since local midnight, for the works this ledger knows. */
+  readonly today: WorkHours
+  /** Works created since the oldest open work was created; zero when no work is open. */
+  readonly since: WorkHours
+}
+
 export interface AttentionItem extends Next {
   readonly workId: string
   readonly region: Region | null
@@ -110,6 +128,8 @@ export interface AttentionItem extends Next {
   readonly lastText?: string
   readonly lastActivityAt?: string
   readonly cost?: WorkCost
+  /** With `include: ["cost"]`: the machine-hours its ledger counted, no owner's sign-in needed. */
+  readonly hours?: WorkHours
   /** The cached phase, because the read missed the call's budget. */
   readonly stale?: true
 }
@@ -122,6 +142,8 @@ export interface WorkBrief {
   readonly saved: SavedState
   readonly lastActivityAt?: string
   readonly cost?: WorkCost
+  /** With `include: ["cost"]`: the machine-hours its ledger counted, no owner's sign-in needed. */
+  readonly hours?: WorkHours
   readonly stale?: true
 }
 
@@ -141,6 +163,8 @@ export interface CostBlock {
     readonly complete: boolean
     readonly unavailable?: string
   }
+  /** Machine-hours from the ledger alone: this ledger, today, and since the oldest open work. */
+  readonly hours: CostHours
   /** With `include: ["cost"]`, at most `limit`. */
   readonly works?: ReadonlyArray<{ readonly workId: string; readonly machine: number | null; readonly model: number | null; readonly perHour: number }>
 }
@@ -241,6 +265,8 @@ export interface JobResult extends WorkFields {
   readonly warning?: WarningCode
   readonly guestVersion: string | null
   readonly cost?: WorkCost
+  /** The machine-hours its ledger counted, always: no owner's sign-in is needed. */
+  readonly hours: WorkHours
   readonly tail?: ReadonlyArray<{ readonly at?: string; readonly text: string }>
   readonly next: string
 }

@@ -53,7 +53,8 @@ A running machine costs money even when its session is idle; a hibernated one co
 nothing. Sleep what you are not using: hibernation keeps the disk, the memory and the session, and the next submit wakes
 it. Drop only finished, saved work. The plugin's automation harvests and hibernates finished works by itself after
 `autoSleepMinutes` when `access` is `all` or `automation` is `"on"`; nothing automatic ever drops. Read the figures with
-`tools.boxd.job({ cost: true })` or `/boxd`, never from a hook.
+`tools.boxd.job({ cost: true })` or `/boxd`, never from a hook. Each answer also carries the work's machine-hours from the
+ledger, which need no owner's sign-in: `hours.existed` and `hours.running`.
 
 ## Report the truth
 

@@ -47,6 +47,13 @@ None.
   `read` reads one file or the guest's server log without a harvest. `probe` says whose ledger this is.
 - **The works list.** `status` with `{ list: "works" }` answers the `boxd.works.list` snapshot: at most 50 works, newest
   activity first, as the contract's `list` output.
+- **Machine-hours.** Each work's record carries the time its machine existed and the time it ran, in seconds, counted by
+  the ledger at every phase change from the record's last change: every phase but `gone` and `closed` adds to
+  `existedSeconds`, and the running phases add to `runningSeconds`. `boxd_status` with `include: ["cost"]` shows
+  `hours: { existed, running }` on each work row beside the money figures, and `boxd_job` shows the same on every answer.
+  The cost block sums them for this ledger, for today from local midnight, and since the oldest open work was created.
+  The hours are computed from the ledger alone, so they show without an owner's sign-in; the money figures stay `null`
+  without one.
 - **Changes.** `ensure` makes a work exist and converges it; `submit` admits a prompt; `harvest` exports the session
   tree and copies the files back; `sleep` hibernates; `resume` wakes or rebuilds; `reassign` moves an unstarted work's
   machine to a new id; `golden` builds, lists or prunes golden images. Every one of them emits `changed`.

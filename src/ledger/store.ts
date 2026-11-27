@@ -15,6 +15,7 @@ import { link, lstat, mkdir, open, readdir, readFile, rename, rmdir, stat, unlin
 import { basename, dirname, join, resolve, sep } from "node:path"
 import { boxdError, BoxdError } from "../errors.js"
 import { EventLog } from "./events.js"
+import { countHours } from "./hours.js"
 import type { Expected, LedgerFile, StagedFile, StagedFolder } from "../ports.js"
 import { commitFile, copyFileAtomic, type Digest, digestFile, ensureDir, errnoOf, exists, FILE_MODE, fsyncDir, randomPart, remove, tempBeside, writeFileAtomic, writeJsonAtomic } from "./fsx.js"
 import { alive, LockSet, type LockHandle } from "./lock.js"
@@ -328,6 +329,25 @@ export class Ledger {
     if (!cached || cached.entry.phase === phase || cached.entry.state === "closed") return
     cached.entry = { ...cached.entry, phase }
     await this.saveIndex(this.snapshot())
+  }
+
+  /**
+   * Counts one phase change into the work's record, under its lock: the interval since the record's last change goes to
+   * the phase that was current before (design §C.4). A work with no record, or an event at the same instant and phase,
+   * writes nothing.
+   */
+  async countPhase(workId: string, phase: Phase, at: Date, signal?: AbortSignal): Promise<void> {
+    await this.withWork(
+      workId,
+      async () => {
+        const record = await this.get(workId)
+        if (!record) return
+        const hours = countHours(record.hours, phase, at)
+        if (record.hours && record.hours.phase === hours.phase && record.hours.at === hours.at) return
+        await this.write(workId, { ...record, hours })
+      },
+      signal,
+    )
   }
 
   // ── The fence ────────────────────────────────────────────────────────────────────────────────────────────────────

@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, test, setDefaultTimeout } from "bun:test"
 import { FULL_LIST_MAX_ITEMS, jobRun } from "../../src/fleet/job.js"
 import { fleetStatus, statusInput } from "../../src/fleet/status.js"
+import { localDay } from "../../src/ledger/hours.js"
 import type { WorkRecord } from "../../src/ledger/types.js"
 import type { BudgetState, JobResult, ListResult, Refusal, StatusResult } from "../../src/results.js"
 import type { CostPort } from "../../src/services.js"
@@ -120,9 +121,28 @@ describe("boxd_status", () => {
     expect(answer.automation).toBe("on")
   })
 
+  test("machine-hours show from the ledger with no owner's sign-in, in status and job", async () => {
+    await world.bulk([{ workId: "metered", status: "hibernated" }])
+    const at = world.clock.now
+    await world.record("metered", (record) => ({
+      ...record,
+      hours: { existedSeconds: 7_200, runningSeconds: 3_600, todayExistedSeconds: 1_800, todayRunningSeconds: 900, day: localDay(at), phase: "asleep", at: at.toISOString() },
+    }))
+    const answer = await status({ view: "all", include: ["cost"] })
+    // The cost service is not built here, so the money figure is null; the hours still come from the record.
+    expect(answer.cost.today.machines).toBeNull()
+    expect(answer.works?.find((work) => work.workId === "metered")?.hours).toEqual({ existed: 2, running: 1 })
+    expect(((await job({ workId: "metered" })) as JobResult).hours).toEqual({ existed: 2, running: 1 })
+  })
+
   test("the budget: reached with warn is BUDGET_WARN, reached with refuse is only the budget block, unmeasurable is BUDGET_UNKNOWN", async () => {
     const cost = (budget: BudgetState): CostPort => ({
-      block: async () => ({ currency: "EUR", perHour: { estimate: 0, running: 0, asleep: 0, basis: "x", ratesSource: "usage" }, today: { machines: 6, complete: true } }),
+      block: async () => ({
+        currency: "EUR",
+        perHour: { estimate: 0, running: 0, asleep: 0, basis: "x", ratesSource: "usage" },
+        today: { machines: 6, complete: true },
+        hours: { ledger: { existed: 0, running: 0 }, today: { existed: 0, running: 0 }, since: { existed: 0, running: 0 } },
+      }),
       cleanup: async () => [],
       automation: () => "on",
       budget: async () => budget,

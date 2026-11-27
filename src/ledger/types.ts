@@ -51,6 +51,9 @@ export const LOCK_HEARTBEAT_MS = 10_000
 export type Phase = "creating" | "starting" | "ready" | "busy" | "idle" | "asleep" | "gone" | "unreachable" | "closed"
 export const PHASES: readonly Phase[] = ["creating", "starting", "ready", "busy", "idle", "asleep", "gone", "unreachable", "closed"]
 
+/** Phases whose machine runs and bills RAM; `asleep` bills disk only; `gone` and `closed` bill nothing. */
+export const RUNNING_PHASES: ReadonlySet<Phase> = new Set(["creating", "starting", "ready", "busy", "idle", "unreachable"])
+
 /**
  * Whether this laptop holds the work, computed, never stored: `fresh` when `saved.complete && saved.at >=
  * lastSubmit.at`; `stale` when `saved` exists but is older or partial; `none` otherwise.
@@ -108,6 +111,25 @@ export interface WorkWarning {
   readonly at: string
 }
 
+/**
+ * The machine time the ledger has counted for one work, in seconds, counted to `at`. The watcher adds the interval since
+ * the last change whenever a phase changes: `existedSeconds` for every phase but `gone` and `closed`, and
+ * `runningSeconds` for the running phases (`RUNNING_PHASES`). The `today*` counters cover `day`, the local day, so a
+ * budget can read today's hours without an owner's sign-in.
+ */
+export interface MeteredHours {
+  readonly existedSeconds: number
+  readonly runningSeconds: number
+  readonly todayExistedSeconds: number
+  readonly todayRunningSeconds: number
+  /** `YYYY-MM-DD` in this machine's local day, which the `today*` counters cover. */
+  readonly day: string
+  /** The phase the counters are counted to. */
+  readonly phase: Phase
+  /** When the counters were last counted. */
+  readonly at: string
+}
+
 export interface WorkRecord {
   readonly format: typeof LEDGER_FORMAT
   readonly workId: string
@@ -147,6 +169,8 @@ export interface WorkRecord {
   /** Set by `boxd_reassign` before the rename; the next `ensure` for either id finishes it. */
   readonly pendingRename?: { readonly from: string; readonly machineId: MachineId; readonly at: string }
   readonly reboots?: ReadonlyArray<{ readonly at: string; readonly why: "agent-silent" | "repair" }>
+  /** The machine-hours the watcher has counted for this work; absent until its first phase change. */
+  readonly hours?: MeteredHours
   /** When a plugin call last touched the work: automation's `orphanHours` counts from it (§C.3). */
   readonly touchedAt?: string
   /** The `leaseDays` delete-after timer, when the option set one: renewed at most once per 6 hours (§C.2). */

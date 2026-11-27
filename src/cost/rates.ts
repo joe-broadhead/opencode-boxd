@@ -7,7 +7,7 @@
  * load (capped at the machine's vCPUs) and the resident GiB, plus a fixed figure for the disk a work has written,
  * because boxd's listing does not report it.
  */
-import type { Phase } from "../ledger/types.js"
+import { RUNNING_PHASES, type Phase } from "../ledger/types.js"
 import { SIZE_VCPU, type Rates, type Reading, type Size } from "../ports.js"
 
 /** boxd's published rates (boxd.sh/pricing), for a member who cannot read the organisation's own. */
@@ -21,8 +21,7 @@ export const DISK_GIB_ESTIMATE = 20
 /** A running work with no guest reading yet: OpenCode's server at rest. */
 export const DEFAULT_READING: Reading = { residentGiB: 1, load1: 0 }
 
-/** Phases whose machine runs and bills RAM; `asleep` bills disk only; `gone` and `closed` bill nothing. */
-export const RUNNING_PHASES: ReadonlySet<Phase> = new Set(["creating", "starting", "ready", "busy", "idle", "unreachable"])
+export { RUNNING_PHASES }
 
 export const isRunning = (phase: Phase) => RUNNING_PHASES.has(phase)
 

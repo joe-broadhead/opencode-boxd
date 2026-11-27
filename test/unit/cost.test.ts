@@ -7,9 +7,10 @@ import { matches, suggestions } from "../../src/cost/fleet.js"
 import { perHour, PUBLIC_RATES } from "../../src/cost/rates.js"
 import { automationState, consent } from "../../src/cost/shared.js"
 import { BoxdError } from "../../src/errors.js"
+import { asHours, localDay } from "../../src/ledger/hours.js"
 import type { Phase } from "../../src/ledger/types.js"
 import type { Usage } from "../../src/ports.js"
-import { fakes, record, T0, work, type Fakes } from "../support/cost-fakes.js"
+import { fakes, minutesAgo, record, T0, work, type Fakes } from "../support/cost-fakes.js"
 
 const EUR = PUBLIC_RATES.EUR
 const USD = PUBLIC_RATES.USD
@@ -109,6 +110,39 @@ describe("the per-hour estimate (§C.1)", () => {
     expect(f.calls).toContain(`usage ${record("a").createdAt.replace(/\.\d{3}Z$/, "Z")}`)
     expect(block.works?.find((row) => row.workId === "a")?.machine).toBe(0.42)
     expect(block.works?.find((row) => row.workId === "b")?.machine).toBeNull()
+  })
+
+  test("machine-hours from the ledger: this ledger, today and since the oldest open work, with usage unavailable", async () => {
+    const day = localDay(T0)
+    const yesterday = minutesAgo(T0, 1_500)
+    const hours = (existedSeconds: number, runningSeconds: number, todayExistedSeconds: number, todayRunningSeconds: number, at: string, phase: Phase) => ({
+      existedSeconds,
+      runningSeconds,
+      todayExistedSeconds,
+      todayRunningSeconds,
+      day: localDay(new Date(at)),
+      phase,
+      at,
+    })
+    const old = record("old", { createdAt: minutesAgo(T0, 300), hours: hours(7_200, 3_600, 1_800, 900, T0.toISOString(), "idle") })
+    const young = record("young", { createdAt: minutesAgo(T0, 60), hours: hours(1_800, 900, 600, 300, T0.toISOString(), "idle") })
+    const closed = record("closed", {
+      state: "closed",
+      closed: { at: yesterday, how: "dropped" },
+      createdAt: yesterday,
+      hours: hours(3_600, 1_800, 0, 0, yesterday, "closed"),
+    })
+    const f = make({ works: [work("old"), work("young")], records: [old, young, closed], usage: { available: false, reason: "boxd's machine usage is for organisation owners and admins." } })
+    const block = await f.services.cost.block({ works: true, limit: 10 }, tag)
+
+    // The money figure keeps boxd's reason; the hours need no owner's sign-in.
+    expect(block.today.machines).toBeNull()
+    expect(block.hours).toEqual({
+      ledger: { existed: asHours(7_200 + 1_800 + 3_600), running: asHours(3_600 + 900 + 1_800) },
+      today: { existed: asHours(1_800 + 600), running: asHours(900 + 300) },
+      since: { existed: asHours(7_200 + 1_800), running: asHours(3_600 + 900) },
+    })
+    expect(day).toBe(localDay(T0))
   })
 })
 

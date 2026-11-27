@@ -13,6 +13,7 @@
  */
 import { secretKinds } from "@we-the-rebel-alliance/plugin-contract/events"
 import { BoxdError, boxdError, type Code, type WarningCode } from "../errors.js"
+import { hoursAt, shownHours } from "../ledger/hours.js"
 import type { Phase, WorkRecord } from "../ledger/types.js"
 import { BUILDER_LABELS, LEDGER_LABEL, LIST_MAX_ITEMS, REGIONS, SIZES, TIMEOUTS, WORK_LABELS, type CallTag, type Listing, type OpContext, type Region, type Size } from "../ports.js"
 import { excerpt, reasonOf } from "../redact.js"
@@ -268,6 +269,7 @@ function unavailableCost(reason: string): CostBlock {
     currency: "unknown",
     perHour: { estimate: 0, running: 0, asleep: 0, basis: "not estimated: the cost service is not available", ratesSource: "public" },
     today: { machines: null, complete: false, unavailable: `The cost service is not available (${reason}).` },
+    hours: { ledger: { existed: 0, running: 0 }, today: { existed: 0, running: 0 }, since: { existed: 0, running: 0 } },
   }
 }
 
@@ -444,6 +446,7 @@ export async function fleetStatus(services: FleetServices, input: StatusInput, c
 
   const brief = (row: Row): WorkBrief => {
     const cost = workCost(row)
+    const hours = withCost ? shownHours(hoursAt(row.record, new Date(at))) : undefined
     const lastActivityAt = row.observed?.lastActivityAt
     return {
       workId: row.record.workId,
@@ -453,6 +456,7 @@ export async function fleetStatus(services: FleetServices, input: StatusInput, c
       saved: row.saved,
       ...(lastActivityAt ? { lastActivityAt } : {}),
       ...(cost ? { cost } : {}),
+      ...(hours ? { hours } : {}),
       ...(row.stale ? { stale: true as const } : {}),
     }
   }

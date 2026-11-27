@@ -8,8 +8,9 @@
  * are kept for a day; a member, who cannot read usage, gets boxd's public rates, marked `public`.
  */
 import { boxdError } from "../errors.js"
+import { asHours, hoursAt, localDay } from "../ledger/hours.js"
 import type { CallTag, FleetWatch, OpContext, Rates, Usage, WorkSnapshot } from "../ports.js"
-import type { BudgetState, CleanupAction, CostBlock } from "../results.js"
+import type { BudgetState, CleanupAction, CostBlock, CostHours } from "../results.js"
 import type { CoreServices, CostPort } from "../services.js"
 import { figures, suggestions } from "./fleet.js"
 import { basis, money, PUBLIC_RATES } from "./rates.js"
@@ -126,12 +127,48 @@ export function createCost(core: CostCore): CostInternals {
     return new Map(works.flatMap((work) => (work.machineId && byMachine.has(work.machineId) ? [[work.workId, money(byMachine.get(work.machineId)!)] as const] : [])))
   }
 
+  /** The ledger's machine-hours, from its records alone: every work, today, and since the oldest open work. */
+  async function ledgerHours(call: CallTag): Promise<CostHours> {
+    const records = await core.ledger.list({ closed: true }, op(call))
+    const at = now()
+    const day = localDay(at)
+    const oldest = records.filter((record) => record.state === "open").reduce<number | undefined>((min, record) => {
+      const at = Date.parse(record.createdAt)
+      return Number.isNaN(at) ? min : min === undefined || at < min ? at : min
+    }, undefined)
+    let ledgerExisted = 0
+    let ledgerRunning = 0
+    let todayExisted = 0
+    let todayRunning = 0
+    let sinceExisted = 0
+    let sinceRunning = 0
+    for (const record of records) {
+      const hours = hoursAt(record, at)
+      ledgerExisted += hours.existedSeconds
+      ledgerRunning += hours.runningSeconds
+      if (hours.day === day) {
+        todayExisted += hours.todayExistedSeconds
+        todayRunning += hours.todayRunningSeconds
+      }
+      const created = Date.parse(record.createdAt)
+      if (oldest !== undefined && !Number.isNaN(created) && created >= oldest) {
+        sinceExisted += hours.existedSeconds
+        sinceRunning += hours.runningSeconds
+      }
+    }
+    return {
+      ledger: { existed: asHours(ledgerExisted), running: asHours(ledgerRunning) },
+      today: { existed: asHours(todayExisted), running: asHours(todayRunning) },
+      since: oldest === undefined ? { existed: 0, running: 0 } : { existed: asHours(sinceExisted), running: asHours(sinceRunning) },
+    }
+  }
+
   const port: CostInternals = {
     rates: currentRates,
     today,
     cachedBudget,
     async block(options, call): Promise<CostBlock> {
-      const day = await today(call)
+      const [day, hours] = await Promise.all([today(call), ledgerHours(call)])
       const works = counted(core.watch.snapshot().works)
       const rate = currentRates()
       const fleet = figures(works, rate)
@@ -144,6 +181,7 @@ export function createCost(core: CostCore): CostInternals {
           complete: day.complete,
           ...(day.unavailable ? { unavailable: day.unavailable } : {}),
         },
+        hours,
       }
       if (!options.works) return block
       const machine = day.machines === null ? null : await perWork(works, call)
