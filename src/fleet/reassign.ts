@@ -169,6 +169,7 @@ export async function runReassign(machines: Machines, input: Record<string, unkn
           laptopDirectory: item.directory ?? now.laptopDirectory,
           ...(item.repo ? { repo: item.repo } : now.repo ? { repo: now.repo } : {}),
           ...(item.git ? { git: item.git } : now.git ? { git: now.git } : {}),
+          ...(now.env ? { env: now.env } : {}),
           ...(item.model ? { model: item.model } : {}),
           ...(item.title ? { title: item.title } : {}),
         })

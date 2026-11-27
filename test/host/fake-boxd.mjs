@@ -446,6 +446,14 @@ function exec() {
             return true
           })
         request = JSON.stringify({ ...parsed, base: `http://127.0.0.1:${down ? 1 : state.port}` })
+        // The loopback server stands for one this helper already started with no declared variables.
+        if (parsed.action === "setup" && !down) {
+          const names = join(root, HOME, ".boxd-plugin", "env.json")
+          if (!existsSync(names)) {
+            mkdirSync(dirname(names), { recursive: true, mode: 0o700 })
+            writeFileSync(names, "[]")
+          }
+        }
       }
     } catch {
       // Not JSON: the helper answers that itself.

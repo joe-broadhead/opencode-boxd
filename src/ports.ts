@@ -484,6 +484,8 @@ export interface SetupInput {
   readonly directory: string
   readonly repo?: { readonly url: string; readonly ref?: string }
   readonly git?: { readonly name: string; readonly email: string }
+  /** The variable names the work declares: the guest's OpenCode starts with these and the machine's basics only. */
+  readonly env?: readonly string[]
   /** The laptop's OpenCode: the helper reports the guest's, and `upgrade` is a separate action. */
   readonly opencode: string
 }

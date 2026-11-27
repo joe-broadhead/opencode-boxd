@@ -130,6 +130,26 @@ describe("boxd_ensure: a new work", () => {
     expect(k.calls().filter((entry) => entry.startsWith("machine new oc-gb-"))).toHaveLength(1)
   })
 
+  test("env: the declared names are checked, recorded without values, and sent to the guest's setup", async () => {
+    const k = await kit()
+    for (const env of [["gh_token"], ["OPENCODE_PASSWORD"], "GH_TOKEN", [1], Array.from({ length: 65 }, (_, index) => `VAR_${index}`)]) {
+      expect(await errorOf(k.runs.boxd_ensure({ workId: "review-api", env }, k.call()))).toMatchObject({ code: "NAME_INVALID", details: { field: "env" } })
+    }
+    expect(k.calls()).toEqual([])
+    await k.golden("fra")
+    const result = (await k.runs.boxd_ensure({ workId: "review-api", env: ["TAVILY_API_KEY", "GH_TOKEN", "GH_TOKEN"] }, k.call())) as EnsureResult
+    expect(result.state).toBe("ready")
+    expect((await k.record("review-api"))?.env).toEqual(["GH_TOKEN", "TAVILY_API_KEY"])
+    const machine = k.counter.fake.read().machines.find((entry) => entry.name === "oc-review-api")!
+    expect(JSON.parse(readFileSync(join(k.counter.fake.disk(machine), "home/boxd/.boxd-plugin/env.json"), "utf8"))).toEqual(["GH_TOKEN", "TAVILY_API_KEY"])
+    // A later ensure without env keeps the declaration, and an empty list withdraws it.
+    await k.runs.boxd_ensure({ workId: "review-api" }, k.call())
+    expect((await k.record("review-api"))?.env).toEqual(["GH_TOKEN", "TAVILY_API_KEY"])
+    await k.runs.boxd_ensure({ workId: "review-api", env: [] }, k.call())
+    expect((await k.record("review-api"))?.env).toEqual([])
+    expect(JSON.parse(readFileSync(join(k.counter.fake.disk(machine), "home/boxd/.boxd-plugin/env.json"), "utf8"))).toEqual([])
+  })
+
   test("a list: one bad item fails validation before anything runs, and results come back in input order", async () => {
     const k = await kit()
     const bad = await errorOf(k.runs.boxd_ensure({ works: [{ workId: "a" }, { workId: "b", size: "3x9" }] }, k.call()))

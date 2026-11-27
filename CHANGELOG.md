@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- A work's OpenCode, and every command it runs, starts with the machine's basics and the variable names the work
+  declares in `ensure` as `env`, never the operator's other variables.
+
 ## 0.0.0 (2026-11-25)
 
 The first release: an OpenCode plugin for boxd, on OpenCode 2.4.1 and plugin-contract v0.

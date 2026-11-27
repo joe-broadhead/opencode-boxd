@@ -143,7 +143,7 @@ export function createGuestPort(options: GuestPortOptions): GuestPort {
     health: (target, context) => read("health", target, {}, context, readHealth),
 
     setup: (target, input, context) =>
-      change("setup", target, { directory: input.directory, ...(input.repo ? { repo: input.repo } : {}), ...(input.git ? { git: input.git } : {}), opencode: input.opencode }, context, TIMEOUTS.setup, readSetup),
+      change("setup", target, { directory: input.directory, ...(input.repo ? { repo: input.repo } : {}), ...(input.git ? { git: input.git } : {}), env: input.env ?? [], opencode: input.opencode }, context, TIMEOUTS.setup, readSetup),
     prompt: (target, input, context) =>
       change(
         "prompt",

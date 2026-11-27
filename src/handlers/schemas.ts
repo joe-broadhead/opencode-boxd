@@ -33,6 +33,13 @@ export const GIT = {
   required: ["name", "email"],
   additionalProperties: false,
 } satisfies JsonSchema
+export const ENV = {
+  type: "array",
+  items: { type: "string", pattern: "^[A-Z_][A-Z0-9_]{0,63}$" },
+  maxItems: 64,
+  description:
+    "The names of the machine's variables the work's OpenCode, and every command it runs, may read, such as [\"GH_TOKEN\"]. Names only, never values. Every other variable the machine holds, the operator's among them, is withheld; the machine's basics (PATH, HOME, locale, proxy and certificate settings) always pass. Recorded; an empty list declares none, and omitting it keeps the recorded list.",
+} satisfies JsonSchema
 export const REPO = string("An https://github.com/owner/repo URL, cloned into the guest folder when it is not a checkout yet. Stored and returned without userinfo.")
 export const REF = string("A branch or tag for the clone.")
 export const DIRECTORY = string("The folder here for the work, inside the project or an allowed root; the project by default. The guest always works in /home/boxd/work/<work id>.")
@@ -107,6 +114,7 @@ const ENSURE_ITEM = {
   size: SIZE,
   model: { ...MODEL, description: `${MODEL.description as string} Recorded as the work's default, for its first session.` },
   git: GIT,
+  env: ENV,
   repo: REPO,
   ref: REF,
   directory: DIRECTORY,

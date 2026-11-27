@@ -15,6 +15,11 @@ reads a guest.
 
 - The plugin holds no credential. The boxd CLI's sign-in is its own; the model key is a sealed, host-bound `boxd env`
   secret or a guest's own `opencode auth login`.
+- A work's OpenCode, and every command it runs, starts from an allowlist: the machine's basics (`PATH`, `HOME`, the
+  locale, proxy and certificate settings) and the variable names the work declares in `ensure` as `env`. The operator's
+  other variables, such as `GH_TOKEN` or `CLAUDE_CODE_OAUTH_TOKEN`, never reach the session. The ledger records the
+  names, never the values. `ensure` restarts a server that runs with other variables once its session is idle, and
+  answers `SESSION_BUSY` while it runs.
 - A secret that is not host-bound is a real value on the guest, and `exec` can print it.
 - Model credentials are never baked into a golden image; a base that holds `auth.json` is refused.
 - Status and logs never carry a token, a URL query string or a credential: a failure reason is redacted and cut to 160
