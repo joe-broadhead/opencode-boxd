@@ -21,6 +21,8 @@
  *   timeout (then `UNHARVESTED_SLEEP`: hibernation keeps the memory and the disk). Any other answer, a busy session
  *   above all, means the work moved on or cannot be saved, and it is not slept. A busy work, and one waiting on a
  *   person, is never touched.
+ * - **The ledger label:** the `automation.lock` holder sets `ledger=<id>` once on every open work's machine that has no
+ *   such label, so another operator's ledger can tell this work's machine from an orphan. Nothing else about the labels.
  * - **Never a drop:** this module calls `actions.harvest` and `actions.sleep` only, tagged `automation`. It never calls
  *   `actions.drop`, removes a machine, or sets a delete timer the person did not opt into.
  */
@@ -30,7 +32,7 @@ import { allowed, sharedOf } from "./cost/shared.js"
 import { isCode, type Code } from "./errors.js"
 import { acquireLock, type LockHandle } from "./ledger/lock.js"
 import { LEDGER_PATHS, type WorkRecord, type WorkWarning } from "./ledger/types.js"
-import type { CallTag, MachineName, OpContext, WorkSnapshot } from "./ports.js"
+import { LEDGER_LABEL, type CallTag, type MachineId, type MachineName, type OpContext, type WorkSnapshot } from "./ports.js"
 import type { ListResult } from "./results.js"
 import type { ActionContext, CostServices, Dispose } from "./services.js"
 
@@ -122,6 +124,10 @@ export function automation(services: CostServices, seam: AutomationSeam = {}): A
   const log: { workId: string; why: Why; step: "harvest" | "sleep" | "renew" | "skip"; result: string }[] = []
   /** The last attempt per work: skipped until the work changes (a new idle start) or `RETRY_MS` passed. */
   const attempts = new Map<string, { readonly key: string; readonly at: number; readonly ok: boolean }>()
+  /** The machine each work's ledger label was last settled on. */
+  const labelled = new Map<string, MachineId>()
+  /** When a label last failed, per work. */
+  const labelFailed = new Map<string, number>()
   let calls = 0
 
   const tag = (): CallTag => ({ callId: `automation-${++calls}`, source: "automation" })
@@ -342,6 +348,52 @@ export function automation(services: CostServices, seam: AutomationSeam = {}): A
     )
   }
 
+  const waiting = (workId: string) => now() - (labelFailed.get(workId) ?? -RETRY_MS) < RETRY_MS
+
+  /**
+   * Once per open work: the `ledger=<id>` label on its machine, when the listing shows none. Only the cleanup owner does
+   * it. A machine that carries another ledger's label is left alone, and a work is read again only after its machine
+   * changes or `RETRY_MS` after a failure. A machine the listing does not show counts as settled too, until its id
+   * changes. So a pass with every machine settled reads nothing from boxd, and a restart reads once.
+   */
+  async function labelMachines(): Promise<void> {
+    try {
+      await labelPending()
+    } catch (error) {
+      if (!controller.signal.aborted) services.report("automation", `Could not label the works' machines with their ledger: ${message(error)}`)
+    }
+  }
+
+  async function labelPending(): Promise<void> {
+    const pending = (await ledger.list({}, op(tag()))).filter((record) => record.region && record.machineId && labelled.get(record.workId) !== record.machineId && !waiting(record.workId))
+    if (!pending.length) return
+    const ledgerId = await ledger.id(op(tag()))
+    const listing = await boxd.list({ maxAgeMs: 2_000 }, op(tag()))
+    for (const record of pending.slice(0, MAX_PER_TICK)) {
+      const { workId, region, machine, machineId } = record
+      if (!region || !machineId || controller.signal.aborted || !(await stillOwner())) return
+      const row = listing.machines.find((candidate) => candidate.name === machine && candidate.region === region && (candidate.id === null || candidate.id === machineId))
+      if (!row) {
+        labelled.set(workId, machineId)
+        continue
+      }
+      if (row.labels[LEDGER_LABEL] === undefined) {
+        const context = op(tag())
+        try {
+          await services.runner.withMachineLock({ id: machineId }, context, async () => {
+            const { target } = await boxd.checkOwned(region, machine, machineId, context)
+            await boxd.setLabels(target, { [LEDGER_LABEL]: ledgerId }, context)
+          })
+        } catch (error) {
+          services.report("automation", `Could not label ${workId}'s machine with its ledger: ${message(error)}`)
+          labelFailed.set(workId, now())
+          continue
+        }
+      }
+      labelled.set(workId, machineId)
+    }
+  }
+
   async function pass(): Promise<void> {
     try {
       if (options.budget) await services.cost.budget(tag()).catch(() => undefined)
@@ -349,6 +401,7 @@ export function automation(services: CostServices, seam: AutomationSeam = {}): A
       // Only a process with consent ever takes automation.lock; any process may renew leases.
       const cleaning = consented && (await holdCleanup())
       if (cleaning) await sweep()
+      if (cleaning) await labelMachines()
       if (!holding.length) {
         services.report("lease", undefined)
         return

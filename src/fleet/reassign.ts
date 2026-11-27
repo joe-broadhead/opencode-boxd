@@ -69,7 +69,7 @@ async function completeRename(machines: Machines, region: Region, from: string, 
     } else if (info.name !== toName) {
       throw boxdError("NOT_OURS", `Machine ${machineId} in ${region} is now named ${info.name}, neither ${fromName} nor ${toName}; nothing was renamed.`)
     }
-    const labels = missingLabels(info.labels, to)
+    const labels = missingLabels(info.labels, to, await ledger.id(op))
     if (Object.keys(labels).length > 0) await boxd.setLabels((await boxd.checkOwned(region, toName, machineId, op)).target, labels, op)
     return true
   })
@@ -148,7 +148,7 @@ export async function runReassign(machines: Machines, input: Record<string, unkn
     await runner.withMachineLock({ id: machineId }, itemOp, async () => {
       const { target } = await boxd.checkOwned(region, source!.machine, machineId, itemOp)
       const info = listing.machines.find((row) => row.region === region && row.name === source!.machine)
-      if (info && !carriesLabels(info.labels, from)) throw boxdError("NOT_OURS", `${source!.machine} in ${region} no longer carries this plugin's labels for "${from}".`)
+      if (info && !carriesLabels(info.labels, from, await ledger.id(itemOp))) throw boxdError("NOT_OURS", `${source!.machine} in ${region} no longer carries this plugin's labels for "${from}".`)
       const git = await guest.git(target, { directory: source!.guestDirectory }, itemOp)
       if (git.known && (git.dirty || git.untracked.length > 0)) throw notReassignable(`"${from}"'s tree has ${git.dirty ? "uncommitted changes" : `${git.untracked.length} untracked paths`}.`)
     })

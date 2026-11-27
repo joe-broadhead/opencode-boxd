@@ -166,8 +166,12 @@ export interface Fakes {
   phases: Map<string, Partial<PhaseAnswer> & { throws?: boolean }>
   /** Listing status per machine name; running by default. */
   statuses: Map<string, MachineRow["status"]>
+  /** Listing labels per machine name; `{ ledger }` by default, the steady state. */
+  labels: Map<string, Record<string, string>>
   dispose(): void
 }
+
+export const LEDGER_ID = "0a1b2c3d4e"
 
 export const RATES_EUR = { currency: "EUR", vcpuHour: 0.039, ramGiBHour: 0.012, diskGiBHour: 0.00008, source: "usage" } as const
 
@@ -186,6 +190,7 @@ export function fakes(input: { options?: Record<string, unknown>; works?: WorkSn
     usage: input.usage ?? ({ available: true, currency: "EUR", total: 2, estimated: true, complete: true, asOf: T0.toISOString(), rates: RATES_EUR, machines: [] } as Usage),
     phases: new Map<string, Partial<PhaseAnswer> & { throws?: boolean }>(),
     statuses: new Map<string, MachineRow["status"]>(),
+    labels: new Map<string, Record<string, string>>(),
   }
   const options = parseOptions(input.options ?? {})
   const listing = (): Listing => ({
@@ -197,7 +202,7 @@ export function fakes(input: { options?: Record<string, unknown>; works?: WorkSn
       id: null,
       status: state.statuses.get(`oc-${item.workId}`) ?? (item.phase === "asleep" ? "hibernated" : "running"),
       size: item.size,
-      labels: {},
+      labels: state.labels.get(`oc-${item.workId}`) ?? { ledger: LEDGER_ID },
       sharing: "private",
       isolated: null,
     })),
@@ -246,6 +251,8 @@ export function fakes(input: { options?: Record<string, unknown>; works?: WorkSn
         calls.push(`checkOwned ${name} ${machineId}`)
         return { target: { region, name, machineId, checkedAt: state.clock.now.getTime() }, status: "running" } as never
       },
+      setLabels: async (target: { machineId: string }, labels: Record<string, string>) =>
+        void calls.push(`setLabels ${target.machineId} ${Object.entries(labels).map(([key, value]) => `${key}=${value}`).join(",")}`),
       renewLease: async (target: { machineId: string }, days: number) => void calls.push(`renewLease ${target.machineId} ${days}d`),
       remove: async () => void calls.push("remove"),
       hibernate: async () => void calls.push("hibernate"),
@@ -259,6 +266,7 @@ export function fakes(input: { options?: Record<string, unknown>; works?: WorkSn
       },
     },
     ledger: {
+      id: async () => LEDGER_ID,
       get: async (workId: string) => records.get(workId),
       list: async () => [...records.values()].filter((item) => item.state === "open"),
       saved,

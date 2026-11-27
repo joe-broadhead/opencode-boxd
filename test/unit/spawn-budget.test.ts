@@ -133,7 +133,7 @@ describe("the steady-state sequences fit their rows", () => {
     const call = "call_ensure"
     await runtime.boxd.list({ maxAgeMs: 0 }, context(call, "boxd_ensure"))
     const info = await runtime.runner.withMachineLock({ create: { region: "fra", name: "oc-fresh" } }, context(call), () =>
-      runtime.boxd.create({ kind: "work", region: "fra", name: "oc-fresh", workId: "fresh", image: "oc-golden-2.4.1-2x8", autoSuspendSeconds: 0, autoHibernateSeconds: 7200 }, context(call, "boxd_ensure")),
+      runtime.boxd.create({ kind: "work", region: "fra", name: "oc-fresh", workId: "fresh", image: "oc-golden-2.4.1-2x8", ledger: "0a1b2c3d4e", autoSuspendSeconds: 0, autoHibernateSeconds: 7200 }, context(call, "boxd_ensure")),
     )
     // The create hands back its own target for the id boxd gave; the by-id check is not repeated in the same call.
     const target = info.owned.target

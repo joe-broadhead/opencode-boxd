@@ -8,13 +8,13 @@ import type { ChangeTarget, MachineId } from "../../src/ports.js"
 
 // A test builds a target by hand; in the plugin only checkOwned makes one.
 const target = { region: "nyc", name: "oc-review-api", machineId: "vm_0042" as MachineId, checkedAt: 1 } as unknown as ChangeTarget
-const work = { kind: "work", region: "nyc", name: "oc-review-api", workId: "review-api", image: "oc-golden-2.4.1-4x16", autoSuspendSeconds: 0, autoHibernateSeconds: 7200 } as const
+const work = { kind: "work", region: "nyc", name: "oc-review-api", workId: "review-api", image: "oc-golden-2.4.1-4x16", ledger: "0a1b2c3d4e", autoSuspendSeconds: 0, autoHibernateSeconds: 7200 } as const
 
 describe("argv", () => {
   test("a work's create: its image, the plugin's labels, the cost bounds, and the lease only when asked", () => {
     expect(argv.createWorkArgs(work)).toEqual([
       "machine", "new", "oc-review-api", "--region", "nyc", "--from-snapshot", "oc-golden-2.4.1-4x16",
-      "--label", "owner=boxd", "--label", "role=session", "--label", "work=review-api",
+      "--label", "ledger=0a1b2c3d4e", "--label", "owner=boxd", "--label", "role=session", "--label", "work=review-api",
       "--auto-suspend-timeout", "0", "--auto-hibernate-timeout", "7200", "--idle-ignore-outbound=off", "--json",
     ])
     expect(argv.createWorkArgs({ ...work, leaseDays: 3 })).toContain("--delete-after")

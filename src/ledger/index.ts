@@ -16,6 +16,7 @@ export function createLedger(core: HostServices & Provider): LedgerPort {
 /** The port over one store; exported for the tests, which give their own store and clock. */
 export function ledgerPort(store: Ledger): LedgerPort {
   return {
+    id: (_context) => store.id(),
     get: (workId, _context) => store.get(workId),
     async phases(filter, _context) {
       const { works } = await store.refresh()

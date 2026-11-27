@@ -34,7 +34,8 @@ const errorOf = async (promise: Promise<unknown>) =>
 
 /** A machine labelled as this plugin's, with the helper already on it, as an earlier ensure leaves it. */
 async function owned(k: Kit, workId: string, over: Parameters<Kit["counter"]["fake"]["machine"]>[0] extends infer T ? Partial<T> : never = {}) {
-  const machine = k.counter.fake.machine({ name: `oc-${workId}`, region: "fra", labels: { owner: "boxd", role: "session", work: workId }, ...over })
+  const ledger = await k.services.ledger.id({ call: { callId: "owned", source: "boxd_ensure" } })
+  const machine = k.counter.fake.machine({ name: `oc-${workId}`, region: "fra", labels: { owner: "boxd", role: "session", work: workId, ledger }, ...over })
   await k.install(machine.region, machine.name, machine.id)
   return machine
 }
@@ -64,7 +65,9 @@ describe("boxd_ensure: a new work", () => {
     const created = k.calls().find((entry) => entry.startsWith("machine new"))!
     expect(created).toContain("--from-snapshot " + IMAGE)
     expect(created).toContain("--auto-suspend-timeout 0 --auto-hibernate-timeout 7200 --idle-ignore-outbound=off")
-    expect(created).toContain("--label owner=boxd --label role=session --label work=review-api")
+    const ledger = await k.services.ledger.id({ call: { callId: "id", source: "boxd_ensure" } })
+    expect(ledger).toMatch(/^[0-9a-f]{10}$/)
+    expect(created).toContain(`--label ledger=${ledger} --label owner=boxd --label role=session --label work=review-api`)
     expect(created).not.toContain("--delete-after")
     expect(created).not.toContain("--vcpu")
     const record = await k.record("review-api")
@@ -219,6 +222,31 @@ describe("boxd_ensure: adoption (L-b)", () => {
     expect(budgetProblems(row("boxd_ensure", "adopting"), k.counter.count(call.id))).toEqual([])
   })
 
+  test("an oc-<id> with the plugin's labels but no ledger label gets only the ledger label", async () => {
+    const k = await kit()
+    const machine = await owned(k, "older", { labels: { owner: "boxd", role: "session", work: "older" } })
+    k.reset()
+    const result = (await k.runs.boxd_ensure({ workId: "older" }, k.call())) as EnsureResult
+    expect(result).toMatchObject({ state: "ready", machineId: machine.id, adopted: true })
+    const ledger = await k.services.ledger.id({ call: { callId: "id", source: "boxd_ensure" } })
+    expect(k.calls().filter((entry) => entry.startsWith("machine label"))).toEqual([`machine label set ${machine.id} ledger ${ledger} --region fra`])
+  })
+
+  test("an oc-<id> that carries another ledger's label is refused NOT_OURS and keeps it; adopt: true takes it over", async () => {
+    const k = await kit()
+    const labels = { owner: "boxd", role: "session", work: "theirs", ledger: "ffffffffff" }
+    const machine = await owned(k, "theirs", { labels })
+    const labelsOf = () => k.counter.fake.read().machines.find((entry) => entry.id === machine.id)?.labels
+    const error = await errorOf(k.runs.boxd_ensure({ workId: "theirs" }, k.call()))
+    expect(error.code).toBe("NOT_OURS")
+    expect(error.what).toContain("another ledger")
+    expect(k.calls().filter((entry) => entry.startsWith("machine label"))).toEqual([])
+    expect(labelsOf()).toMatchObject({ ledger: "ffffffffff" })
+    const adopted = (await k.runs.boxd_ensure({ workId: "theirs", adopt: true }, k.call())) as EnsureResult
+    expect(adopted).toMatchObject({ state: "ready", machineId: machine.id, adopted: true })
+    expect(labelsOf()).toMatchObject({ ledger: await k.services.ledger.id({ call: { callId: "id", source: "boxd_ensure" } }) })
+  })
+
   test("an oc-<id> without the labels is refused NOT_OURS, with no setup, clone or resize; adopt: true takes it over", async () => {
     const k = await kit()
     const machine = k.counter.fake.machine({ name: "oc-stranger", region: "fra", labels: { team: "data" } })
@@ -227,7 +255,7 @@ describe("boxd_ensure: adoption (L-b)", () => {
     expect(k.calls().filter((entry) => !entry.startsWith("machine list"))).toEqual([])
     const adopted = (await k.runs.boxd_ensure({ workId: "stranger", adopt: true }, k.call())) as EnsureResult
     expect(adopted).toMatchObject({ state: "ready", machineId: machine.id, adopted: true })
-    expect(k.counter.fake.read().machines.find((entry) => entry.id === machine.id)?.labels).toMatchObject({ owner: "boxd", role: "session", work: "stranger", team: "data" })
+    expect(k.counter.fake.read().machines.find((entry) => entry.id === machine.id)?.labels).toMatchObject({ owner: "boxd", role: "session", work: "stranger", team: "data", ledger: await k.services.ledger.id({ call: { callId: "id", source: "boxd_ensure" } }) })
   })
 
   test("two regions holding oc-<id> answer NOT_OURS naming both", async () => {
@@ -790,7 +818,7 @@ describe("boxd_reassign (design §3.10)", () => {
     const moved = await k.record("review-api")
     expect(moved).toMatchObject({ state: "open", machineId: machine.id, model: "anthropic/claude-sonnet-4-5", title: "Review the API" })
     expect(moved?.pendingRename).toBeUndefined()
-    expect(k.counter.fake.read().machines.find((entry) => entry.id === machine.id)).toMatchObject({ name: "oc-review-api", labels: { work: "review-api" } })
+    expect(k.counter.fake.read().machines.find((entry) => entry.id === machine.id)).toMatchObject({ name: "oc-review-api", labels: { work: "review-api", ledger: await k.services.ledger.id({ call: { callId: "id", source: "boxd_ensure" } }) } })
   })
 
   test("refused NOT_REASSIGNABLE for a work with a session, uploaded files, a dirty tree, or an open to", async () => {

@@ -36,7 +36,7 @@ const fixture = JSON.parse(readFileSync(fileURLToPath(new URL("../fixtures/boxd-
 const HELP = fixture.verbs
 
 const target = { region: "fra", machineId: "vm_0042" } as unknown as ChangeTarget
-const work: CreateWork = { kind: "work", region: "fra", name: "oc-review-api", workId: "review-api", image: "oc-golden-2.4.1-2x8", autoSuspendSeconds: 0, autoHibernateSeconds: 7200 }
+const work: CreateWork = { kind: "work", region: "fra", name: "oc-review-api", workId: "review-api", image: "oc-golden-2.4.1-2x8", ledger: "0a1b2c3d4e", autoSuspendSeconds: 0, autoHibernateSeconds: 7200 }
 const builder: CreateBuilder = { kind: "builder", region: "fra", name: "oc-gb-fra-4x16-ab12", size: "4x16", base: "stock", deleteAfter: "2h" }
 
 /** Every builder's argv, and the recorded verb it must belong to. */

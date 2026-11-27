@@ -13,6 +13,7 @@ import {
   BUILDER_LABELS,
   CALL_BOUND_MS,
   TIMEOUTS,
+  LEDGER_LABEL,
   WORK_LABELS,
   type BoxdPort,
   type ChangeTarget,
@@ -285,7 +286,7 @@ export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
         region: input.region,
         status: "starting",
         size: input.kind === "builder" ? input.size : null,
-        labels: input.kind === "work" ? { ...WORK_LABELS, work: input.workId } : { ...BUILDER_LABELS },
+        labels: input.kind === "work" ? { ...WORK_LABELS, work: input.workId, [LEDGER_LABEL]: input.ledger } : { ...BUILDER_LABELS },
         sharing: "private",
         isolated: false,
       }

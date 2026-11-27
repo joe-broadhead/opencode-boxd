@@ -10,12 +10,13 @@
  *   `mtimeMs` changed; closed works are not loaded unless asked for.
  */
 import { AsyncLocalStorage } from "node:async_hooks"
-import { lstat, mkdir, open, readdir, readFile, rename, rmdir, stat } from "node:fs/promises"
+import { randomBytes } from "node:crypto"
+import { link, lstat, mkdir, open, readdir, readFile, rename, rmdir, stat, unlink } from "node:fs/promises"
 import { basename, dirname, join, resolve, sep } from "node:path"
 import { boxdError, BoxdError } from "../errors.js"
 import { EventLog } from "./events.js"
 import type { Expected, LedgerFile, StagedFile, StagedFolder } from "../ports.js"
-import { commitFile, copyFileAtomic, type Digest, digestFile, ensureDir, errnoOf, exists, FILE_MODE, fsyncDir, randomPart, remove, writeJsonAtomic } from "./fsx.js"
+import { commitFile, copyFileAtomic, type Digest, digestFile, ensureDir, errnoOf, exists, FILE_MODE, fsyncDir, randomPart, remove, tempBeside, writeFileAtomic, writeJsonAtomic } from "./fsx.js"
 import { alive, LockSet, type LockHandle } from "./lock.js"
 import {
   LEDGER_FORMAT,
@@ -30,6 +31,8 @@ import {
 
 /** The work id rule (design §2.1); also the only folder names the ledger reads under `works/`. */
 export const WORK_ID = /^[a-z][a-z0-9-]{0,24}$/
+/** A ledger id: short, and a valid boxd label value. */
+const LEDGER_ID = /^[0-9a-f]{10}$/
 /** How long a write waits for another process's work lock before it answers `LEDGER_LOCKED`. */
 export const WORK_LOCK_WAIT_MS = 10_000
 
@@ -88,6 +91,7 @@ export class Ledger {
   private readonly lockTiming: { readonly heartbeatMs?: number; readonly staleMs?: number }
   private readonly cache = new Map<string, Cached>()
   private indexLoaded = false
+  private ledgerId: string | undefined
   private readonly queues = new Map<string, Promise<unknown>>()
   /** The work locks this async call holds, by work id: what `fence` checks before every rename. */
   private readonly held = new AsyncLocalStorage<ReadonlyMap<string, LockHandle>>()
@@ -103,6 +107,45 @@ export class Ledger {
       ...(options.now ? { now: options.now } : {}),
       ...(options.eventsRotateBytes ? { rotateBytes: options.eventsRotateBytes } : {}),
     })
+  }
+
+  // ── Identity ─────────────────────────────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * This ledger's id: ten lowercase hex digits in `<root>/ledger-id`, made once. The file is written whole beside the
+   * id and linked into place, so a process that loses the race reads the winner's id and never a half-written one.
+   */
+  async id(): Promise<string> {
+    if (this.ledgerId) return this.ledgerId
+    const path = join(this.root, LEDGER_PATHS.id)
+    try {
+      const read = async () => {
+        const text = (await readFile(path, "utf8")).trim()
+        if (!LEDGER_ID.test(text)) throw boxdError("LEDGER_FAILED", `The ledger's id file ${path} does not hold a ledger id (ten lowercase hex digits).`)
+        return text
+      }
+      let found: string | undefined = await read().catch((error) => {
+        if (errnoOf(error) === "ENOENT") return undefined
+        throw error
+      })
+      if (!found) {
+        await ensureDir(this.root)
+        const temp = tempBeside(path)
+        await writeFileAtomic(temp, `${randomBytes(5).toString("hex")}\n`)
+        try {
+          await link(temp, path)
+        } catch (error) {
+          if (errnoOf(error) !== "EEXIST") throw error
+        } finally {
+          await unlink(temp).catch(() => undefined)
+        }
+        found = await read()
+      }
+      this.ledgerId = found
+      return found
+    } catch (error) {
+      throw ledgerError("read its id", error)
+    }
   }
 
   // ── Paths ────────────────────────────────────────────────────────────────────────────────────────────────────────
