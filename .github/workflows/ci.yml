@@ -5,8 +5,8 @@ name: CI
 #
 # It runs locally too: npm ci --ignore-scripts && npm run check
 #
-# Public repository: a pull request from a fork must never reach a self-hosted runner. The runner rule below keeps
-# every fork pull request on ubuntu-24.04, and lets this repository's own runs use the org's public runner when set.
+# Public repository: the job runs on the org's `boxd-public` runner, named directly. A pull request from a fork waits
+# for approval before it runs.
 
 on:
   pull_request:
@@ -24,7 +24,7 @@ concurrency:
 jobs:
   ci:
     name: ci
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (vars.CI_RUNNER_PUBLIC || 'ubuntu-24.04') || 'ubuntu-24.04' }}
+    runs-on: boxd-public
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -1,0 +1,4 @@
+# actionlint does not know the org runner label, so it is declared here.
+self-hosted-runner:
+  labels:
+    - boxd-public
