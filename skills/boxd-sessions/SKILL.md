@@ -13,7 +13,9 @@ before its first call.
 
 1. `tools.boxd.ensure({ workId })` makes the work exist, set up and ready, and converges an existing work to the input:
    `region`, `size`, `model`, `repo` and `ref` to clone, `git` (`{ name, email }`, never a token), `directory` for the
-   folder here. It waits until the guest's OpenCode is up.
+   folder here, and `env`, the names of the machine's variables the work's OpenCode may read, such as
+   `["GH_TOKEN"]`. The work's OpenCode server starts without every other variable of the machine, but a session can still read them from boxd's variables file, a login shell or sudo; omit `env` to keep the recorded
+   names, and pass `[]` to declare none. It waits until the guest's OpenCode is up.
 2. `tools.boxd.submit({ workId, text })` admits a prompt and returns; it does not wait for the model. `mode: "steer"`
    (the default) lands at the running session's next step, `"queue"` after the run, and `"interrupt"` stops the run first.
    `files: [{ from, to }]` copies files here in. A hibernated machine is woken.

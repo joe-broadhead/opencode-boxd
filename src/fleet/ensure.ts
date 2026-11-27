@@ -73,8 +73,10 @@ const ROOT_WALK_STEPS = 16
 
 const WORK_ID = /^[a-z][a-z0-9-]{0,24}$/
 const REF = /^[A-Za-z0-9._/-]{1,120}$/
+const ENV_NAME = /^[A-Z_][A-Z0-9_]{0,63}$/
+const ENV_LIMIT = 64
 const EMAIL = /^[^\s@<>]+@[^\s@<>]+$/
-const ITEM_KEYS = new Set(["workId", "region", "size", "model", "git", "repo", "ref", "directory", "title", "wait", "repair", "adopt"])
+const ITEM_KEYS = new Set(["workId", "region", "size", "model", "git", "repo", "ref", "directory", "title", "env", "wait", "repair", "adopt"])
 
 /** What every C1 run shares: the services, this process's creates in flight, the golden builds, the recent changes. */
 export interface Machines {
@@ -107,6 +109,8 @@ export interface EnsureItem {
   /** The laptop folder, resolved inside the project or an allowed root; undefined keeps the recorded one. */
   readonly directory?: string
   readonly title?: string
+  /** The variable names the work declares; an empty list declares none. */
+  readonly env?: readonly string[]
   readonly wait: Wait
   readonly repair: boolean
   readonly adopt: boolean
@@ -161,6 +165,14 @@ export async function parseItem(raw: unknown, services: FleetServices, defaultWa
     directory = await inField(field("directory"), () => resolveLaptopPath(raw.directory as string, rootsOf(services.projectDirectory, services.options.allowedRoots)))
   }
   if (raw.title !== undefined && (typeof raw.title !== "string" || raw.title.length > 200 || /[\n\r\0]/.test(raw.title))) throw invalid(field("title"), `${field("title")} must be one line of at most 200 characters.`)
+  let env: readonly string[] | undefined
+  if (raw.env !== undefined) {
+    if (!Array.isArray(raw.env) || raw.env.length > ENV_LIMIT || !raw.env.every((name) => typeof name === "string" && ENV_NAME.test(name))) {
+      throw invalid(field("env"), `${field("env")} must be a list of at most ${ENV_LIMIT} variable names, each uppercase letters, digits and underscores, such as "GH_TOKEN".`)
+    }
+    if (raw.env.includes("OPENCODE_PASSWORD")) throw invalid(field("env"), `${field("env")} cannot declare OPENCODE_PASSWORD: the guest sets it.`)
+    env = [...new Set(raw.env as string[])].sort()
+  }
   return {
     workId,
     ...(region ? { region } : {}),
@@ -170,6 +182,7 @@ export async function parseItem(raw: unknown, services: FleetServices, defaultWa
     ...(repo ? { repo } : {}),
     ...(directory ? { directory } : {}),
     ...(raw.title !== undefined ? { title: raw.title as string } : {}),
+    ...(env ? { env } : {}),
     wait,
     repair,
     adopt: raw.adopt === true,
@@ -322,7 +335,7 @@ export async function sessionState(machines: Machines, record: WorkRecord, targe
 export async function runSetup(machines: Machines, target: ChangeTarget, record: WorkRecord, input: { readonly workId: string; readonly repair: boolean }, op: OpContext) {
   const { guest, hostVersion } = machines.services
   return guestStep(machines, target, input, op, () =>
-    guest.setup(target, { directory: record.guestDirectory, ...(record.repo ? { repo: record.repo } : {}), ...(record.git ? { git: record.git } : {}), opencode: hostVersion ?? "" }, op),
+    guest.setup(target, { directory: record.guestDirectory, ...(record.repo ? { repo: record.repo } : {}), ...(record.git ? { git: record.git } : {}), env: record.env ?? [], opencode: hostVersion ?? "" }, op),
   )
 }
 
@@ -393,7 +406,7 @@ export async function checkBudget(machines: Machines, op: OpContext): Promise<vo
 }
 
 /** A new record for a work, before its create or its adoption. */
-export function newRecord(machines: Machines, input: { readonly workId: string; readonly region: Region; readonly size: Size; readonly image: string; readonly laptopDirectory: string } & Partial<Pick<WorkRecord, "repo" | "git" | "model" | "title">>): WorkRecord {
+export function newRecord(machines: Machines, input: { readonly workId: string; readonly region: Region; readonly size: Size; readonly image: string; readonly laptopDirectory: string } & Partial<Pick<WorkRecord, "repo" | "git" | "env" | "model" | "title">>): WorkRecord {
   const at = new Date(machines.now()).toISOString()
   return {
     format: LEDGER_FORMAT,
@@ -408,6 +421,7 @@ export function newRecord(machines: Machines, input: { readonly workId: string; 
     guestDirectory: workDirectory(input.workId),
     ...(input.repo ? { repo: input.repo } : {}),
     ...(input.git ? { git: input.git } : {}),
+    ...(input.env ? { env: input.env } : {}),
     ...(input.model ? { model: input.model } : {}),
     ...(input.title ? { title: input.title } : {}),
     createdAt: at,
@@ -626,7 +640,7 @@ async function createOrAdopt(machines: Machines, item: EnsureItem, context: Item
   const laptopDirectory = item.directory ?? previous?.laptopDirectory ?? machines.services.projectDirectory
   const image = imageName(options.goldenPrefix, machines.services.hostVersion, size)
   const fresh = (region: Region) =>
-    newRecord(machines, { workId: item.workId, region, size, image, laptopDirectory, ...(item.repo ? { repo: item.repo } : {}), ...((item.git ?? options.git) ? { git: item.git ?? options.git } : {}), ...(item.model ? { model: item.model } : {}), ...(item.title ? { title: item.title } : {}) })
+    newRecord(machines, { workId: item.workId, region, size, image, laptopDirectory, ...(item.repo ? { repo: item.repo } : {}), ...((item.git ?? options.git) ? { git: item.git ?? options.git } : {}), ...(item.env ? { env: item.env } : {}), ...(item.model ? { model: item.model } : {}), ...(item.title ? { title: item.title } : {}) })
 
   const asked = machines.now()
   const listing = await boxd.list({ maxAgeMs: 0 }, op)
@@ -732,12 +746,13 @@ async function known(machines: Machines, record: WorkRecord & { readonly region:
   return { target: checked.target, record: current, created: false, adopted: false, woke: checked.woke }
 }
 
-/** The input's settings, recorded: the default model, the git identity, the repository, the folder and the title. */
+/** The input's settings, recorded: the default model, the git identity, the declared variables, the repository, the folder and the title. */
 function withInput(machines: Machines, record: WorkRecord, item: EnsureItem, notify: string | undefined): WorkRecord {
   return {
     ...record,
     ...(item.model ? { model: item.model } : {}),
     ...(item.git ? { git: item.git } : record.git === undefined && machines.services.options.git ? { git: machines.services.options.git } : {}),
+    ...(item.env ? { env: item.env } : {}),
     ...(item.repo ? { repo: item.repo } : {}),
     ...(item.directory ? { laptopDirectory: item.directory } : {}),
     ...(item.title ? { title: item.title } : {}),

@@ -19,6 +19,7 @@ import json
 import os
 import re
 import secrets
+import shlex
 import shutil
 import signal
 import sqlite3
@@ -55,6 +56,7 @@ PASSWORD_PATH = HELPER_HOME + "/password"
 SERVER_LOG = HELPER_HOME + "/server.log"
 SERVER_PID = HELPER_HOME + "/server.pid"
 SETUP_LOG = HELPER_HOME + "/setup.log"
+ENV_NAMES = HELPER_HOME + "/env.json"
 CLONES = HELPER_HOME + "/clones"
 EXPORTS = HELPER_HOME + "/exports"
 HARVEST = HELPER_HOME + "/harvest"
@@ -228,10 +230,74 @@ def ensure_password():
         write_file(PASSWORD_PATH, secrets.token_hex(24).encode(), 0o600)
 
 
-def start_server():
-    """Starts `opencode serve` on localhost with the guest password, detached, logging to server.log."""
+# What a work's OpenCode, and every command it runs, starts with besides the variables the work declares: the machine's
+# basics. Everything else the machine holds (the operator's tokens and keys among it) is left out of the server's
+# environment. This is not a barrier: the guest user can still read PROFILE_ENV, source it in a login shell or use sudo.
+BASIC_NAMES = frozenset(
+    "PATH HOME USER LOGNAME SHELL LANG LANGUAGE TERM TZ TMPDIR XDG_RUNTIME_DIR "
+    "SSL_CERT_FILE SSL_CERT_DIR NODE_EXTRA_CA_CERTS REQUESTS_CA_BUNDLE CURL_CA_BUNDLE "
+    "HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy BOXD_VM_ID BOXD_VM_NAME BOXD_VM_HOST".split()
+)
+ENV_NAME = re.compile(r"[A-Z_][A-Z0-9_]{0,63}")
+ENV_LIMIT = 64
+# boxd writes the machine's variables here at every boot; a command that does not start a login shell lacks them.
+PROFILE_ENV = "/etc/profile.d/boxd-env.sh"
+
+
+def env_names(value):
+    """The variable names a request declares: a sorted, checked list."""
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > ENV_LIMIT or not all(isinstance(name, str) and ENV_NAME.fullmatch(name) for name in value):
+        fail("NAME_INVALID", f"env must be a list of at most {ENV_LIMIT} variable names such as GH_TOKEN")
+    if "OPENCODE_PASSWORD" in value:
+        fail("NAME_INVALID", "env cannot declare OPENCODE_PASSWORD: the helper sets it")
+    return sorted(set(value))
+
+
+def profile_env():
+    """The variables boxd wrote for the machine, by name."""
+    found = {}
+    try:
+        with open(local(PROFILE_ENV), encoding="utf8") as handle:
+            for line in handle:
+                name, equals, rest = line.strip().removeprefix("export ").partition("=")
+                if equals and ENV_NAME.fullmatch(name):
+                    try:
+                        parts = shlex.split(rest)
+                    except ValueError:
+                        continue
+                    found[name] = parts[0] if parts else ""
+    except OSError:
+        pass
+    return found
+
+
+def session_env(names):
+    """The environment of a work's OpenCode: the machine's basics and the declared names, from this process or the
+    machine's own variables file. An undeclared variable is dropped from the server's environment, and so from the commands it starts directly."""
+    source = {**profile_env(), **os.environ}
+    return {name: value for name, value in source.items() if name in names or name in BASIC_NAMES or name.startswith("LC_")}
+
+
+def applied_env_names():
+    """The names the running server was started with; None when the helper never recorded them."""
+    try:
+        with open(ENV_NAMES, encoding="utf8") as handle:
+            names = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    return names if isinstance(names, list) else None
+
+
+def start_server(names=None):
+    """Starts `opencode serve` on localhost with the guest password, detached, logging to server.log. It runs with the
+    machine's basics and the declared names only; without names it keeps the ones it was last started with."""
     ensure_password()
-    env = dict(os.environ)
+    if names is None:
+        names = applied_env_names() or []
+    write_file(ENV_NAMES, json.dumps(names).encode(), 0o600)
+    env = session_env(names)
     env["OPENCODE_PASSWORD"] = read_password()
     with open(SERVER_LOG, "ab") as log:
         os.chmod(SERVER_LOG, 0o600)
@@ -735,10 +801,18 @@ def git_identity(value):
 def action_setup(request):
     directory = work_directory(request.get("directory"))
     ensure_password()
+    names = env_names(request.get("env"))
     version = opencode_version()
     state = server_state(request)
     if state == "down":
-        start_server()
+        start_server(names)
+        state = "starting"
+    elif applied_env_names() != names:
+        # The server runs with other variables (or an older helper's whole environment): restart it, never mid-run.
+        if http(request, "GET", "/api/session/active"):
+            fail("SESSION_BUSY", "the work's OpenCode runs with other variables and is busy; ensure again when it is idle")
+        stop_server()
+        start_server(names)
         state = "starting"
     git_identity(request.get("git"))
     workspace = "ready"
@@ -1139,7 +1213,7 @@ def action_scrub(request):
             # boxd writes it as root at every boot; the helper runs as boxd, which has passwordless sudo.
             subprocess.run(["sudo", "-n", "rm", "-f", env_file], check=True, capture_output=True)
         removed.append(env_file)
-    for path in (PASSWORD_PATH, EXPORTS, HARVEST, STAGING, IMPORTS, CLONES, SERVER_LOG, SETUP_LOG, local(WORK_ROOT)):
+    for path in (PASSWORD_PATH, ENV_NAMES, EXPORTS, HARVEST, STAGING, IMPORTS, CLONES, SERVER_LOG, SETUP_LOG, local(WORK_ROOT)):
         if remove(path):
             removed.append(guest(path))
     emit({"removed": removed})

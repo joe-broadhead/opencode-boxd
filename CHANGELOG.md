@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- A work's OpenCode server starts with the machine's basics and the variable names the work declares in `ensure` as
+  `env`, without the operator's other variables. A session can still read them from boxd's variables file, a login shell
+  or sudo.
+
 ## 0.0.0 (2026-11-25)
 
 The first release: an OpenCode plugin for boxd, on OpenCode 2.4.1 and plugin-contract v0.
