@@ -232,6 +232,21 @@ describe("boxd_ensure: adoption (L-b)", () => {
     expect(k.calls().filter((entry) => entry.startsWith("machine label"))).toEqual([`machine label set ${machine.id} ledger ${ledger} --region fra`])
   })
 
+  test("an oc-<id> that carries another ledger's label is refused NOT_OURS and keeps it; adopt: true takes it over", async () => {
+    const k = await kit()
+    const labels = { owner: "boxd", role: "session", work: "theirs", ledger: "ffffffffff" }
+    const machine = await owned(k, "theirs", { labels })
+    const labelsOf = () => k.counter.fake.read().machines.find((entry) => entry.id === machine.id)?.labels
+    const error = await errorOf(k.runs.boxd_ensure({ workId: "theirs" }, k.call()))
+    expect(error.code).toBe("NOT_OURS")
+    expect(error.what).toContain("another ledger")
+    expect(k.calls().filter((entry) => entry.startsWith("machine label"))).toEqual([])
+    expect(labelsOf()).toMatchObject({ ledger: "ffffffffff" })
+    const adopted = (await k.runs.boxd_ensure({ workId: "theirs", adopt: true }, k.call())) as EnsureResult
+    expect(adopted).toMatchObject({ state: "ready", machineId: machine.id, adopted: true })
+    expect(labelsOf()).toMatchObject({ ledger: await k.services.ledger.id({ call: { callId: "id", source: "boxd_ensure" } }) })
+  })
+
   test("an oc-<id> without the labels is refused NOT_OURS, with no setup, clone or resize; adopt: true takes it over", async () => {
     const k = await kit()
     const machine = k.counter.fake.machine({ name: "oc-stranger", region: "fra", labels: { team: "data" } })

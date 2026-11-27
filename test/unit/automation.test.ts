@@ -443,6 +443,17 @@ describe("the ledger label", () => {
     expect(labelled(f)).toEqual([`setLabels vm_a ledger=${LEDGER_ID}`])
   })
 
+  test("a work whose machine the listing does not show is not listed again on every pass", async () => {
+    const { f, loop } = setup({ works: [work("a", { phase: "busy", idleSince: undefined })], records: [record("a"), record("gone")] })
+    unlabelled(f, "a")
+    const one = loop()
+    await one.tick()
+    await one.tick()
+    await one.tick()
+    expect(labelled(f)).toEqual([`setLabels vm_a ledger=${LEDGER_ID}`])
+    expect(f.calls.filter((call) => call === "list")).toHaveLength(1)
+  })
+
   test("without consent nothing is labelled", async () => {
     const { f, loop } = setup({ options: { access: "read-only" }, works: [work("a")], records: [record("a")] })
     unlabelled(f, "a")

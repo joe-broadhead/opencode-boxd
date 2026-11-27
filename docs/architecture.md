@@ -32,8 +32,9 @@ Every work's machine carries the label `ledger=<id>`, next to `owner=boxd`, `rol
 the ledger that registered the machine. It is ten lowercase hex digits, made once on first use and kept in the file
 `ledger-id` in the ledger's root, so it is a valid boxd label value and survives restarts. `boxd_ensure` sets the label
 when it creates a machine and when it adopts one, and `boxd_reassign` sets it with the other labels. The automation pass,
-held by one process, sets it once on every open work's machine that has none; a machine that already carries another
-ledger's label is left alone. The label lets one operator tell another operator's live work from a machine that no work
+held by one process, sets it once per process on every open work's machine that has none; a machine that already carries
+another ledger's label is left alone. `boxd_ensure` refuses to adopt such a machine, and only `adopt: true` replaces the
+label. The label lets one operator tell another operator's live work from a machine that no work
 owns, because a ledger lives on its operator's machine.
 
 ## What is cached

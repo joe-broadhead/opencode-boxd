@@ -215,16 +215,21 @@ export function roomFor(context: ItemContext, stepMs: number, state: "creating" 
 }
 
 /**
- * A machine carries the plugin's labels for this work: the owner and `work=<id>` (L-b). The
- * same rule as the boxd port's `ownsLabels`, for the work being adopted.
+ * A machine carries the plugin's labels for this work: the owner and `work=<id>` (L-b), and no other ledger's `ledger`
+ * label: a machine another ledger registered is that operator's live work, not one to take over. The owner and work
+ * rule is the boxd port's `ownsLabels`, for the work being adopted.
  */
-export function carriesLabels(labels: Readonly<Record<string, string>>, workId: string): boolean {
-  return labels.work === workId && labels.owner === WORK_LABELS.owner
+export function carriesLabels(labels: Readonly<Record<string, string>>, workId: string, ledgerId: string): boolean {
+  return labels.work === workId && labels.owner === WORK_LABELS.owner && (labels[LEDGER_LABEL] === undefined || labels[LEDGER_LABEL] === ledgerId)
 }
 
-/** The labels a machine still needs to be this work's: owner, role, work and the ledger that registers it. */
-export function missingLabels(labels: Readonly<Record<string, string>>, workId: string, ledgerId: string): Record<string, string> {
-  const wanted: Record<string, string> = { ...WORK_LABELS, work: workId, [LEDGER_LABEL]: ledgerId }
+/**
+ * The labels a machine still needs to be this work's: owner, role, work and the ledger that registers it. Another
+ * ledger's label is replaced only by an explicit `adopt: true`; otherwise it stays as the evidence it is.
+ */
+export function missingLabels(labels: Readonly<Record<string, string>>, workId: string, ledgerId: string, adopt = false): Record<string, string> {
+  const wanted: Record<string, string> = { ...WORK_LABELS, work: workId }
+  if (adopt || labels[LEDGER_LABEL] === undefined) wanted[LEDGER_LABEL] = ledgerId
   return Object.fromEntries(Object.entries(wanted).filter(([key, value]) => labels[key] !== value))
 }
 
@@ -478,8 +483,8 @@ async function fetchIfThere(machines: Machines, region: Region, name: MachineNam
  * ownership, so a work with a recorded id is only ever resolved by `checkOwned` against that id.
  */
 async function land(machines: Machines, found: FetchedMachine, input: { readonly workId: string; readonly adopt: boolean }, op: OpContext): Promise<Landed> {
-  if (!carriesLabels(found.labels, input.workId) && !input.adopt) {
-    throw boxdError("NOT_OURS", `${found.name} in ${found.region} does not carry this plugin's labels (owner=boxd and work=${input.workId}), so it is not adopted. Pass adopt: true to take it over.`, { region: found.region })
+  if (!carriesLabels(found.labels, input.workId, await machines.services.ledger.id(op)) && !input.adopt) {
+    throw boxdError("NOT_OURS", `${found.name} in ${found.region} does not carry this plugin's labels (owner=boxd and work=${input.workId}), or carries another ledger's label, so it is not adopted. Pass adopt: true to take it over.`, { region: found.region })
   }
   if (found.sharing === "shared") throw boxdError("MACHINE_SHARED", `${found.name} in ${found.region} is shared with the organisation.`)
   if (found.isolated) throw boxdError("MACHINE_ISOLATED", `${found.name} in ${found.region} is isolated.`)
@@ -614,7 +619,7 @@ async function settleAdopted(machines: Machines, landed: Landed, record: WorkRec
   if (asleep) await checkBudget(machines, op)
   const resizeTo = item.size && landed.info.size && item.size !== landed.info.size ? item.size : undefined
   await runner.withMachineLock({ id: target.machineId }, op, async () => {
-    const labels = missingLabels(landed.info.labels, item.workId, ledgerId)
+    const labels = missingLabels(landed.info.labels, item.workId, ledgerId, item.adopt)
     if (Object.keys(labels).length > 0) await boxd.setLabels(target, labels, op)
     if (asleep) {
       roomFor(context, TIMEOUTS.helperChange, "starting", "there is not enough time left in this call to wake the machine")
@@ -652,8 +657,8 @@ async function createOrAdopt(machines: Machines, item: EnsureItem, context: Item
     throw boxdError("NOT_OURS", `${name} exists in ${found.map((row) => row.region).join(" and ")}; a work has one machine, so nothing was changed. Remove or rename one of them with boxd machine.`, { regions: found.map((row) => row.region) })
   }
   const shown = found[0]
-  if (shown && !carriesLabels(shown.labels, item.workId) && !item.adopt) {
-    throw boxdError("NOT_OURS", `${name} in ${shown.region} does not carry this plugin's labels (owner=boxd and work=${item.workId}), so it is not adopted. Pass adopt: true to take it over.`, { region: shown.region })
+  if (shown && !carriesLabels(shown.labels, item.workId, await machines.services.ledger.id(op)) && !item.adopt) {
+    throw boxdError("NOT_OURS", `${name} in ${shown.region} does not carry this plugin's labels (owner=boxd and work=${item.workId}), or carries another ledger's label, so it is not adopted. Pass adopt: true to take it over.`, { region: shown.region })
   }
   const adopted = async (landed: Landed) => {
     const record = await recordLanded(machines, item, landed, previous?.state === "open" ? previous : fresh(landed.info.region), size, op)

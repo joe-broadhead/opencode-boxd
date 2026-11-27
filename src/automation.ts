@@ -353,7 +353,8 @@ export function automation(services: CostServices, seam: AutomationSeam = {}): A
   /**
    * Once per open work: the `ledger=<id>` label on its machine, when the listing shows none. Only the cleanup owner does
    * it. A machine that carries another ledger's label is left alone, and a work is read again only after its machine
-   * changes or `RETRY_MS` after a failure, so a pass with every machine labelled reads nothing from boxd.
+   * changes or `RETRY_MS` after a failure. A machine the listing does not show counts as settled too, until its id
+   * changes. So a pass with every machine settled reads nothing from boxd, and a restart reads once.
    */
   async function labelMachines(): Promise<void> {
     try {
@@ -372,7 +373,10 @@ export function automation(services: CostServices, seam: AutomationSeam = {}): A
       const { workId, region, machine, machineId } = record
       if (!region || !machineId || controller.signal.aborted || !(await stillOwner())) return
       const row = listing.machines.find((candidate) => candidate.name === machine && candidate.region === region && (candidate.id === null || candidate.id === machineId))
-      if (!row) continue
+      if (!row) {
+        labelled.set(workId, machineId)
+        continue
+      }
       if (row.labels[LEDGER_LABEL] === undefined) {
         const context = op(tag())
         try {
