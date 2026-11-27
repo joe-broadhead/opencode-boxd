@@ -407,6 +407,31 @@ describe("boxd_ensure: a work acts only with the identity it was given", () => {
     expect(result).toMatchObject({ state: "ready", workId: "given" })
   })
 
+  test("a real token in boxd's variables file is refused, and a placeholder there passes", async () => {
+    const k = await kit()
+    const machine = await known(k, "profile")
+    const file = join(k.counter.fake.disk(machine), "etc/profile.d/boxd-env.sh")
+    mkdirSync(join(k.counter.fake.disk(machine), "etc/profile.d"), { recursive: true })
+    // The helper runs without a login shell, so nothing of this is in its own environment.
+    writeFileSync(file, `export GH_TOKEN='${REAL}'\nexport ANTHROPIC_API_KEY='${GIVEN}'\n`)
+    const error = await refused(k, "profile")
+    expect(error.what).toContain("GH_TOKEN is a real GitHub credential")
+    expect(error.what).not.toContain("ANTHROPIC_API_KEY")
+    expect(error.what).not.toContain(REAL)
+    writeFileSync(file, `export GH_TOKEN='${GIVEN}'\nexport ANTHROPIC_API_KEY='${GIVEN}'\n`)
+    expect(await k.runs.boxd_ensure({ workId: "profile" }, k.call())).toMatchObject({ state: "ready", workId: "profile" })
+  })
+
+  test("each line of a git credentials file must be a placeholder", async () => {
+    const k = await kit()
+    const machine = await known(k, "lines")
+    const home = join(k.counter.fake.disk(machine), "home/boxd")
+    writeFileSync(join(home, ".git-credentials"), `https://app:${GIVEN}@github.com\n${REAL}\n`)
+    const error = await refused(k, "lines")
+    expect(error.what).toContain(".git-credentials holds a GitHub login")
+    expect(error.what).not.toContain(REAL)
+  })
+
   test("a work given the App's placeholder through git, gh's login or a stored credential passes", async () => {
     const k = await kit()
     const machine = await known(k, "app")

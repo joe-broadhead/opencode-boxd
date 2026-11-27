@@ -27,8 +27,8 @@ reads a guest.
 - Model credentials are never baked into a golden image; a base that holds `auth.json` is refused.
 - A work acts only with the identity it was given, never its operator's. `ensure` and `submit` refuse a work with
   `ACTS_AS_OPERATOR` when its machine holds a real token or key instead of a placeholder bound to one host (GitHub,
-  model or cloud), a stored `gh`, git, AWS or gcloud login with a real value or in a form the check cannot read as a
-  placeholder (the check fails closed), or a git login for github.com with a real value, as boxd's git integration
+  model or cloud), in the helper's environment or in boxd's variables file `/etc/profile.d/boxd-env.sh`, a stored `gh`, git, AWS or gcloud login with a real value or in a form the check cannot read as a
+  placeholder (the check fails closed, line by line for `.git-credentials`), or a git login for github.com with a real value, as boxd's git integration
   gives on a private machine. A placeholder is the identity the work was given, so
   `GH_TOKEN` as a `bxds_` placeholder with gh's credential helper passes. The refusal names what it found, never a
   value. `ensure` with `wait: "none"` does not set the machine up, so it does not check; the next `ensure` or `submit`

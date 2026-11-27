@@ -817,6 +817,7 @@ IDENTITY_FILES = (
     ("cloud", HOME + "/.config/gcloud/application_default_credentials.json", r"refresh_token[\"']?\s*[:=]\s*[\"']?([^\s\"',]+)"),
 )
 CREDENTIAL_SECONDS = 10
+PER_LINE = frozenset((HOME + "/.git-credentials",))
 
 
 def file_holds(path, pattern):
@@ -828,8 +829,13 @@ def file_holds(path, pattern):
         return False
     if not text.strip():
         return False
-    values = re.findall(pattern, text)
-    return not values or any(not value.startswith(PLACEHOLDER) for value in values)
+    # A credentials file holds one login a line, so each line must show its own placeholder.
+    parts = [line for line in text.splitlines() if line.strip()] if path in PER_LINE else [text]
+    for part in parts:
+        values = re.findall(pattern, part)
+        if not values or any(not value.startswith(PLACEHOLDER) for value in values):
+            return True
+    return False
 
 
 def git_github_login():
@@ -849,9 +855,11 @@ def git_github_login():
 def operator_findings():
     """What would make this machine act as its operator, as short names with no secret value in them."""
     found = []
+    # The variables boxd wrote for the machine count too: a command without a login shell lacks them, but the server a work declares them from has them.
+    source = {**profile_env(), **os.environ}
     for kind, names in IDENTITY_ENV:
         for name in names:
-            value = os.environ.get(name, "")
+            value = source.get(name, "")
             if value and not value.startswith(PLACEHOLDER):
                 found.append(f"{name} is a real {kind} credential")
     for kind, path, pattern in IDENTITY_FILES:
