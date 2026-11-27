@@ -1,7 +1,8 @@
-// The helper starts a work's OpenCode with the machine's basics and the variables the work declares, never the rest of
-// what the machine holds. The real guest/guest.py runs as a process against a folder that stands in for the machine's
-// disk, with an operator's variables in its environment and in boxd's variables file. The `opencode` on its PATH writes
-// the environment it was started with, so the test reads what a session, and every command it runs, would inherit.
+// The helper starts a work's OpenCode server with the machine's basics and the variables the work declares, without the
+// rest of what the machine holds. The real guest/guest.py runs as a process against a folder that stands in for the
+// machine's disk, with an operator's variables in its environment and in boxd's variables file. The `opencode` on its
+// PATH writes the environment it was started with, so the test proves the server's environment only. It does not prove
+// that a session cannot read an undeclared variable from the variables file, a login shell or sudo.
 import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { createHash } from "node:crypto"
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"

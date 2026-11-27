@@ -38,7 +38,7 @@ export const ENV = {
   items: { type: "string", pattern: "^[A-Z_][A-Z0-9_]{0,63}$" },
   maxItems: 64,
   description:
-    "The names of the machine's variables the work's OpenCode, and every command it runs, may read, such as [\"GH_TOKEN\"]. Names only, never values. Every other variable the machine holds, the operator's among them, is withheld; the machine's basics (PATH, HOME, locale, proxy and certificate settings) always pass. Recorded; an empty list declares none, and omitting it keeps the recorded list.",
+    "The names of the machine's variables the work's OpenCode, and every command it runs, may inherit, such as [\"GH_TOKEN\"]. Names only, never values. The OpenCode server starts without every other variable the machine holds, the operator's among them; the machine's basics (PATH, HOME, locale, proxy and certificate settings) always pass. This is not a barrier: a session can still read boxd's variables file, source it in a login shell, or use sudo. Recorded; an empty list declares none, and omitting it keeps the recorded list.",
 } satisfies JsonSchema
 export const REPO = string("An https://github.com/owner/repo URL, cloned into the guest folder when it is not a checkout yet. Stored and returned without userinfo.")
 export const REF = string("A branch or tag for the clone.")

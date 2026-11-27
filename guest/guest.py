@@ -231,7 +231,8 @@ def ensure_password():
 
 
 # What a work's OpenCode, and every command it runs, starts with besides the variables the work declares: the machine's
-# basics. Everything else the machine holds (the operator's tokens and keys among it) never reaches the session.
+# basics. Everything else the machine holds (the operator's tokens and keys among it) is left out of the server's
+# environment. This is not a barrier: the guest user can still read PROFILE_ENV, source it in a login shell or use sudo.
 BASIC_NAMES = frozenset(
     "PATH HOME USER LOGNAME SHELL LANG LANGUAGE TERM TZ TMPDIR XDG_RUNTIME_DIR "
     "SSL_CERT_FILE SSL_CERT_DIR NODE_EXTRA_CA_CERTS REQUESTS_CA_BUNDLE CURL_CA_BUNDLE "
@@ -274,7 +275,7 @@ def profile_env():
 
 def session_env(names):
     """The environment of a work's OpenCode: the machine's basics and the declared names, from this process or the
-    machine's own variables file. An undeclared variable is dropped, so an operator's token never reaches the session."""
+    machine's own variables file. An undeclared variable is dropped from the server's environment, and so from the commands it starts directly."""
     source = {**profile_env(), **os.environ}
     return {name: value for name, value in source.items() if name in names or name in BASIC_NAMES or name.startswith("LC_")}
 

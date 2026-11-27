@@ -2,8 +2,9 @@
 
 ## Unreleased
 
-- A work's OpenCode, and every command it runs, starts with the machine's basics and the variable names the work
-  declares in `ensure` as `env`, never the operator's other variables.
+- A work's OpenCode server starts with the machine's basics and the variable names the work declares in `ensure` as
+  `env`, without the operator's other variables. A session can still read them from boxd's variables file, a login shell
+  or sudo.
 
 ## 0.0.0 (2026-11-25)
 
