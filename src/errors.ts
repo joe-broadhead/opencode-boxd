@@ -127,6 +127,11 @@ export const CODES = {
     message: "The model provider or a pushed host refused the credential, or the guest has none.",
     next: `Set or rotate the credential (${SECRET_WAYS}), then boxd_submit again. A session never starts an interactive sign-in itself.`,
   },
+  ACTS_AS_OPERATOR: {
+    state: "refused",
+    message: "The work would act as its operator: its machine holds a real GitHub, model or cloud credential, or git is given a real GitHub login, instead of a placeholder bound to one host.",
+    next: "Give the work its identity as a sealed, host-bound boxd env secret (boxd env set <KEY> <value> --secret --domains <hosts>), and remove the operator's: boxd manage integrations disconnect git, and unset any real token or key on the machine. Then call again.",
+  },
   GUEST_VERSION: {
     state: "refused",
     message: "The guest's OpenCode differs from the OpenCode here, and this call moves a transcript.",

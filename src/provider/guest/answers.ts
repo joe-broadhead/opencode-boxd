@@ -38,6 +38,7 @@ const PASSED_ON: ReadonlySet<string> = new Set<Code>([
   "EXPORT_INVALID",
   "NAME_INVALID",
   "PATH_REFUSED",
+  "ACTS_AS_OPERATOR",
   "GUEST_FAILED",
 ])
 
@@ -61,6 +62,7 @@ export function helperLine(stdout: string): Json | undefined {
 export function helperError(action: string, answer: Json): BoxdError {
   const code = typeof answer.error === "string" && PASSED_ON.has(answer.error) ? (answer.error as Code) : "GUEST_FAILED"
   const detail = shortReason(typeof answer.detail === "string" ? answer.detail : "")
+  if (code === "ACTS_AS_OPERATOR") return boxdError(code, `The work would act as its operator${detail ? ` (${detail})` : ""}.`)
   const said = typeof answer.error === "string" && code === "GUEST_FAILED" && answer.error !== "GUEST_FAILED" ? shortReason(answer.error) : undefined
   const words = [said, detail].filter(Boolean).join(": ")
   return boxdError(code, `The guest helper's ${action} failed${words ? ` (${words})` : ""}.`)

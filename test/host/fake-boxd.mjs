@@ -423,8 +423,11 @@ function exec() {
   if (machine.agentSilent) fail("error: cannot connect to VM agent: connection refused")
   const root = machineRoot(state, machine)
   const timeoutMs = flags["--timeout"] ? Number(flags["--timeout"]) * 1000 : undefined
-  const env = { ...process.env, BOXD_FAKE_ROOT: root, PATH: `${join(dirname(statePath), "guest-bin")}:${process.env.PATH}`, HOME: join(root, HOME) }
+  const env = { ...process.env, BOXD_FAKE_ROOT: root, PATH: `${join(dirname(statePath), "guest-bin")}:${process.env.PATH}`, HOME: join(root, HOME), GIT_CONFIG_NOSYSTEM: "1" }
   delete env.BOXD_PLUGIN_CALL
+  // A guest has the secrets its own machine was given, never the ones of the machine that runs the tests.
+  for (const name of Object.keys(env)) if (/TOKEN|API_KEY|SECRET|ACCESS_KEY|^AWS_|^GH_|^GITHUB_/.test(name)) delete env[name]
+  Object.assign(env, state.guestEnv ?? {})
   const helper = /^python3 (\/[\w./-]+)( --install)?$/.exec(command)
   let result
   if (helper) {

@@ -25,6 +25,15 @@ reads a guest.
   runs with other variables once its session is idle, and answers `SESSION_BUSY` while it runs.
 - A secret that is not host-bound is a real value on the guest, and `exec` can print it.
 - Model credentials are never baked into a golden image; a base that holds `auth.json` is refused.
+- A work acts only with the identity it was given, never its operator's. `ensure` and `submit` refuse a work with
+  `ACTS_AS_OPERATOR` when its machine holds a real token or key instead of a placeholder bound to one host (GitHub,
+  model or cloud), in the helper's environment or in boxd's variables file `/etc/profile.d/boxd-env.sh`, a stored `gh`, git, AWS or gcloud login with a real value or in a form the check cannot read as a
+  placeholder (the check fails closed, line by line for `.git-credentials`), or a git login for github.com with a real value, as boxd's git integration
+  gives on a private machine. A placeholder is the identity the work was given, so
+  `GH_TOKEN` as a `bxds_` placeholder with gh's credential helper passes. The refusal names what it found, never a
+  value. `ensure` with `wait: "none"` does not set the machine up, so it does not check; the next `ensure` or `submit`
+  does. To clear it, give the work a sealed secret with `boxd env set <KEY> <value> --secret --domains <hosts>`, run
+  `boxd manage integrations disconnect git`, and unset any real token or key on the machine.
 - Status and logs never carry a token, a URL query string or a credential: a failure reason is redacted and cut to 160
   characters. A fixture is recorded through the kit's redaction.
 

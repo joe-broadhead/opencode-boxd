@@ -59,6 +59,8 @@ export interface FakeState {
   limitShape?: "regions" | "org"
   usage?: unknown
   secrets?: unknown[]
+  /** Variables the guest's helper sees, beside the ones the fake keeps out of it (tokens, keys and secrets). */
+  guestEnv?: Record<string, string>
   faults?: Record<string, FakeFault[]>
   latencyMs?: [number, number]
   /** The listing carries machine ids (upstream ask U14). */

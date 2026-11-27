@@ -229,6 +229,21 @@ describe("boxd_submit", () => {
     expect(stored.lastSubmit?.delivery).toBe("interrupt")
   })
 
+  test("a work that would act as its operator is refused before its prompt is sent, and one with placeholders is admitted", async () => {
+    const PLACEHOLDER = "bxds_0123456789abcdef"
+    const REAL = "operators-own-value"
+    await openWork("as-owner")
+    counter.fake.update((state) => { state.guestEnv = { GH_TOKEN: REAL } })
+    const refused = await errorOf(runs.boxd_submit({ workId: "as-owner", text: "Start." }, call()))
+    expect(refused.code).toBe("ACTS_AS_OPERATOR")
+    expect(refused.what).toContain("GH_TOKEN is a real GitHub credential")
+    expect(refused.what).not.toContain(REAL)
+    expect(guest.prompts).toEqual([])
+    guest.next("ses_as-owner")
+    counter.fake.update((state) => { state.guestEnv = { GH_TOKEN: PLACEHOLDER } })
+    expect(await runs.boxd_submit({ workId: "as-owner", text: "Start." }, call())).toMatchObject({ state: "admitted", delivery: "started" })
+  })
+
   test("a model switch on a running session is refused unless it interrupts", async () => {
     await ranWork("models")
     await runs.boxd_submit({ workId: "models", text: "Go on." }, call())
