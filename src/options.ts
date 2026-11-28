@@ -62,6 +62,16 @@ export interface WarmRepository {
   readonly setup?: string
 }
 
+/** A work's own secret: the variable name its OpenCode gets, and the argv that mints and revokes its value. */
+export interface WorkSecret {
+  /** The variable name the work's OpenCode starts with, such as "MODELS_API_KEY". */
+  readonly name: string
+  /** The command here that prints the value; the work id is appended to it. */
+  readonly mint: readonly string[]
+  /** The command here that revokes the value at drop; the work id is appended to it. */
+  readonly revoke?: readonly string[]
+}
+
 /** The plugin options (design §9.2). Every option is optional; each default is below. */
 export interface Options {
   /** What the plugin's own tools may do without asking: everything, ask for changes, or reads only. */
@@ -84,6 +94,8 @@ export interface Options {
   readonly slotsPerMachine: number
   /** The guest's git identity for every new work; none by default. */
   readonly git?: { readonly name: string; readonly email: string }
+  /** The secrets each new work mints here and gives its OpenCode; names only, never values. */
+  readonly workSecrets: readonly WorkSecret[]
   /** Golden image names are `<goldenPrefix>-<opencode version>-<size>`. */
   readonly goldenPrefix: string
   /** What a golden build starts from: stock, or a snapshot in the region it lives in. */
@@ -118,6 +130,7 @@ export const DEFAULT_OPTIONS: Options = {
   keep: [],
   size: "2x8",
   slotsPerMachine: 4,
+  workSecrets: [],
   goldenPrefix: "oc-golden",
   goldenBase: "stock",
   warm: [],
@@ -138,6 +151,8 @@ const BUDGET_ACTIONS: readonly Budget["action"][] = ["warn", "refuse"]
 /** The longest prefix that still leaves room for `-<version>-<size>` in a 64-character snapshot name. */
 const PREFIX = /^[a-z][a-z0-9-]{0,31}$/
 const EMAIL = /^[^\s@<>]+@[^\s@<>]+$/
+/** A variable name a work's server may receive, as `env` and `workSecrets` take it. */
+const ENV_NAME = /^[A-Z_][A-Z0-9_]{0,63}$/
 /** A `keep` selector: a boxd label key, with an optional `=value`. */
 const SELECTOR = /^[a-z0-9._/-]{1,63}(?:=[A-Za-z0-9._/@:-]{0,63})?$/
 
@@ -154,6 +169,8 @@ const ACCEPTED = {
   size: `${quoted(SIZES)} ("2x8" by default)`,
   slotsPerMachine: "a whole number of works from 1 (4 by default) that one shared machine may hold",
   git: "an object with a non-empty name and an email address",
+  workSecrets:
+    'an array of objects like { name, mint, revoke? }: name is a variable name, mint is the non-empty argv run here to print its value, and revoke is the argv run here at drop; the work id is appended to both (empty by default)',
   goldenPrefix: 'a lowercase name of up to 32 letters, digits or hyphens, starting with a letter ("oc-golden" by default)',
   goldenBase: '"stock" (the default) or a lowercase boxd snapshot name',
   goldenSetup: "an absolute path here to a script",
@@ -274,6 +291,33 @@ export function parseOptions(raw: unknown): Options {
     repositories.push({ repo: url, ...(ref !== undefined ? { ref } : {}), ...(setup !== undefined ? { setup } : {}) })
   })
 
+  const { workSecrets } = input
+  if (!Array.isArray(workSecrets)) throw wrong("workSecrets", workSecrets)
+  const secretNames = new Set<string>()
+  const secrets: WorkSecret[] = []
+  workSecrets.forEach((raw, index) => {
+    const at = `The option "workSecrets" item ${index + 1}`
+    if (!isObject(raw) || Object.keys(raw).some((key) => !["name", "mint", "revoke"].includes(key))) throw invalid(`${at} must be an object with "name", "mint" and optionally "revoke"`)
+    const name = raw.name
+    if (typeof name !== "string" || !ENV_NAME.test(name) || name === "OPENCODE_PASSWORD") {
+      throw invalid(`${at} "name" must be a variable name of uppercase letters, digits and underscores, such as "MODELS_API_KEY", and not OPENCODE_PASSWORD, found ${describe(name)}`)
+    }
+    if (secretNames.has(name)) throw invalid(`${at} repeats the secret "${name}"; name each secret once`)
+    secretNames.add(name)
+    const command = (field: "mint" | "revoke"): readonly string[] | undefined => {
+      const value = raw[field]
+      if (value === undefined) return undefined
+      if (!Array.isArray(value) || value.length === 0 || value.some((arg) => typeof arg !== "string" || arg === "" || arg.includes("\0"))) {
+        throw invalid(`${at} "${field}" must be a non-empty array of command arguments`)
+      }
+      return [...value] as string[]
+    }
+    const mint = command("mint")
+    if (!mint) throw invalid(`${at} must name its mint command in "mint"`)
+    const revoke = command("revoke")
+    secrets.push({ name, mint, ...(revoke ? { revoke } : {}) })
+  })
+
   let budget: Budget | undefined
   if (input.budget !== undefined) {
     const raw = input.budget
@@ -344,6 +388,7 @@ export function parseOptions(raw: unknown): Options {
     size,
     slotsPerMachine: wholeNumber("slotsPerMachine", input.slotsPerMachine, 1),
     ...(git !== undefined ? { git: { name: (git as { name: string }).name, email: (git as { email: string }).email } } : {}),
+    workSecrets: secrets,
     goldenPrefix,
     goldenBase,
     ...(goldenSetup !== undefined ? { goldenSetup: goldenSetup as string } : {}),

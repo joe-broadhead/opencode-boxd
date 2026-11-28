@@ -14,7 +14,7 @@
 //   end, which is how the spawn-count harness counts and times a call's children. `log` in the state holds every boxd
 //   call but `--help`, as one string each.
 import { spawnSync } from "node:child_process"
-import { appendFileSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { appendFileSync, chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { dirname, join, normalize } from "node:path"
 import { acquire, release } from "./fake-lock.mjs"
 
@@ -498,10 +498,14 @@ function copy() {
   if (up && !down) {
     const machine = must(state, region, up.machine)
     const path = toLocal(state, machine, up.path)
-    if (!existsSync(source)) fail(`error: ${source}: no such file`)
     mkdirSync(dirname(path), { recursive: true })
-    if (flags["-r"]) cpSync(source, path, { recursive: true })
-    else copyFileSync(source, path)
+    if (source === "-") writeFileSync(path, readFileSync(0))
+    else if (flags["-r"]) cpSync(source, path, { recursive: true })
+    else {
+      if (!existsSync(source)) fail(`error: ${source}: no such file`)
+      copyFileSync(source, path)
+    }
+    if (flags["--mode"]) chmodSync(path, Number.parseInt(flags["--mode"], 8))
     process.stdout.write(`copied ${source} → ${target} (${statSync(path).size} bytes)\n`)
     return
   }

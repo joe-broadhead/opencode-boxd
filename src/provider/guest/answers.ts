@@ -39,6 +39,7 @@ const PASSED_ON: ReadonlySet<string> = new Set<Code>([
   "SESSION_MISSING",
   "SESSION_BUSY",
   "GUEST_WORKSPACE",
+  "SECRET_FAILED",
   "GIT_UNKNOWN",
   "EXPORT_INVALID",
   "NAME_INVALID",

@@ -73,6 +73,7 @@ import type { CallContext } from "../call.js"
 import { imageName, STILL_BUILDING, type Golden } from "./golden.js"
 import { runList, runOne, type ItemContext } from "./list.js"
 import { classReason, classifyMachines, type Classified } from "./orphans.js"
+import { mintWorkSecrets } from "./secrets.js"
 import { pause } from "./sessions-common.js"
 import { inUseOf, limitAtCreate, pickRegion, regionsText, type InFlight, type InUse } from "./regions.js"
 import { warmImageName } from "./warm.js"
@@ -436,6 +437,7 @@ export async function runSetup(machines: Machines, target: ChangeTarget, record:
         ...(record.repo ? { repo: record.repo } : {}),
         ...(record.git ? { git: record.git } : {}),
         env: record.env ?? [],
+        secrets: record.secrets ?? [],
         opencode: hostVersion ?? "",
       },
       op,
@@ -1140,6 +1142,7 @@ export async function ensureOne(machines: Machines, item: EnsureItem, context: I
         await machines.services.runner.withMachineLock({ id: landed.target.machineId }, op, () => machines.services.boxd.setLabels(landed.target, changes, op))
       }
     }
+    current = await mintWorkSecrets(machines.services, landed.target, current, op)
     if (!landed.created) current = await renewLease(machines, current, landed.target, op)
     const target = landed.target
     let rebooted = false

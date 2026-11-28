@@ -49,6 +49,7 @@ import {
 import { imageName, STILL_BUILDING } from "./golden.js"
 import { listCall, runList, runOne, type ItemContext } from "./list.js"
 import { inUseOf, pickRegion, regionsText } from "./regions.js"
+import { rotateWorkSecrets } from "./secrets.js"
 import { isWarmImage } from "./warm.js"
 
 const WORK_ID = /^[a-z][a-z0-9-]{0,24}$/
@@ -288,6 +289,7 @@ export async function resumeOne(machines: Machines, workId: string, context: Ite
       }
     }
 
+    if (rebuilt) current = await rotateWorkSecrets(machines.services, target, current, op)
     const input = { workId, repair: false }
     roomFor(context, TIMEOUTS.setup, "starting", `there is not enough time left in this call for setup (${TIMEOUTS.setup / 1000} s)`)
     const setup = await runSetup(machines, target, current, input, op)
