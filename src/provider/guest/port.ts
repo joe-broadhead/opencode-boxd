@@ -2,7 +2,7 @@
  * The laptop side of the guest port (design §3, §4.1): each helper action is one `machine exec` of
  * `python3 ~/.boxd-plugin/guest.py`, with its request on stdin and one JSON line back.
  *
- * - **Reads** (`serve`, `phase`, `read`, `health`) pass the read rule in the CLI port, use only the helper already on
+ * - **Reads** (`serve`, `phase`, `read`, `health`, `describe`) pass the read rule in the CLI port, use only the helper already on
  *   the machine, never upload anything, and take no machine lock. Two identical reads in flight share one answer, and a
  *   machine has at most one read exec at a time.
  * - **Changes** run on a target from `checkOwned`, inside the machine's lock (the CLI port checks both). Each sends the
@@ -30,6 +30,7 @@ import {
   checkProtocol,
   helperError,
   helperLine,
+  readDescribe,
   readExport,
   readGit,
   readHealth,
@@ -141,6 +142,7 @@ export function createGuestPort(options: GuestPortOptions): GuestPort {
         (answer) => readRead(answer, input.log === "server" ? "server.log" : (input.path ?? "")),
       ),
     health: (target, context) => read("health", target, {}, context, readHealth),
+    describe: (target, context) => read("describe", target, {}, context, readDescribe),
 
     setup: (target, input, context) =>
       change("setup", target, { directory: input.directory, ...(input.repo ? { repo: input.repo } : {}), ...(input.git ? { git: input.git } : {}), env: input.env ?? [], opencode: input.opencode }, context, TIMEOUTS.setup, readSetup),

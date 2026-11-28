@@ -8,6 +8,7 @@ import { errorLine } from "../../outcome.js"
 import {
   FULL_TEXT_LIMIT,
   GUEST_PROTOCOL,
+  type DescribeAnswer,
   type ExportAnswer,
   type GitAnswer,
   type HealthAnswer,
@@ -85,8 +86,12 @@ const SESSION = /^ses_[A-Za-z0-9_-]{1,80}$/
 const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
 /** A guest path the helper names: absolute, no spaces, no `..`, so it can go straight into `machine cp`. */
 const GUEST_FILE = /^\/home\/boxd\/[A-Za-z0-9_./-]+$/
+const WORK_DIRECTORY = /^\/home\/boxd\/work\/[a-z][a-z0-9-]{0,24}$/
+const ABSOLUTE_PATH = /^\/[A-Za-z0-9_./-]+$/
 
 const version = (value: unknown): string | null => (string(value) && VERSION.test(value) ? value : null)
+const pendingInput = (value: unknown): "form" | "permission" | null | undefined =>
+  value === null ? null : value === "form" || value === "permission" ? value : undefined
 const iso = (value: unknown): string | undefined => (string(value) && !Number.isNaN(Date.parse(value)) ? new Date(value).toISOString() : undefined)
 const guestFile = (action: string, value: unknown): string => {
   if (!string(value) || !GUEST_FILE.test(value) || value.split("/").includes("..")) throw shape(action)
@@ -261,6 +266,49 @@ export function readGit(answer: Json): GitAnswer {
     unpushedKnown: known,
     ...(answer.sessions !== undefined ? { sessions: (Array.isArray(answer.sessions) ? answer.sessions : [null]).map((item) => marks("git", item)) } : {}),
   }
+}
+
+/** A machine with no record: every work checkout, every root session and the installed OpenCode. */
+export function readDescribe(answer: Json): DescribeAnswer {
+  if (!Array.isArray(answer.works) || !Array.isArray(answer.sessions)) throw shape("describe")
+  const works = answer.works.map((raw) => {
+    const item = raw as Json
+    const directory = item?.directory
+    const remote = item?.remote
+    const branch = item?.branch
+    const head = item?.head
+    const dirty = item?.dirty
+    const untracked = item?.untracked
+    const unpushed = item?.unpushed
+    const unpushedKnown = item?.unpushedKnown
+    if (!string(directory) || !WORK_DIRECTORY.test(directory)) throw shape("describe")
+    if (remote !== null && !string(remote)) throw shape("describe")
+    if (branch !== null && !string(branch)) throw shape("describe")
+    if (head !== null && (!string(head) || !/^[0-9a-f]{40,64}$/.test(head))) throw shape("describe")
+    if (typeof dirty !== "boolean" || !count(untracked) || typeof unpushedKnown !== "boolean") throw shape("describe")
+    if (unpushedKnown ? !count(unpushed) : unpushed !== -1) throw shape("describe")
+    return {
+      directory,
+      remote: remote === null ? null : withoutUserinfo(remote),
+      branch,
+      head,
+      dirty,
+      untracked,
+      unpushed: unpushedKnown ? (unpushed as number) : -1,
+      unpushedKnown,
+    }
+  })
+  const sessions = answer.sessions.map((raw) => {
+    const item = raw as Json
+    const id = item?.id
+    const directory = item?.directory
+    const busy = item?.busy
+    const needsInput = pendingInput(item?.needsInput)
+    if (!string(id) || !SESSION.test(id) || !string(directory) || !ABSOLUTE_PATH.test(directory) || directory.split("/").includes("..") || typeof busy !== "boolean") throw shape("describe")
+    if (needsInput === undefined) throw shape("describe")
+    return { id, directory, busy, needsInput }
+  })
+  return { opencode: version(answer.opencode), works, sessions }
 }
 
 export function readScrub(answer: Json): ScrubAnswer {
