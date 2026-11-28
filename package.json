@@ -182,6 +182,29 @@
           "type": "string",
           "description": "An absolute path here to a script the golden builder runs before the scrub."
         },
+        "warm": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "repo": {
+                "type": "string"
+              },
+              "ref": {
+                "type": "string"
+              },
+              "setup": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "repo"
+            ],
+            "additionalProperties": false
+          },
+          "default": [],
+          "description": "Repositories whose checkouts, toolchains and dependencies a warm image carries, each { repo, ref?, setup? }, where setup is an absolute path here to the script that installs them; golden with repo builds one."
+        },
         "buildGolden": {
           "type": "string",
           "enum": [

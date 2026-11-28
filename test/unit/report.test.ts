@@ -24,6 +24,7 @@ const sources = (over: Partial<Parameters<typeof readReport>[0]> = {}) => ({
     size: "2x8" as const,
     goldenPrefix: "oc-golden",
     goldenBase: "stock",
+    warm: [] as const,
     buildGolden: "auto" as const,
     notices: "wake" as const,
     autoHibernateMinutes: 120,
