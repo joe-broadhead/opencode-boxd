@@ -18,7 +18,7 @@
  *   while waiting for a lock, a golden build, a poll interval or another pool.
  */
 
-import type { IndexEntry, Phase, SavedState, SleptBy, WorkRecord } from "./ledger/types.js"
+import type { IndexEntry, MeteredDay, Phase, SavedState, SleptBy, WorkRecord } from "./ledger/types.js"
 
 // ── Vocabulary ────────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -740,6 +740,12 @@ export interface LaptopPort {
 
 // ── The watcher's event stream (design §9.1, round 4 L-5): package D emits it, package E consumes it ───────────────
 
+/** A work's cost for one local day, or for its whole life: the figures a cost event carries. */
+export interface WorkEventCost extends MeteredDay {
+  /** `YYYY-MM-DD` for one local day, or `life` when the work closed. */
+  readonly day: string | "life"
+}
+
 /**
  * One change: **the one event shape.** It is a phase change, or a wait for input that starts or clears while the phase
  * stays the same (`from` then equals `to`). The ledger appends it to `events.jsonl` as one JSON line (`EventLine` is
@@ -767,6 +773,13 @@ export interface WorkEvent {
   /** With `to: "ready"`: seconds from the work's first ensure to this first ready. */
   readonly readySeconds?: number
   readonly reading?: Reading
+  /**
+   * A cost event: one local day's machine time and estimate, or the whole life's at close. It keeps `from` equal to
+   * `to`, so a phase reader is never misled.
+   */
+  readonly cost?: WorkEventCost
+  /** The work's labels (#125), when the record holds them, so a cost event names its product, role, feature and task. */
+  readonly labels?: WorkLabels
 }
 
 /** One open work as the watcher last saw it: what the cost estimate and automation read, with no CLI call. */
@@ -896,6 +909,12 @@ export interface LedgerPort {
   saved(record: WorkRecord): SavedState
   /** Appends one event with the next `seq`, and returns it as written; the watcher then hands it to its subscribers. */
   appendEvent(event: Omit<WorkEvent, "seq">, context: OpContext): Promise<WorkEvent>
+  /**
+   * Appends a cost event once: under the work's lock, a record that already names `key` for `claim` writes nothing and
+   * answers undefined. The marker is written before the event lands and rolled back if the append fails, so a restart or
+   * a second watcher never writes the same day or life twice.
+   */
+  appendEventOnce(event: Omit<WorkEvent, "seq">, claim: "day" | "life", key: string, context: OpContext): Promise<WorkEvent | undefined>
   eventsSince(cursor: number, context: OpContext): Promise<EventPage>
   /**
    * A work's folder in the ledger, to read from only (a resume copies the stored exports up from it). Every write goes

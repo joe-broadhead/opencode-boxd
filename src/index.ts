@@ -77,7 +77,7 @@ export function createBoxdPlugin(seam: BoxdSeam = {}) {
       const core: CoreServices = { ...hostServices, ...provider, ledger: createLedger({ ...hostServices, ...provider, rates: () => currentRates() }) }
       // The watcher starts before the one registration exists, so its nudge is wired to the bus just after it.
       let nudge: (() => Promise<void>) | undefined
-      const watcher = createWatch(core, { changed: () => nudge?.() })
+      const watcher = createWatch(core, { changed: () => nudge?.(), rates: () => currentRates() })
       const costService = createCost({ ...core, watch: watcher.watch })
       currentRates = internalsOf(costService).rates
       const fleet: FleetServices = { ...core, watch: watcher.watch, cost: costService }

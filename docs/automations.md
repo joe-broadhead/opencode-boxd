@@ -72,3 +72,42 @@ return { state: next }
 
 The thread is `boxd-work:<workId>`, so one label names both the work and what happened to it. The existing `phase:`,
 `outcome:`, `needs:` and `done` labels stay for a reader that needs the detail.
+
+## A day's cost by product
+
+Every work appends one cost event for each local day that ended, and one for its whole life when it closes. The event's
+labels carry the figures: `cost:<YYYY-MM-DD or life>`, `running-seconds:<n>`, `asleep-seconds:<n>`, `amount:<amount>`,
+`currency:<code>`, `rates:<usage or public>`, and the work's `product:`, `role:`, `feature:` and `task:` labels when the
+record holds them. Keep the cursor and add each day's `amount` to its product, so a product's day is a sum of its
+events alone:
+
+```ts
+import type { Automation } from "@opencode/plugin"
+
+export default {
+  name: "boxd-cost",
+  every: "1 hour",
+  async run({ state }) {
+    const page = await tools.boxd.events_list(state?.cursor === undefined ? { since: new Date(Date.now() - 86_400_000).toISOString() } : { cursor: state.cursor })
+    const days = new Map<string, { amount: number; currency: string }>()
+    for (const event of page.events) {
+      const labels = new Map(event.labels.map((label) => [label.slice(0, label.indexOf(":")), label.slice(label.indexOf(":") + 1)]))
+      const day = labels.get("cost")
+      if (day === undefined || day === "life") continue
+      const product = labels.get("product") ?? "unlabelled"
+      const key = `${product}|${day}|${labels.get("currency") ?? ""}`
+      const row = days.get(key) ?? { amount: 0, currency: labels.get("currency") ?? "" }
+      row.amount += Number(labels.get("amount") ?? 0)
+      days.set(key, row)
+    }
+    const lines = [...days].map(([key, row]) => {
+      const [product, day] = key.split("|")
+      return `${product} ${day}: ${row.currency} ${row.amount.toFixed(2)}`
+    })
+    return { state: { cursor: page.cursor }, ...(lines.length ? { prompt: `boxd cost\n${lines.join("\n")}` } : {}) }
+  },
+} satisfies Automation
+```
+
+A life event's `cost:life` covers the work's whole life, so a day's sum skips it; a work that closes today still has its
+day events for the days it existed. A work whose record has no `product` label is summed under `unlabelled`.

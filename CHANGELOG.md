@@ -7,6 +7,11 @@
   `hours.seconds` and `hours.estimate`, and the cost block sums them for this ledger, today and since the oldest open
   work; a slot work is charged its share of its shared machine, and a work joining or closing splits every open slot's
   interval there.
+- The works source appends one cost event for each work for every local day that ended, and one for its whole life when
+  it closes: the day's existed, running and asleep seconds, and its estimate, currency and rates. The record keeps the
+  last day it reported, so a restart, a second OpenCode process or a missed sweep writes no day twice. On the first tick
+  after this release, a work already closed gets its one life event then, dated at its close, so an events page may show
+  an older close date beside a new one.
 - The fleet status classifies every machine in the organisation: a work here, another ledger's work, kept by a `keep`
   selector, a golden builder, or an orphan with its reason and whether the plugin may act on it. `boxd_ensure` with
   `select: "orphans"` adopts every actionable orphan from its guest's `describe`, writing a record and this ledger's

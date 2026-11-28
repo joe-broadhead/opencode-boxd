@@ -17,7 +17,7 @@ import { PUBLIC_RATES } from "../cost/rates.js"
 import { boxdError, BoxdError } from "../errors.js"
 import { EventLog } from "./events.js"
 import { countHours } from "./hours.js"
-import type { Expected, LedgerFile, MachineName, Rates, Reading, Region, StagedFile, StagedFolder } from "../ports.js"
+import type { Expected, LedgerFile, MachineName, Rates, Reading, Region, StagedFile, StagedFolder, WorkEvent } from "../ports.js"
 import { commitFile, copyFileAtomic, type Digest, digestFile, ensureDir, errnoOf, exists, FILE_MODE, fsyncDir, randomPart, remove, tempBeside, writeFileAtomic, writeJsonAtomic } from "./fsx.js"
 import { alive, LockSet, type LockHandle } from "./lock.js"
 import {
@@ -387,6 +387,35 @@ export class Ledger {
         })
         if (record.hours && record.hours.phase === hours.phase && record.hours.at === hours.at) return
         await this.write(workId, { ...record, hours })
+      },
+      signal,
+    )
+  }
+
+  /**
+   * Appends a cost event once, under the work's lock. The marker is written first and rolled back if the append fails,
+   * so two watchers on one ledger, or a restart after an interrupted tick, never write a day or a life twice.
+   */
+  async appendEventOnce(event: Omit<WorkEvent, "seq">, claim: "day" | "life", key: string, signal?: AbortSignal): Promise<WorkEvent | undefined> {
+    const workId = event.workId
+    return this.withWork(
+      workId,
+      async () => {
+        const record = await this.get(workId)
+        if (!record) return undefined
+        if (claim === "day") {
+          if (record.costDay !== undefined && key <= record.costDay) return undefined
+        } else if (record.costLife) {
+          return undefined
+        }
+        const marked: WorkRecord = claim === "day" ? { ...record, costDay: key } : { ...record, costLife: true }
+        await this.write(workId, marked)
+        try {
+          return await this.events.append(event, signal)
+        } catch (error) {
+          await this.write(workId, record).catch(() => undefined)
+          throw error
+        }
       },
       signal,
     )
