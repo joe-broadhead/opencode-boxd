@@ -6,10 +6,11 @@ One JSON object on stdin, one JSON line on stdout: {"ok": true, "protocol": 1, .
 ~/.boxd-plugin/guest.py, talks only to the guest's own OpenCode server on localhost, and uses the standard
 library only.
 
-Read actions (serve, phase, read, health, describe) never start, write or upload anything. Change actions (setup,
-prompt, interrupt, upgrade, export, import, git, warm, scrub) first check that this file is the copy the laptop
-expects (its sha256): an older copy answers HELPER_OUTDATED and does nothing, and the laptop uploads the new one. An
-upload runs once with --install, which moves it to the stable path before it acts.
+Read actions (serve, phase, read, health, describe, slots) never start, write or upload anything. Change actions
+(setup, prompt, interrupt, upgrade, export, import, git, warm, scrub, release) first check that this file is the copy
+the laptop expects (its sha256): an older copy answers HELPER_OUTDATED and does nothing, and the laptop uploads the new
+one. An upload runs once with --install, which moves it to the stable path before it acts. Every action takes an
+optional `slot` (a work id) and keeps that work's state in its own folder; without one it uses the machine's one home.
 
 `warm` keeps a repository's checkout under ~/.boxd-plugin/warm for a golden image, and `setup` starts a work from it
 when the machine has one.
@@ -25,6 +26,7 @@ import secrets
 import shlex
 import shutil
 import signal
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -36,6 +38,7 @@ import urllib.request
 PROTOCOL = 1
 PORT = 4096
 DEFAULT_BASE = f"http://127.0.0.1:{PORT}"
+SLOT_PORTS = range(4100, 4200)
 
 # The tests run this helper against a folder that stands in for the machine's disk; on a machine it is empty.
 ROOT = os.environ.get("BOXD_FAKE_ROOT", "")
@@ -55,6 +58,7 @@ HOME = "/home/boxd"
 WORK_ROOT = HOME + "/work"
 SESSION_DB = HOME + "/.local/share/opencode/opencode.db"
 HELPER_HOME = local(HOME + "/.boxd-plugin")
+SLOTS = HELPER_HOME + "/slots"
 HELPER_PATH = HELPER_HOME + "/guest.py"
 PASSWORD_PATH = HELPER_HOME + "/password"
 SERVER_LOG = HELPER_HOME + "/server.log"
@@ -163,6 +167,7 @@ def emit(payload):
 # ── Input checks ──────────────────────────────────────────────────────────────────────────────────────────────────
 
 SAFE_PATH = re.compile(r"/[A-Za-z0-9_./-]+")
+WORK_ID = re.compile(r"[a-z][a-z0-9-]{0,24}")
 SESSION = re.compile(r"ses_[A-Za-z0-9_-]{1,80}")
 MODEL = re.compile(r"([A-Za-z0-9][A-Za-z0-9._-]{0,63})/([A-Za-z0-9][A-Za-z0-9._:/@-]{0,127})(?:#([A-Za-z0-9][A-Za-z0-9._-]{0,31}))?")
 VERSION = re.compile(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?")
@@ -176,6 +181,18 @@ def work_directory(value):
     if not isinstance(value, str) or not re.fullmatch(r"/home/boxd/work/[a-z][a-z0-9-]{0,24}", value):
         fail("NAME_INVALID", "directory must be /home/boxd/work/<work id>")
     return local(value)
+
+
+def slot_id(value):
+    if not isinstance(value, str) or not WORK_ID.fullmatch(value):
+        fail("NAME_INVALID", "slot must be a work id")
+    return value
+
+
+def place_of(request):
+    """The slot a request names, or the machine's slotless home when it names none."""
+    value = request.get("slot")
+    return Place(None if value is None else slot_id(value))
 
 
 def session_id(value):
@@ -209,71 +226,203 @@ def model_ref(value):
     return ref
 
 
-def base_url(request):
-    """The guest server: only a loopback host and an explicit port."""
-    base = request.get("base") or DEFAULT_BASE
-    parsed = re.fullmatch(r"http://(127\.0\.0\.1|localhost):(\d{1,5})", base)
-    if not parsed or not (1 <= int(parsed.group(2)) <= 65535):
-        fail("NAME_INVALID", "base must be http://127.0.0.1:<port>")
-    return base
-
-
 # ── The guest's OpenCode server ───────────────────────────────────────────────────────────────────────────────────
 
 
-def read_password():
+def slot_names():
+    """Every slot folder's work id, sorted; a stray file is not a slot."""
     try:
-        with open(PASSWORD_PATH, encoding="utf8") as handle:
-            return handle.read().strip()
+        names = os.listdir(SLOTS)
     except OSError:
-        return ""
+        return []
+    return sorted(name for name in names if WORK_ID.fullmatch(name) and os.path.isdir(os.path.join(SLOTS, name)))
 
 
-def http_raw(request, method, path, body=None, timeout=5):
-    """One call to the guest server, with the whole JSON envelope (its `data` and, for a list, its `cursor`)."""
-    base = base_url(request)
-    data = None if body is None else json.dumps(body).encode()
-    headers = {"content-type": "application/json", "accept": "application/json"}
-    password = read_password() if base == DEFAULT_BASE else ""
-    if password:
-        headers["authorization"] = "Basic " + base64.b64encode(f"opencode:{password}".encode()).decode()
+def recorded_port(home):
     try:
-        with urllib.request.urlopen(urllib.request.Request(base + path, data=data, method=method, headers=headers), timeout=timeout) as response:
-            raw = response.read().decode()
-    except urllib.error.HTTPError as error:
-        raise GuestError(f"HTTP {error.code}", error.read().decode(errors="replace")[:300]) from None
-    except (urllib.error.URLError, OSError) as error:
-        raise GuestError("GUEST_SERVER_DOWN", str(getattr(error, "reason", error))[:200]) from None
-    try:
-        return json.loads(raw) if raw else None
-    except ValueError:
+        with open(os.path.join(home, "port"), encoding="utf8") as handle:
+            port = int(handle.read().strip())
+    except (OSError, ValueError):
         return None
+    return port if 1 <= port <= 65535 else None
 
 
-def http(request, method, path, body=None, timeout=5):
-    """One call to the guest server, unwrapped to its `data`."""
-    payload = http_raw(request, method, path, body, timeout)
-    return payload["data"] if isinstance(payload, dict) and "data" in payload else payload
+def port_free(port):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        try:
+            probe.bind(("127.0.0.1", port))
+            return True
+        except OSError:
+            return False
 
 
-def server_version(request):
-    """The server's OpenCode version from /api/info, or None when it does not say. Raises when it is down."""
-    try:
-        info = http(request, "GET", "/api/info")
-    except GuestError as error:
-        if error.error.startswith("HTTP"):
+def pick_slot_port():
+    """The first port of the slot range that no other slot records and nothing listens on."""
+    taken = {port for name in slot_names() for port in [recorded_port(os.path.join(SLOTS, name))] if port}
+    for port in SLOT_PORTS:
+        if port not in taken and port_free(port):
+            return port
+    fail("GUEST_FAILED", f"no free slot port in {SLOT_PORTS.start} to {SLOT_PORTS.stop - 1}")
+
+
+class Place:
+    """Where one action keeps its state: the machine's slotless home, or a work's own slot folder."""
+
+    def __init__(self, slot):
+        self.slot = slot
+        self.home = HELPER_HOME if slot is None else os.path.join(SLOTS, slot)
+        self.password = os.path.join(self.home, "password")
+        self.server_log = os.path.join(self.home, "server.log")
+        self.server_pid = os.path.join(self.home, "server.pid")
+        self.setup_log = os.path.join(self.home, "setup.log")
+        self.env_names = os.path.join(self.home, "env.json")
+        self.clones = os.path.join(self.home, "clones")
+        self.exports = os.path.join(self.home, "exports")
+        self.harvest = os.path.join(self.home, "harvest")
+        self.staging = os.path.join(self.home, "staging")
+        self.imports = os.path.join(self.home, "imports")
+        self.port_path = os.path.join(self.home, "port")
+        self.work = os.path.join(local(WORK_ROOT), slot) if slot else None
+
+    def ensure_home(self):
+        os.makedirs(self.home, mode=0o700, exist_ok=True)
+        os.chmod(self.home, 0o700)
+
+    def ensure_password(self):
+        self.ensure_home()
+        if not os.path.exists(self.password):
+            write_file(self.password, secrets.token_hex(24).encode(), 0o600)
+
+    def read_password(self):
+        try:
+            with open(self.password, encoding="utf8") as handle:
+                return handle.read().strip()
+        except OSError:
+            return ""
+
+    def port(self, request=None, create=False):
+        """A slot's port: its record, the base a caller names, or the first free one setup may take."""
+        if self.slot is None:
+            return PORT
+        found = recorded_port(self.home)
+        if found:
+            return found
+        base = request.get("base") if isinstance(request, dict) else None
+        if isinstance(base, str):
+            parsed = re.fullmatch(r"http://(?:127\.0\.0\.1|localhost):(\d{1,5})", base)
+            if parsed and 1 <= int(parsed.group(1)) <= 65535:
+                found = int(parsed.group(1))
+        if not found and not create:
             return None
-        raise
-    version = info.get("version") if isinstance(info, dict) else None
-    return version if isinstance(version, str) and VERSION.fullmatch(version) else None
+        if not found:
+            found = pick_slot_port()
+        self.ensure_home()
+        write_file(self.port_path, str(found).encode(), 0o600)
+        return found
 
+    def base_url(self, request):
+        """The guest server: only a loopback host and an explicit port."""
+        base = request.get("base")
+        if not base:
+            port = self.port(request)
+            if not port:
+                fail("GUEST_SERVER_DOWN", "the slot has no server yet")
+            base = f"http://127.0.0.1:{port}"
+        parsed = re.fullmatch(r"http://(127\.0\.0\.1|localhost):(\d{1,5})", base)
+        if not parsed or not (1 <= int(parsed.group(2)) <= 65535):
+            fail("NAME_INVALID", "base must be http://127.0.0.1:<port>")
+        return base
 
-def server_up(request):
-    try:
-        server_version(request)
-        return True
-    except GuestError:
-        return False
+    def http_raw(self, request, method, path, body=None, timeout=5):
+        """One call to the guest server, with the whole JSON envelope (its `data` and, for a list, its `cursor`)."""
+        base = self.base_url(request)
+        data = None if body is None else json.dumps(body).encode()
+        headers = {"content-type": "application/json", "accept": "application/json"}
+        port = self.port(request)
+        own_base = f"http://127.0.0.1:{port}" if self.slot is not None and port else DEFAULT_BASE
+        password = self.read_password() if base == own_base else ""
+        if password:
+            headers["authorization"] = "Basic " + base64.b64encode(f"opencode:{password}".encode()).decode()
+        try:
+            with urllib.request.urlopen(urllib.request.Request(base + path, data=data, method=method, headers=headers), timeout=timeout) as response:
+                raw = response.read().decode()
+        except urllib.error.HTTPError as error:
+            raise GuestError(f"HTTP {error.code}", error.read().decode(errors="replace")[:300]) from None
+        except (urllib.error.URLError, OSError) as error:
+            raise GuestError("GUEST_SERVER_DOWN", str(getattr(error, "reason", error))[:200]) from None
+        try:
+            return json.loads(raw) if raw else None
+        except ValueError:
+            return None
+
+    def http(self, request, method, path, body=None, timeout=5):
+        """One call to the guest server, unwrapped to its `data`."""
+        payload = self.http_raw(request, method, path, body, timeout)
+        return payload["data"] if isinstance(payload, dict) and "data" in payload else payload
+
+    def server_version(self, request):
+        """The server's OpenCode version from /api/info, or None when it does not say. Raises when it is down."""
+        try:
+            info = self.http(request, "GET", "/api/info")
+        except GuestError as error:
+            if error.error.startswith("HTTP"):
+                return None
+            raise
+        version = info.get("version") if isinstance(info, dict) else None
+        return version if isinstance(version, str) and VERSION.fullmatch(version) else None
+
+    def server_up(self, request):
+        try:
+            self.server_version(request)
+            return True
+        except GuestError:
+            return False
+
+    def start_server(self, request, names=None):
+        """Starts `opencode serve` on the slot's port with its own password, detached, logging to its server.log. It runs
+        with the machine's basics and the declared names only; without names it keeps the ones it was last started with."""
+        self.ensure_password()
+        if names is None:
+            names = applied_env_names(self) or []
+        write_file(self.env_names, json.dumps(names).encode(), 0o600)
+        env = session_env(names)
+        env["OPENCODE_PASSWORD"] = self.read_password()
+        port = self.port(request, create=True)
+        with open(self.server_log, "ab") as log:
+            os.chmod(self.server_log, 0o600)
+            process = subprocess.Popen(
+                ["opencode", "serve", "--hostname", "127.0.0.1", "--port", str(port)],
+                stdin=subprocess.DEVNULL,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                env=env,
+                cwd=local(HOME) if os.path.isdir(local(HOME)) else None,
+            )
+        write_file(self.server_pid, str(process.pid).encode(), 0o600)
+
+    def stop_server(self):
+        pid = pid_alive(self.server_pid)
+        if pid:
+            try:
+                os.killpg(pid, signal.SIGTERM)
+            except OSError:
+                pass
+            for _ in range(50):
+                if not pid_alive(self.server_pid):
+                    break
+                time.sleep(0.1)
+        try:
+            os.unlink(self.server_pid)
+        except OSError:
+            pass
+
+    def server_state(self, request):
+        if self.slot is not None and not self.port(request):
+            return "down"
+        if self.server_up(request):
+            return "up"
+        return "starting" if pid_alive(self.server_pid) else "down"
 
 
 def pid_alive(path):
@@ -298,12 +447,6 @@ def opencode_version():
 def ensure_home():
     os.makedirs(HELPER_HOME, mode=0o700, exist_ok=True)
     os.chmod(HELPER_HOME, 0o700)
-
-
-def ensure_password():
-    ensure_home()
-    if not os.path.exists(PASSWORD_PATH):
-        write_file(PASSWORD_PATH, secrets.token_hex(24).encode(), 0o600)
 
 
 # What a work's OpenCode, and every command it runs, starts with besides the variables the work declares: the machine's
@@ -356,60 +499,14 @@ def session_env(names):
     return {name: value for name, value in source.items() if name in names or name in BASIC_NAMES or name.startswith("LC_")}
 
 
-def applied_env_names():
+def applied_env_names(place):
     """The names the running server was started with; None when the helper never recorded them."""
     try:
-        with open(ENV_NAMES, encoding="utf8") as handle:
+        with open(place.env_names, encoding="utf8") as handle:
             names = json.load(handle)
     except (OSError, ValueError):
         return None
     return names if isinstance(names, list) else None
-
-
-def start_server(names=None):
-    """Starts `opencode serve` on localhost with the guest password, detached, logging to server.log. It runs with the
-    machine's basics and the declared names only; without names it keeps the ones it was last started with."""
-    ensure_password()
-    if names is None:
-        names = applied_env_names() or []
-    write_file(ENV_NAMES, json.dumps(names).encode(), 0o600)
-    env = session_env(names)
-    env["OPENCODE_PASSWORD"] = read_password()
-    with open(SERVER_LOG, "ab") as log:
-        os.chmod(SERVER_LOG, 0o600)
-        process = subprocess.Popen(
-            ["opencode", "serve", "--hostname", "127.0.0.1", "--port", str(PORT)],
-            stdin=subprocess.DEVNULL,
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-            env=env,
-            cwd=local(HOME) if os.path.isdir(local(HOME)) else None,
-        )
-    write_file(SERVER_PID, str(process.pid).encode(), 0o600)
-
-
-def stop_server():
-    pid = pid_alive(SERVER_PID)
-    if pid:
-        try:
-            os.killpg(pid, signal.SIGTERM)
-        except OSError:
-            pass
-        for _ in range(50):
-            if not pid_alive(SERVER_PID):
-                break
-            time.sleep(0.1)
-    try:
-        os.unlink(SERVER_PID)
-    except OSError:
-        pass
-
-
-def server_state(request):
-    if server_up(request):
-        return "up"
-    return "starting" if pid_alive(SERVER_PID) else "down"
 
 
 # ── Files ─────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -450,16 +547,16 @@ def remove(path):
 # ── Sessions ──────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
-def session_info(request, sid):
+def session_info(place, request, sid):
     try:
-        return http(request, "GET", f"/api/session/{sid}")
+        return place.http(request, "GET", f"/api/session/{sid}")
     except GuestError as error:
         if error.error == "HTTP 404":
             return None
         raise
 
 
-def all_sessions(request):
+def all_sessions(place, request):
     """Every session the server lists, newest first, following `cursor.next` through every page.
 
     The server pages `/api/session` (50 a page by default), so one page is not a work's tree. A page that fails, or a
@@ -468,7 +565,7 @@ def all_sessions(request):
     listed, seen, cursors = [], set(), set()
     path = "/api/session"
     for _ in range(SESSION_PAGES):
-        payload = http_raw(request, "GET", path)
+        payload = place.http_raw(request, "GET", path)
         if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
             fail("GUEST_FAILED", "the session listing did not answer a data list")
         for item in payload["data"]:
@@ -486,13 +583,13 @@ def all_sessions(request):
     fail("GUEST_FAILED", f"the session listing did not finish within {SESSION_PAGES} pages")
 
 
-def tree(request, root_id, listed=None):
+def tree(place, request, root_id, listed=None):
     """The root session and every session under it, parents first. `listed` reuses the /api/session pages already read."""
-    sessions = all_sessions(request) if listed is None else listed
+    sessions = all_sessions(place, request) if listed is None else listed
     children = {}
     for item in sessions:
         children.setdefault(item.get("parentID"), []).append(item["id"])
-    if not any(item["id"] == root_id for item in sessions) and session_info(request, root_id) is None:
+    if not any(item["id"] == root_id for item in sessions) and session_info(place, request, root_id) is None:
         fail("SESSION_MISSING", root_id)
     order, queue = [], [(root_id, None)]
     while queue:
@@ -504,8 +601,8 @@ def tree(request, root_id, listed=None):
     return order
 
 
-def export_of(request, sid):
-    exported = http(request, "GET", f"/api/experimental/session/{sid}/export", timeout=20)
+def export_of(place, request, sid):
+    exported = place.http(request, "GET", f"/api/experimental/session/{sid}/export", timeout=20)
     if not isinstance(exported, dict) or not isinstance(exported.get("messages"), list):
         fail("EXPORT_INVALID", f"{sid} exported no messages")
     return exported
@@ -534,9 +631,9 @@ def message_text(message, limit=TEXT_LIMIT):
     return " ".join(parts).strip()[:limit] or None
 
 
-def newest(request, sid, kind, limit=1):
+def newest(place, request, sid, kind, limit=1):
     """The session's newest messages of one type, newest first; a server that ignores the filter is checked here."""
-    listed = http(request, "GET", f"/api/session/{sid}/message?type={kind}&order=desc&limit={limit}") or []
+    listed = place.http(request, "GET", f"/api/session/{sid}/message?type={kind}&order=desc&limit={limit}") or []
     return [item for item in listed if isinstance(item, dict) and item.get("type") == kind] if isinstance(listed, list) else []
 
 
@@ -569,11 +666,11 @@ def done_prs(value):
     return found
 
 
-def done_report(request, sid, limit=TEXT_LIMIT):
+def done_report(place, request, sid, limit=TEXT_LIMIT):
     """The guest's own completion declaration: the newest completed `boxd_done` call in the root session after its
     latest user prompt, or None. Its words stay data: cut here, and redacted on the laptop before a result."""
     try:
-        prompts = newest(request, sid, "user")
+        prompts = newest(place, request, sid, "user")
     except GuestError:
         return None
     if not prompts:
@@ -583,7 +680,7 @@ def done_report(request, sid, limit=TEXT_LIMIT):
     if asked is None:
         return None
     try:
-        messages = newest(request, sid, "assistant", DONE_MESSAGES)
+        messages = newest(place, request, sid, "assistant", DONE_MESSAGES)
     except GuestError:
         return None
     # Newest first, and every part of a message in its newest-first order, so the first match is the newest call.
@@ -610,11 +707,11 @@ def done_report(request, sid, limit=TEXT_LIMIT):
 OUTCOMES = {"succeeded": "completed", "completed": "completed", "ok": "completed", "failed": "failed", "interrupted": "aborted", "aborted": "aborted"}
 
 
-def waiting(request, sid):
+def waiting(place, request, sid):
     """The prompts waiting in the session's inbox, by how they were admitted: a steer unless it says queue."""
     counts = {"steer": 0, "queue": 0}
     try:
-        inbox = http(request, "GET", f"/api/session/{sid}/inbox") or []
+        inbox = place.http(request, "GET", f"/api/session/{sid}/inbox") or []
     except GuestError:
         return counts
     for item in inbox if isinstance(inbox, list) else []:
@@ -623,11 +720,11 @@ def waiting(request, sid):
     return counts
 
 
-def needs_input(request, sid):
+def needs_input(place, request, sid):
     """A pending form or permission ask: a person must answer it, so automation never sleeps the work."""
     for kind in ("permission", "form"):
         try:
-            pending = http(request, "GET", f"/api/session/{sid}/{kind}")
+            pending = place.http(request, "GET", f"/api/session/{sid}/{kind}")
         except GuestError:
             continue
         if isinstance(pending, list) and pending:
@@ -668,12 +765,13 @@ def loadavg():
 
 
 def action_serve(request):
-    answer = {"server": server_state(request), "opencode": None}
+    place = place_of(request)
+    answer = {"server": place.server_state(request), "opencode": None}
     if answer["server"] == "up":
-        answer["opencode"] = server_version(request)
+        answer["opencode"] = place.server_version(request)
     directory = request.get("directory")
     if directory is not None:
-        state = clone_state(work_directory(directory))
+        state = clone_state(place, work_directory(directory))
         if state:
             answer["clone"] = state.get("status")
     emit(answer)
@@ -681,30 +779,31 @@ def action_serve(request):
 
 def action_phase(request):
     """The work's phase over its whole session tree; lastText, tail, waiting and needsInput are the root coordinator's."""
+    place = place_of(request)
     sid = session_id(request.get("sessionId"))
     full = request.get("full")
     if full is not None and not isinstance(full, bool):
         fail("NAME_INVALID", "full must be true or false")
-    version = server_version(request)
-    info = session_info(request, sid)
+    version = place.server_version(request)
+    info = session_info(place, request, sid)
     base = {"waiting": {"steer": 0, "queue": 0}, "guestVersion": version, "outcome": None, "reading": reading()}
     if not isinstance(info, dict):
         emit({"phase": "missing", **base})
         return
     tail = request.get("tail")
     tail = min(tail, TAIL_LIMIT) if isinstance(tail, int) and not isinstance(tail, bool) and tail > 0 else 0
-    active = http(request, "GET", "/api/session/active") or {}
+    active = place.http(request, "GET", "/api/session/active") or {}
     # The work is its root coordinator's tree: the root and every subagent session under it. The /api/session pages
     # carry each session's time stamps; every page is read, and a listing that cannot finish fails the read, so a busy
     # tree can never read as idle.
-    listed = all_sessions(request)
+    listed = all_sessions(place, request)
     if not any(item["id"] == sid for item in listed):
         listed = listed + [info]
-    sessions = tree(request, sid, listed)
+    sessions = tree(place, request, sid, listed)
     records = {item["id"]: item for item in listed}
     records[sid] = info
     time_info = info.get("time") if isinstance(info.get("time"), dict) else {}
-    answer = {**base, "waiting": waiting(request, sid)}
+    answer = {**base, "waiting": waiting(place, request, sid)}
     stamps = []
     present = []
     for tree_id, _parent in sessions:
@@ -712,7 +811,7 @@ def action_phase(request):
         times = session_times(record)
         if tree_id != sid and not any(value is not None for value in times):
             # A listing without times leaves one read per such session; one gone in between is skipped, not failed.
-            record = session_info(request, tree_id)
+            record = session_info(place, request, tree_id)
             if not isinstance(record, dict):
                 continue
             times = session_times(record)
@@ -729,7 +828,7 @@ def action_phase(request):
         else:
             answer["outcome"] = OUTCOMES.get(info.get("outcome"))
             try:
-                last = newest(request, sid, "idle")
+                last = newest(place, request, sid, "idle")
             except GuestError:
                 last = []
             if last:
@@ -739,12 +838,12 @@ def action_phase(request):
                     answer["error"] = {"type": str(failure.get("type") or "error")[:60], "message": str(failure.get("message") or "")[:400]}
     # Only an idle tree whose last run did not fail or abort can hold a done report, and only after its latest prompt.
     if answer["phase"] == "idle" and answer.get("outcome") not in ("failed", "aborted"):
-        report = done_report(request, sid, FULL_TEXT_LIMIT if full else TEXT_LIMIT)
+        report = done_report(place, request, sid, FULL_TEXT_LIMIT if full else TEXT_LIMIT)
         if report:
             answer["done"] = report
     # The coordinator's own report stays the root's: lastText, tail, waiting and needsInput are not widened to children.
     try:
-        recent = newest(request, sid, "assistant", max(1, tail))
+        recent = newest(place, request, sid, "assistant", max(1, tail))
     except GuestError:
         recent = []
     if recent:
@@ -764,7 +863,7 @@ def action_phase(request):
     known = [value for value in stamps if value is not None]
     if known:
         answer["lastActivityAt"] = iso(max(known))
-    pending = needs_input(request, sid)
+    pending = needs_input(place, request, sid)
     if pending:
         answer["needsInput"] = pending
     cost = info.get("cost")
@@ -774,13 +873,14 @@ def action_phase(request):
 
 
 def action_read(request):
+    place = place_of(request)
     max_bytes = request.get("maxBytes")
     if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or not 1 <= max_bytes <= 262144:
         fail("NAME_INVALID", "maxBytes must be 1 to 262144")
     tail = request.get("tail")
     tail = tail if isinstance(tail, int) and not isinstance(tail, bool) and 1 <= tail <= 2000 else None
     if request.get("log") == "server":
-        path, name = SERVER_LOG, "server.log"
+        path, name = place.server_log, "server.log"
         if not os.path.isfile(path):
             emit({"binary": False, "path": name, "bytes": 0, "truncated": False, "text": ""})
             return
@@ -926,8 +1026,9 @@ def stored_sessions():
 
 def pending_input(request, sid):
     """A pending permission or form ask: a person must answer it. A failed read fails describe, never reads as none."""
+    place = Place(None)
     for kind in ("permission", "form"):
-        pending = http(request, "GET", f"/api/session/{sid}/{kind}")
+        pending = place.http(request, "GET", f"/api/session/{sid}/{kind}")
         if not isinstance(pending, list):
             fail("GUEST_FAILED", f"the session {kind} listing did not answer a list")
         if pending:
@@ -939,9 +1040,10 @@ def describe_sessions(request):
     """The root sessions, with the running server's answer for whether each runs or waits on a person. A server that is
     down is left down: the store's busy stamps answer instead."""
     sessions = stored_sessions()
-    if not sessions or not server_up(request):
+    place = Place(None)
+    if not sessions or not place.server_up(request):
         return sessions
-    active = http(request, "GET", "/api/session/active") or {}
+    active = place.http(request, "GET", "/api/session/active") or {}
     for session in sessions:
         session["busy"] = session["id"] in active
         session["needsInput"] = pending_input(request, session["id"])
@@ -954,6 +1056,25 @@ def action_describe(request):
     emit({"opencode": opencode_version() or "", "works": describe_works(), "sessions": describe_sessions(request)})
 
 
+def action_slots(request):
+    """Every slot on the machine: its work id, port, server state and whether its root session is busy."""
+    slots = []
+    for name in slot_names():
+        place = Place(name)
+        port = place.port(request)
+        if port is None:
+            continue
+        server = place.server_state(request)
+        busy = False
+        if server == "up":
+            try:
+                busy = bool(place.http(request, "GET", "/api/session/active"))
+            except GuestError:
+                busy = False
+        slots.append({"workId": name, "port": port, "server": server, "busy": busy})
+    emit({"slots": slots})
+
+
 # ── Change actions ────────────────────────────────────────────────────────────────────────────────────────────────
 
 
@@ -961,21 +1082,21 @@ def clone_key(directory):
     return hashlib.sha256(guest(directory).encode()).hexdigest()[:16]
 
 
-def clone_state(directory):
+def clone_state(place, directory):
     try:
-        with open(os.path.join(CLONES, clone_key(directory) + ".json"), encoding="utf8") as handle:
+        with open(os.path.join(place.clones, clone_key(directory) + ".json"), encoding="utf8") as handle:
             state = json.load(handle)
     except (OSError, ValueError):
         return None
-    if state.get("status") == "running" and not pid_alive(os.path.join(CLONES, clone_key(directory) + ".pid")):
+    if state.get("status") == "running" and not pid_alive(os.path.join(place.clones, clone_key(directory) + ".pid")):
         # The clone process is gone without writing its end: it was killed (a reboot, its own bound).
         state["status"] = "failed"
     return state
 
 
-def write_clone_state(directory, state):
-    os.makedirs(CLONES, mode=0o700, exist_ok=True)
-    write_file(os.path.join(CLONES, clone_key(directory) + ".json"), json.dumps(state).encode(), 0o600)
+def write_clone_state(place, directory, state):
+    os.makedirs(place.clones, mode=0o700, exist_ok=True)
+    write_file(os.path.join(place.clones, clone_key(directory) + ".json"), json.dumps(state).encode(), 0o600)
 
 
 def repo_url(value):
@@ -997,25 +1118,25 @@ def warm_path(url):
     return os.path.join(WARM, hashlib.sha256(url.encode()).hexdigest()[:16])
 
 
-def start_clone(directory, repo, ref, warm=False):
+def start_clone(place, directory, repo, ref, warm=False):
     """The clone runs detached, in its own process group with its own bound, so a stopped call never cuts it. With
     `warm`, the checkout is already in the work folder and the process only fetches and checks out."""
-    os.makedirs(CLONES, mode=0o700, exist_ok=True)
+    os.makedirs(place.clones, mode=0o700, exist_ok=True)
     spec = {"directory": guest(directory), "repo": repo, "ref": ref, "status": "running", "at": time.time(), **({"warm": True} if warm else {})}
-    write_clone_state(directory, spec)
-    with open(SETUP_LOG, "ab") as log:
-        os.chmod(SETUP_LOG, 0o600)
+    write_clone_state(place, directory, spec)
+    with open(place.setup_log, "ab") as log:
+        os.chmod(place.setup_log, 0o600)
         process = subprocess.Popen(
-            [sys.executable, HELPER_PATH, "--clone", guest(directory)],
+            [sys.executable, HELPER_PATH, "--clone", guest(directory), *([place.slot] if place.slot else [])],
             stdin=subprocess.DEVNULL,
             stdout=log,
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
-    write_file(os.path.join(CLONES, clone_key(directory) + ".pid"), str(process.pid).encode(), 0o600)
+    write_file(os.path.join(place.clones, clone_key(directory) + ".pid"), str(process.pid).encode(), 0o600)
 
 
-def refresh_warm(directory, state):
+def refresh_warm(place, directory, state):
     """The detached half of a warm setup: fetch the newest commits and check out the requested ref, or the remote's
     default branch. The checkout is already in place, so a failure leaves it usable at the commit it held."""
     ref = state.get("ref")
@@ -1026,7 +1147,7 @@ def refresh_warm(directory, state):
     if fetched.returncode != 0:
         state.update(status="failed", detail=(fetched.stderr or "git fetch failed").strip()[-300:])
         state["ended"] = time.time()
-        write_clone_state(directory, state)
+        write_clone_state(place, directory, state)
         return
     if ref:
         target = "FETCH_HEAD"
@@ -1041,15 +1162,15 @@ def refresh_warm(directory, state):
     else:
         state.update(status="failed", detail=(checked.stderr or "git checkout failed").strip()[-300:])
     state["ended"] = time.time()
-    write_clone_state(directory, state)
+    write_clone_state(place, directory, state)
 
 
-def run_clone(directory):
+def run_clone(place, directory):
     """The detached clone itself: into a temp folder beside the work folder, then one rename, so a half clone is never
     taken for a checkout. A warm checkout is already in place; only its fetch and checkout run here."""
-    state = clone_state(directory) or {}
+    state = clone_state(place, directory) or {}
     if state.get("warm"):
-        refresh_warm(directory, state)
+        refresh_warm(place, directory, state)
         return
     temp = f"{directory}.clone-{os.getpid()}"
     remove(temp)
@@ -1071,7 +1192,7 @@ def run_clone(directory):
         remove(temp)
         state.update(status="failed", detail=(result.stderr or "git clone failed").strip()[-300:])
     state["ended"] = time.time()
-    write_clone_state(directory, state)
+    write_clone_state(place, directory, state)
 
 
 def git_identity(value):
@@ -1206,22 +1327,23 @@ def action_warm(request):
 
 
 def action_setup(request):
+    place = place_of(request)
     directory = work_directory(request.get("directory"))
     refuse_operator()
-    ensure_password()
+    place.ensure_password()
     ensure_done_plugin()
     names = env_names(request.get("env"))
     version = opencode_version()
-    state = server_state(request)
+    state = place.server_state(request)
     if state == "down":
-        start_server(names)
+        place.start_server(request, names)
         state = "starting"
-    elif applied_env_names() != names:
+    elif applied_env_names(place) != names:
         # The server runs with other variables (or an older helper's whole environment): restart it, never mid-run.
-        if http(request, "GET", "/api/session/active"):
+        if place.http(request, "GET", "/api/session/active"):
             fail("SESSION_BUSY", "the work's OpenCode runs with other variables and is busy; ensure again when it is idle")
-        stop_server()
-        start_server(names)
+        place.stop_server()
+        place.start_server(request, names)
         state = "starting"
     git_identity(request.get("git"))
     workspace = "ready"
@@ -1232,12 +1354,12 @@ def action_setup(request):
         else:
             url = repo_url(repo.get("url") if isinstance(repo, dict) else None)
             ref = repo_ref(repo.get("ref") if isinstance(repo, dict) else None)
-            existing = clone_state(directory)
+            existing = clone_state(place, directory)
             if existing and existing.get("status") == "running":
                 workspace = "cloning"
             elif existing and existing.get("status") == "failed":
                 # Reported once; the next setup starts a new clone.
-                os.unlink(os.path.join(CLONES, clone_key(directory) + ".json"))
+                os.unlink(os.path.join(place.clones, clone_key(directory) + ".json"))
                 fail("GUEST_WORKSPACE", existing.get("detail") or "the clone failed")
             else:
                 os.makedirs(os.path.dirname(directory), exist_ok=True)
@@ -1249,40 +1371,40 @@ def action_setup(request):
                     if os.path.exists(directory):
                         fail("GUEST_WORKSPACE", "the work folder is not empty")
                     os.replace(checkout, directory)
-                    start_clone(directory, url, ref, warm=True)
-                    workspace = "cloning"
+                    start_clone(place, directory, url, ref, warm=True)
                 else:
-                    start_clone(directory, url, ref)
-                    workspace = "cloning"
+                    start_clone(place, directory, url, ref)
+                workspace = "cloning"
     else:
-        existing = clone_state(directory)
+        existing = clone_state(place, directory)
         if existing and existing.get("status") == "running":
             workspace = "cloning"
         elif existing and existing.get("status") == "failed":
             if existing.get("warm") and existing.get("reported"):
                 # Reported once; the checkout is still in place, so the retry is the same fetch.
-                start_clone(directory, existing.get("repo", ""), existing.get("ref"), warm=True)
+                start_clone(place, directory, existing.get("repo", ""), existing.get("ref"), warm=True)
                 workspace = "cloning"
             else:
                 if existing.get("warm"):
                     existing["reported"] = True
-                    write_clone_state(directory, existing)
+                    write_clone_state(place, directory, existing)
                 else:
-                    os.unlink(os.path.join(CLONES, clone_key(directory) + ".json"))
+                    os.unlink(os.path.join(place.clones, clone_key(directory) + ".json"))
                 fail("GUEST_WORKSPACE", existing.get("detail") or "the clone failed")
     emit({"server": "up" if state == "up" else "starting", "opencode": version or "", "workspace": workspace})
 
 
-def wait_idle(request, sid, seconds=5):
+def wait_idle(place, request, sid, seconds=5):
     deadline = time.time() + seconds
     while time.time() < deadline:
-        if sid not in (http(request, "GET", "/api/session/active") or {}):
+        if sid not in (place.http(request, "GET", "/api/session/active") or {}):
             return True
         time.sleep(0.1)
     return False
 
 
 def action_prompt(request):
+    place = place_of(request)
     directory = work_directory(request.get("directory"))
     refuse_operator()
     text = request.get("text")
@@ -1295,7 +1417,7 @@ def action_prompt(request):
     title = request.get("title") if isinstance(request.get("title"), str) else "boxd"
     for item in request.get("files") or []:
         staged = local(item.get("staged", "")) if isinstance(item, dict) else ""
-        if not staged.startswith(STAGING + "/") or ".." in staged.split("/"):
+        if not staged.startswith(place.staging + "/") or ".." in staged.split("/"):
             fail("NAME_INVALID", "a staged file must be under the helper's staging folder")
         target = os.path.join(directory, relative(item.get("to")))
         inside(directory, os.path.dirname(target))
@@ -1307,26 +1429,26 @@ def action_prompt(request):
         body = {"title": title[:200], "location": {"directory": guest(directory)}}
         if model:
             body["model"] = model
-        made = http(request, "POST", "/api/session", body)
+        made = place.http(request, "POST", "/api/session", body)
         sid = made.get("id") if isinstance(made, dict) else None
         session_id(sid)
         created = True
     else:
         session_id(sid)
-        if session_info(request, sid) is None:
+        if session_info(place, request, sid) is None:
             fail("SESSION_MISSING", sid)
-    running = sid in (http(request, "GET", "/api/session/active") or {})
-    before = waiting(request, sid)
+    running = sid in (place.http(request, "GET", "/api/session/active") or {})
+    before = waiting(place, request, sid)
     if model and not created and running and delivery != "interrupt":
         fail("SESSION_BUSY", "a running session switches its model only with interrupt")
     interrupted = False
     if delivery == "interrupt" and running:
-        http(request, "POST", f"/api/session/{sid}/interrupt", {})
+        place.http(request, "POST", f"/api/session/{sid}/interrupt", {})
         interrupted = True
-        running = not wait_idle(request, sid)
+        running = not wait_idle(place, request, sid)
     if model and not created:
-        http(request, "POST", f"/api/session/{sid}/model", {"model": model})
-    admitted = http(request, "POST", f"/api/session/{sid}/prompt", {"text": text, "delivery": "queue" if delivery == "queue" else "steer"})
+        place.http(request, "POST", f"/api/session/{sid}/model", {"model": model})
+    admitted = place.http(request, "POST", f"/api/session/{sid}/prompt", {"text": text, "delivery": "queue" if delivery == "queue" else "steer"})
     inbox_id = None
     if isinstance(admitted, dict):
         inbox_id = admitted.get("id") or admitted.get("inboxID") or admitted.get("messageID")
@@ -1343,8 +1465,9 @@ def action_prompt(request):
 
 
 def action_interrupt(request):
+    place = place_of(request)
     sid = session_id(request.get("sessionId"))
-    http(request, "POST", f"/api/session/{sid}/interrupt", {})
+    place.http(request, "POST", f"/api/session/{sid}/interrupt", {})
     emit({})
 
 
@@ -1353,6 +1476,7 @@ def major(version):
 
 
 def action_upgrade(request):
+    place = place_of(request)
     target = request.get("version")
     if not isinstance(target, str) or not VERSION.fullmatch(target):
         fail("NAME_INVALID", "version must be a release such as 2.4.1")
@@ -1365,17 +1489,17 @@ def action_upgrade(request):
         if current != target:
             fail("GUEST_FAILED", f"opencode upgrade {target} left {current or 'no version'}: {(result.stderr or result.stdout).strip()[-200:]}")
         # The session database stays on disk; only the server restarts on the new release.
-        stop_server()
-        start_server()
+        place.stop_server()
+        place.start_server(request)
     emit({"opencode": current})
 
 
-def export_run(request, sid, active):
+def export_run(place, request, sid, active):
     """The root session's last run, for the export's answer, read as phase reads it: a root that is running has no
     outcome yet (a partial export of a live run), and only a busy stamp with no run in the server is an aborted run."""
     if sid in active:
         return {"outcome": None}
-    info = session_info(request, sid)
+    info = session_info(place, request, sid)
     if not isinstance(info, dict):
         return {"outcome": None}
     time_info = info.get("time") if isinstance(info.get("time"), dict) else {}
@@ -1384,7 +1508,7 @@ def export_run(request, sid, active):
         return {"outcome": "aborted"}
     run = {"outcome": OUTCOMES.get(info.get("outcome"))}
     try:
-        last = newest(request, sid, "idle")
+        last = newest(place, request, sid, "idle")
     except GuestError:
         last = []
     if last:
@@ -1398,37 +1522,39 @@ def export_run(request, sid, active):
 def action_export(request):
     """Exports the tree, after its own busy check in this one exec: a running tree answers `busy` and writes nothing,
     unless the harvest is partial."""
+    place = place_of(request)
     root = session_id(request.get("rootId"))
     partial = request.get("partial") is True
-    version = server_version(request) or opencode_version() or ""
-    sessions_tree = tree(request, root)
-    active = http(request, "GET", "/api/session/active") or {}
+    version = place.server_version(request) or opencode_version() or ""
+    sessions_tree = tree(place, request, root)
+    active = place.http(request, "GET", "/api/session/active") or {}
     running = [sid for sid, _parent in sessions_tree if sid in active]
     if running and not partial:
         emit({"outcome": "busy", "reason": f"{len(running)} session(s) of the tree are running; a harvest needs the tree idle, or partial: true.", "guestVersion": version})
         return
-    os.makedirs(EXPORTS, mode=0o700, exist_ok=True)
+    os.makedirs(place.exports, mode=0o700, exist_ok=True)
     sessions = []
     for sid, parent in sessions_tree:
-        exported = export_of(request, sid)
-        path = os.path.join(EXPORTS, f"{sid}.json")
+        exported = export_of(place, request, sid)
+        path = os.path.join(place.exports, f"{sid}.json")
         write_file(path, json.dumps(exported, separators=(",", ":")).encode(), 0o600)
         size, sha = digest(path)
         sessions.append({**marks(exported, sid, parent), "file": guest(path), "bytes": size, "sha256": sha})
     # A run that started while the tree was written (a person on boxd connect, a queued item) makes this copy partial.
-    after = http(request, "GET", "/api/session/active") or {}
+    after = place.http(request, "GET", "/api/session/active") or {}
     running = running or [sid for sid, _parent in sessions_tree if sid in after]
-    run = export_run(request, root, after)
+    run = export_run(place, request, root, after)
     # The harvest keeps the guest's own completion declaration, under the same rule as phase: an idle tree, no failed
     # or aborted last run, and a completed call after the root's latest prompt.
     if not running and run.get("outcome") not in ("failed", "aborted"):
-        report = done_report(request, root)
+        report = done_report(place, request, root)
         if report:
             run["done"] = report
     emit({"outcome": "exported", "busy": bool(running), "run": run, "sessions": sessions, "guestVersion": version})
 
 
 def action_import(request):
+    place = place_of(request)
     directory = work_directory(request.get("directory"))
     files = request.get("files")
     if not isinstance(files, list) or not files or len(files) > 500:
@@ -1436,7 +1562,7 @@ def action_import(request):
     loaded = []
     for name in files:
         path = local(name) if isinstance(name, str) else ""
-        if not path.startswith(IMPORTS + "/") or ".." in path.split("/"):
+        if not path.startswith(place.imports + "/") or ".." in path.split("/"):
             fail("NAME_INVALID", "an import must be under the helper's imports folder")
         with open(path, encoding="utf8") as handle:
             exported = json.load(handle)
@@ -1458,7 +1584,7 @@ def action_import(request):
             order.append(item)
     for item in order:
         try:
-            http(request, "POST", "/api/experimental/session/import", {"info": item["info"], "messages": item["messages"], "location": {"directory": guest(directory)}}, timeout=30)
+            place.http(request, "POST", "/api/experimental/session/import", {"info": item["info"], "messages": item["messages"], "location": {"directory": guest(directory)}}, timeout=30)
         except GuestError as error:
             # The id is already there: an earlier import of the same tree, which this one joins.
             if error.error != "HTTP 409":
@@ -1558,6 +1684,7 @@ def unpushed_commits(git):
 
 
 def action_git(request):
+    place = place_of(request)
     directory = work_directory(request.get("directory"))
     answer = {"known": False, "remote": None, "branch": None, "sha": None, "dirty": False, "untracked": [], "ignored": [], "unpushed": [], "unpushedCount": 0, "unpushedKnown": True}
 
@@ -1608,21 +1735,21 @@ def action_git(request):
         if dirty:
             # Tracked changes, staged and unstaged together: `git diff` alone misses a staged file.
             patch = git("diff", "--binary", "HEAD", text=False)
-            os.makedirs(HARVEST, mode=0o700, exist_ok=True)
-            path = os.path.join(HARVEST, "patch.diff")
+            os.makedirs(place.harvest, mode=0o700, exist_ok=True)
+            path = os.path.join(place.harvest, "patch.diff")
             write_file(path, patch.stdout, 0o600)
             size, sha256 = digest(path)
             answer["patch"] = {"file": guest(path), "bytes": size, "sha256": sha256}
     root = request.get("rootId")
     if root is not None:
-        answer["sessions"] = [marks(export_of(request, sid), sid, parent) for sid, parent in tree(request, session_id(root))]
+        answer["sessions"] = [marks(export_of(place, request, sid), sid, parent) for sid, parent in tree(place, request, session_id(root))]
     emit(answer)
 
 
-def has_sessions(request):
+def has_sessions(place, request):
     """Whether the base's OpenCode database holds any session: the server's list when it runs, else the database."""
-    if server_up(request):
-        return bool(all_sessions(request))
+    if place.server_up(request):
+        return bool(all_sessions(place, request))
     database = local(SESSION_DB)
     if not os.path.exists(database):
         return False
@@ -1666,10 +1793,13 @@ def action_scrub(request):
     if os.path.exists(local(HOME + "/.local/share/opencode/auth.json")) or has_git_credential():
         emit({"removed": [], "refused": "has-credential"})
         return
-    if has_sessions(request):
+    if slot_names():
+        emit({"removed": [], "refused": "has-slot"})
+        return
+    if has_sessions(Place(None), request):
         emit({"removed": [], "refused": "has-session"})
         return
-    stop_server()
+    Place(None).stop_server()
     removed = []
     env_file = "/etc/profile.d/boxd-env.sh"
     if os.path.exists(local(env_file)):
@@ -1680,15 +1810,27 @@ def action_scrub(request):
             subprocess.run(["sudo", "-n", "rm", "-f", env_file], check=True, capture_output=True)
         removed.append(env_file)
     # WARM stays: a warm image carries its repositories' checkouts for the works that fork from it.
-    for path in (PASSWORD_PATH, ENV_NAMES, EXPORTS, HARVEST, STAGING, IMPORTS, CLONES, SERVER_LOG, SETUP_LOG, local(WORK_ROOT)):
+    for path in (PASSWORD_PATH, ENV_NAMES, EXPORTS, HARVEST, STAGING, IMPORTS, CLONES, SERVER_LOG, SETUP_LOG, SLOTS, local(WORK_ROOT)):
         if remove(path):
             removed.append(guest(path))
     emit({"removed": removed})
 
 
+def action_release(request):
+    """Stops one slot's server and removes its slot folder and work folder, touching nothing else."""
+    place = Place(slot_id(request.get("slot")))
+    removed = []
+    place.stop_server()
+    if remove(place.home):
+        removed.append(guest(place.home))
+    if place.work and remove(place.work):
+        removed.append(guest(place.work))
+    emit({"slot": place.slot, "removed": removed})
+
+
 # ── Dispatch ──────────────────────────────────────────────────────────────────────────────────────────────────────
 
-READS = {"serve": action_serve, "phase": action_phase, "read": action_read, "health": action_health, "describe": action_describe}
+READS = {"serve": action_serve, "phase": action_phase, "read": action_read, "health": action_health, "describe": action_describe, "slots": action_slots}
 CHANGES = {
     "setup": action_setup,
     "prompt": action_prompt,
@@ -1699,6 +1841,7 @@ CHANGES = {
     "git": action_git,
     "warm": action_warm,
     "scrub": action_scrub,
+    "release": action_release,
 }
 
 
@@ -1724,8 +1867,8 @@ def install(expected):
 
 
 def main():
-    if len(sys.argv) == 3 and sys.argv[1] == "--clone":
-        run_clone(work_directory(sys.argv[2]))
+    if len(sys.argv) in (3, 4) and sys.argv[1] == "--clone":
+        run_clone(Place(slot_id(sys.argv[3]) if len(sys.argv) == 4 else None), work_directory(sys.argv[2]))
         return
     installing = sys.argv[1:] == ["--install"]
     try:

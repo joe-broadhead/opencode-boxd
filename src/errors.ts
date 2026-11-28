@@ -90,6 +90,11 @@ export const CODES = {
       "The base holds ~/.local/share/opencode/auth.json. Model credentials are never baked into an image, because an image reaches every work and everyone in the organisation who can boot it.",
     next: `Remove auth.json from the base, or build from stock, and give works a model key another way: ${SECRET_WAYS}. Then boxd_golden again.`,
   },
+  GOLDEN_HAS_SLOT: {
+    state: "refused",
+    message: "The base holds work slots under ~/.boxd-plugin/slots. A slot belongs to one work, so an image must not carry it.",
+    next: 'Build from "stock", or from a base a scrub has already cleaned, then boxd_golden again.',
+  },
 
   // The machine.
   MACHINE_SHARED: { state: "refused", message: "The machine is shared, which deletes the guest's sign-in.", next: "Unshare it with boxd machine unshare, or boxd_drop it and boxd_ensure again." },

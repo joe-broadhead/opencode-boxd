@@ -61,6 +61,8 @@ export interface FakeState {
   secrets?: unknown[]
   /** Variables the guest's helper sees, beside the ones the fake keeps out of it (tokens, keys and secrets). */
   guestEnv?: Record<string, string>
+  /** The loopback guest server a slot's helper talks to, when one machine holds several. */
+  guestPorts?: Record<string, number>
   faults?: Record<string, FakeFault[]>
   latencyMs?: [number, number]
   /** The listing carries machine ids (upstream ask U14). */

@@ -26,7 +26,7 @@ let server: ReturnType<typeof Bun.serve>
 beforeAll(() => {
   mkdirSync(bin, { recursive: true })
   mkdirSync(home, { recursive: true })
-  writeFileSync(join(bin, "opencode"), `#!/bin/sh\ncase "$1" in\n  --version) echo 2.4.1 ;;\n  serve) env > "${serverEnv}" ;;\nesac\n`)
+  writeFileSync(join(bin, "opencode"), `#!/bin/sh\ncase "$1" in\n  --version) echo 2.4.1 ;;\n  serve) env > "${serverEnv}"; env > "${root}/serve-env-$5" ;;\nesac\n`)
   chmodSync(join(bin, "opencode"), 0o755)
   server = Bun.serve({
     port: 0,
@@ -50,11 +50,10 @@ beforeEach(() => {
   rmSync(join(root, "etc"), { recursive: true, force: true })
 })
 
-/** One `setup` as the plugin sends it, with the operator's variables in the helper's own environment. */
-async function setup(request: Record<string, unknown>, up: boolean) {
-  const base = up ? `http://127.0.0.1:${server.port}` : "http://127.0.0.1:1"
+/** One helper call as the plugin sends it, with the operator's variables in the helper's own environment. */
+async function run(request: Record<string, unknown>) {
   const child = Bun.spawn(["python3", guest], {
-    stdin: new Blob([JSON.stringify({ action: "setup", helper, directory: "/home/boxd/work/review-api", base, ...request })]),
+    stdin: new Blob([JSON.stringify({ helper, ...request })]),
     stdout: "pipe",
     stderr: "pipe",
     env: {
@@ -71,9 +70,15 @@ async function setup(request: Record<string, unknown>, up: boolean) {
   return JSON.parse(out.trim().split("\n").at(-1)!) as Record<string, unknown>
 }
 
-const startedWith = (): Record<string, string> =>
+/** One `setup` as the plugin sends it. */
+async function setup(request: Record<string, unknown>, up: boolean) {
+  const base = up ? `http://127.0.0.1:${server.port}` : "http://127.0.0.1:1"
+  return run({ action: "setup", directory: "/home/boxd/work/review-api", base, ...request })
+}
+
+const startedWith = (port?: number): Record<string, string> =>
   Object.fromEntries(
-    readFileSync(serverEnv, "utf8")
+    readFileSync(port ? join(root, `serve-env-${port}`) : serverEnv, "utf8")
       .split("\n")
       .filter(Boolean)
       .map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]),
@@ -133,5 +138,35 @@ describe("a work's OpenCode environment", () => {
   test.each([[["lower_case"]], [["BAD-NAME"]], [["OPENCODE_PASSWORD"]], ["OPERATOR_FIRST"], [[1]]])("a declaration of %p is refused and starts nothing", async (env) => {
     expect(await setup({ env }, false)).toMatchObject({ ok: false, error: "NAME_INVALID" })
     expect(existsSync(serverEnv)).toBe(false)
+  })
+
+  test("two slots keep their own port, password and declared variables; a scrub refuses while they exist", async () => {
+    const alpha = await run({ action: "setup", directory: "/home/boxd/work/alpha", slot: "alpha", env: ["DECLARED_KEY"], opencode: "2.4.1" })
+    const beta = await run({ action: "setup", directory: "/home/boxd/work/beta", slot: "beta", env: ["OPERATOR_FIRST"], opencode: "2.4.1" })
+    expect(alpha).toMatchObject({ ok: true, server: "starting" })
+    expect(beta).toMatchObject({ ok: true, server: "starting" })
+    const alphaPort = Number(readFileSync(join(home, ".boxd-plugin/slots/alpha/port"), "utf8"))
+    const betaPort = Number(readFileSync(join(home, ".boxd-plugin/slots/beta/port"), "utf8"))
+    expect(alphaPort).not.toBe(betaPort)
+    for (const port of [alphaPort, betaPort]) {
+      expect(port).toBeGreaterThanOrEqual(4100)
+      expect(port).toBeLessThan(4200)
+    }
+    expect(startedWith(alphaPort)).toMatchObject({ DECLARED_KEY: "declared-value", OPENCODE_PASSWORD: expect.any(String) })
+    expect(startedWith(alphaPort).OPERATOR_FIRST).toBeUndefined()
+    expect(startedWith(betaPort)).toMatchObject({ OPERATOR_FIRST: "operator-gh", OPENCODE_PASSWORD: expect.any(String) })
+    expect(startedWith(betaPort).DECLARED_KEY).toBeUndefined()
+    expect(readFileSync(join(home, ".boxd-plugin/slots/alpha/password"), "utf8")).not.toBe(readFileSync(join(home, ".boxd-plugin/slots/beta/password"), "utf8"))
+
+    expect(await run({ action: "scrub" })).toMatchObject({ ok: true, removed: [], refused: "has-slot" })
+    expect(await run({ action: "release", slot: "alpha" })).toMatchObject({
+      ok: true,
+      slot: "alpha",
+      removed: ["/home/boxd/.boxd-plugin/slots/alpha", "/home/boxd/work/alpha"],
+    })
+    expect(existsSync(join(home, ".boxd-plugin/slots/alpha"))).toBe(false)
+    expect(existsSync(join(home, ".boxd-plugin/slots/beta"))).toBe(true)
+    const slots = await run({ action: "slots" })
+    expect(slots).toMatchObject({ ok: true, slots: [{ workId: "beta", port: betaPort }] })
   })
 })
