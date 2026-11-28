@@ -122,6 +122,8 @@ export interface CostHours {
 
 export interface AttentionItem extends Next {
   readonly workId: string
+  /** The shared machine a slot work is on; absent for a work with a machine of its own. */
+  readonly machine?: MachineName
   readonly region: Region | null
   readonly phase: Phase
   readonly outcome: RunOutcome | null
@@ -140,6 +142,8 @@ export interface AttentionItem extends Next {
 
 export interface WorkBrief {
   readonly workId: string
+  /** The shared machine a slot work is on; absent for a work with a machine of its own. */
+  readonly machine?: MachineName
   readonly region: Region | null
   readonly phase: Phase
   readonly outcome: RunOutcome | null

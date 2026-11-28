@@ -14,7 +14,7 @@ import type { Listing, MachineName, OpContext } from "../ports.js"
 import type { WorkRecord } from "../ledger/types.js"
 import { redactBlock } from "../redact.js"
 import type { ReadResult } from "../results.js"
-import { assertWorkIdInput, listed, listingStale, loadOpen, notReadable, oneOf, optionalInteger, type Services } from "./sessions-common.js"
+import { assertWorkIdInput, listed, listingStale, loadOpen, notReadable, oneOf, optionalInteger, slotOf, type Services } from "./sessions-common.js"
 
 export const READ_DEFAULT_BYTES = 32_768
 
@@ -47,7 +47,7 @@ export function checkRead(input: Record<string, unknown>): ReadItem {
 export async function readWork(services: Services, item: ReadItem, op: OpContext): Promise<ReadResult> {
   const record = await loadOpen(services, item.workId, op)
   if (record.region === null) throw boxdError("MACHINE_GONE", `${record.machine} was found in no region when this work was imported; nothing was read.`)
-  const input = { directory: record.guestDirectory, maxBytes: item.maxBytes, ...(item.path ? { path: item.path } : {}), ...(item.log ? { log: item.log } : {}), ...(item.tail ? { tail: item.tail } : {}) }
+  const input = { directory: record.guestDirectory, ...slotOf(record), maxBytes: item.maxBytes, ...(item.path ? { path: item.path } : {}), ...(item.log ? { log: item.log } : {}), ...(item.tail ? { tail: item.tail } : {}) }
   const attempt = async (fresh: boolean) => {
     const { listing, row } = await markListing(async () => (fresh ? freshRow(await services.boxd.list({ maxAgeMs: 0 }, op), record) : await listed(services, record.region!, record.machine, op)))
     if (!row) throw boxdError("MACHINE_GONE", `${record.machine} is not in the ${record.region} listing; nothing was read. boxd_drop checks whether it is gone everywhere.`)

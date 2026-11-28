@@ -8,7 +8,9 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpath
 import { dirname, join } from "node:path"
 import { BoxdError, boxdError, CODES } from "../../src/errors.js"
 import { createProvider, type PluginProvider } from "../../src/provider/index.js"
+import { fleetStatus, statusInput } from "../../src/fleet/status.js"
 import { sessionRuns } from "../../src/fleet/sessions.js"
+import { viewRuns } from "../../src/fleet/view.js"
 import { quote } from "../../src/fleet/exec.js"
 import { rootOf } from "../../src/fleet/submit.js"
 import { ledgerPort } from "../../src/ledger/index.js"
@@ -208,6 +210,50 @@ const errorOf = async (promise: Promise<unknown>): Promise<BoxdError> => {
 }
 const countOf = (id: string) => counter.count(id)
 const noHelp = (counts: Record<string, number | undefined>) => Object.fromEntries(Object.entries(counts).filter(([verb]) => verb !== "help"))
+
+/** One shared machine with two slot works, each on its own fake guest server and its own git repository. */
+async function sharedPair(): Promise<{ readonly machine: FakeMachine; readonly other: FakeGuest }> {
+  const machine = counter.fake.machine({ name: "oc-shared-team", region: "fra", labels: { owner: "boxd", role: "session", shared: "team" } })
+  const other = startFakeGuest({ version: VERSION })
+  counter.fake.update((state) => { state.guestPorts = { a: guest.port, b: other.port } })
+  for (const [workId, server] of [["a", guest], ["b", other]] as const) {
+    await change(machine, (target) => runtime.guest.setup(target, { directory: guestDir(workId), slot: workId, opencode: VERSION }, op()))
+    server.next(sid(workId))
+    await change(machine, (target) => runtime.guest.prompt(target, { directory: guestDir(workId), slot: workId, sessionId: null, title: workId, text: "start", delivery: "steer" }, op()))
+    const tree = treeOf(machine, workId)
+    git(tree, "init", "--quiet")
+    writeFileSync(join(tree, "README.md"), `# ${workId}\n`)
+    git(tree, "add", ".")
+    git(tree, "commit", "--quiet", "-m", "init")
+    publish(machine, workId)
+  }
+  return { machine, other }
+}
+
+/** One slot work's record on the shared machine; an idle one has a completed run after its prompt. */
+async function sharedWork(machine: FakeMachine, workId: string, phase: "busy" | "idle", over: Partial<WorkRecord> = {}): Promise<WorkRecord> {
+  const submitted = new Date(Date.now() - 60_000).toISOString()
+  const value: WorkRecord = {
+    format: 1,
+    workId,
+    state: "open",
+    region: "fra",
+    machine: "oc-shared-team",
+    machineId: machine.id as MachineId,
+    slot: true,
+    size: "2x8",
+    image: { name: `oc-golden-${VERSION}-2x8`, opencode: VERSION },
+    laptopDirectory: project,
+    guestDirectory: guestDir(workId),
+    createdAt: submitted,
+    session: { rootId: sid(workId) },
+    lastSubmit: { at: submitted, delivery: "steer" },
+    ...(phase === "idle" ? { run: { outcome: "completed" as const, at: new Date().toISOString() } } : {}),
+    ...over,
+  }
+  await ledger.update([workId], async () => ({ write: [value], value: undefined }), op())
+  return value
+}
 
 // ── boxd_submit ───────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -801,6 +847,59 @@ describe("boxd_read", () => {
     expect((await errorOf(runs.boxd_read({ workId: "dark" }, call()))).code).toBe("NAME_INVALID")
   })
 
+})
+
+describe("slot works on one shared machine", () => {
+  test("status, a submit and a harvest each answer for their own slot, never their neighbour's", async () => {
+    const { machine, other } = await sharedPair()
+    try {
+      await sharedWork(machine, "a", "busy")
+      await sharedWork(machine, "b", "idle")
+      other.complete(sid("b"))
+      // Status: two rows, one machine, each work's own phase and the shared machine named.
+      const fleet = await fleetStatus(services, statusInput({ view: "all", limit: 10 }), { tag: { callId: "slots", source: "boxd_status" }, guestReads: true })
+      expect(fleet.works?.map((work) => [work.workId, work.machine, work.phase])).toEqual([
+        ["a", "oc-shared-team", "busy"],
+        ["b", "oc-shared-team", "idle"],
+      ])
+      const job = viewRuns(services).boxd_job
+      expect(await job({ workId: "a" }, call())).toMatchObject({ state: "busy", machine: "oc-shared-team" })
+      expect(await job({ workId: "b" }, call())).toMatchObject({ state: "idle", machine: "oc-shared-team" })
+      // A submit to b reaches b's server only.
+      const beforeA = guest.prompts.length
+      const beforeB = other.prompts.length
+      await runs.boxd_submit({ workId: "b", text: "Only b." }, call())
+      expect(guest.prompts).toHaveLength(beforeA)
+      expect(other.prompts.slice(beforeB).map((prompt) => prompt.text)).toEqual(["Only b."])
+      other.complete(sid("b"))
+      // A read and a harvest of b see b's folder, server and git only.
+      writeFileSync(join(treeOf(machine, "b"), "notes.md"), "b only\n")
+      expect(await runs.boxd_read({ workId: "b", path: "notes.md" }, call())).toMatchObject({ state: "read", text: "b only\n" })
+      expect(await runs.boxd_harvest({ workId: "b" }, call())).toMatchObject({ state: "saved", sessions: [{ id: sid("b") }] })
+      expect(readdirSync(join(ledger.workFolder("b"), "exports")).sort()).toEqual([`${sid("b")}.json`])
+      expect((await record("b"))!.gitState).toMatchObject({ known: true, remote: expect.stringContaining("b-origin.git") })
+      expect((await record("a"))!.saved).toBeUndefined()
+      expect((await record("a"))!.gitState).toBeUndefined()
+    } finally {
+      await other.close()
+    }
+  }, 90_000)
+
+  test("boxd_read reads the slot's own server log, not the machine's", async () => {
+    const { machine, other } = await sharedPair()
+    try {
+      await sharedWork(machine, "a", "idle")
+      await sharedWork(machine, "b", "idle")
+      const root = counter.fake.disk(machine)
+      writeFileSync(join(root, "home/boxd/.boxd-plugin/server.log"), "machine log\n")
+      writeFileSync(join(root, "home/boxd/.boxd-plugin/slots/a/server.log"), "slot a log\n")
+      writeFileSync(join(root, "home/boxd/.boxd-plugin/slots/b/server.log"), "slot b log\n")
+      expect(await runs.boxd_read({ workId: "b", log: "server" }, call())).toMatchObject({ state: "read", path: "server.log", text: "slot b log\n" })
+      expect(await runs.boxd_read({ workId: "a", log: "server" }, call())).toMatchObject({ state: "read", path: "server.log", text: "slot a log\n" })
+    } finally {
+      await other.close()
+    }
+  }, 90_000)
 })
 
 // ── List forms, Stop, selectors and package E's actions ───────────────────────────────────────────────────────────

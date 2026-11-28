@@ -4,7 +4,9 @@
 // none and is unsubscribed; a refused wake is retried once as queue; "off" posts nothing.
 import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test"
 import { NOTICE_MAX_WORKS, noticeItem, noticeText } from "../../src/notices.js"
-import type { WorkEvent } from "../../src/ports.js"
+import type { ChangeTarget, MachineId, MachineName, WorkEvent } from "../../src/ports.js"
+import type { WorkRecord } from "../../src/ledger/types.js"
+import { startFakeGuest, type FakeGuest } from "../host/fake-guest.js"
 import { startWorld, type World } from "../support/fleet-world.js"
 
 // A world is real processes on a shared machine: give each test room beyond bun's 5 s default.
@@ -38,7 +40,93 @@ describe("the notice text", () => {
   })
 })
 
+/** One shared machine with two slot works, each on its own fake guest server; returns the second server to close. */
+async function slotPair(w: World): Promise<{ readonly machineId: MachineId; readonly other: FakeGuest }> {
+  const made = w.counter.fake.machine({ name: "oc-shared-team", region: "fra", labels: { owner: "boxd", role: "session", shared: "team" } })
+  const machineId = made.id as MachineId
+  const other = startFakeGuest({ version: "2.4.1" })
+  w.counter.fake.update((state) => { state.guestPorts = { a: w.guest.port, b: other.port } })
+  const change = <T,>(fn: (target: ChangeTarget) => Promise<T>): Promise<T> => {
+    const context = w.context("slot-setup", "boxd_ensure")
+    return w.runtime.runner.withMachineLock({ id: machineId }, context, async () => fn((await w.runtime.boxd.checkOwned("fra", "oc-shared-team" as MachineName, machineId, context)).target))
+  }
+  for (const [workId, server] of [["a", w.guest], ["b", other]] as const) {
+    await change((target) => w.runtime.guest.setup(target, { directory: `/home/boxd/work/${workId}`, slot: workId, opencode: "2.4.1" }, w.context("slot-setup", "boxd_ensure")))
+    server.next(`ses_${workId}`)
+    await change((target) => w.runtime.guest.prompt(target, { directory: `/home/boxd/work/${workId}`, slot: workId, sessionId: null, title: workId, text: "start", delivery: "steer" }, w.context("slot-setup", "boxd_ensure")))
+  }
+  return { machineId, other }
+}
+
+/** A slot work's record on the shared machine; an idle one has a completed run after its prompt. */
+async function slotRecord(w: World, machineId: MachineId, workId: string, phase: "busy" | "idle", notify: string): Promise<WorkRecord> {
+  const submitted = new Date(w.clock.now.getTime() - 60_000).toISOString()
+  const value: WorkRecord = {
+    format: 1,
+    workId,
+    state: "open",
+    region: "fra",
+    machine: "oc-shared-team",
+    machineId,
+    slot: true,
+    size: "2x8",
+    image: { name: "oc-golden-2.4.1-2x8", opencode: "2.4.1" },
+    laptopDirectory: w.root,
+    guestDirectory: `/home/boxd/work/${workId}`,
+    createdAt: submitted,
+    session: { rootId: `ses_${workId}`, notify },
+    lastSubmit: { at: submitted, delivery: "steer" },
+    ...(phase === "idle" ? { run: { outcome: "completed" as const, at: new Date(w.clock.now.getTime() - 30_000).toISOString() } } : {}),
+  }
+  await w.ledger.update([workId], async () => ({ write: [value], value: undefined }), w.context("seed", "boxd_ensure"))
+  return value
+}
+
 describe("the sweep", () => {
+  test("reads two slot works on one machine each on their own, and notices only the one that changed", async () => {
+    world = await startWorld()
+    const w = world
+    w.sessions.add("ses_coord_a")
+    w.sessions.add("ses_coord_b")
+    const { machineId, other } = await slotPair(w)
+    try {
+      await slotRecord(w, machineId, "a", "idle", "ses_coord_a")
+      await slotRecord(w, machineId, "b", "busy", "ses_coord_b")
+      w.guest.complete("ses_a")
+      const seen: WorkEvent[] = []
+      w.watcher.watch.subscribe((item) => seen.push(item))
+      await w.watcher.tick()
+      // The busy slot is read on its own server; a read on its neighbour's server would answer SESSION_MISSING.
+      expect(w.watcher.watch.snapshot().works.map((work) => [work.workId, work.phase])).toEqual([
+        ["a", "idle"],
+        ["b", "busy"],
+      ])
+      // Each slot's first phase is its own event; the first sight of a work is not news for its coordinator.
+      expect(seen.map((item) => [item.workId, item.to])).toEqual([
+        ["a", "idle"],
+        ["b", "busy"],
+      ])
+      later(w, 61_000)
+      await w.watcher.flushNotices()
+      expect(w.sessions.posted).toEqual([])
+      // The busy slot finishes: its own event and notice follow, and the idle neighbour has none.
+      other.complete("ses_b")
+      later(w, 61_000)
+      await w.watcher.tick()
+      expect(seen.map((item) => [item.workId, item.to])).toEqual([
+        ["a", "idle"],
+        ["b", "busy"],
+        ["b", "idle"],
+      ])
+      await w.watcher.flushNotices()
+      expect(w.sessions.posted).toHaveLength(1)
+      expect(w.sessions.posted[0]).toMatchObject({ sessionID: "ses_coord_b", text: expect.stringContaining("b idle") })
+      expect(w.sessions.posted.some((post) => post.sessionID === "ses_coord_a")).toBe(false)
+    } finally {
+      await other.close()
+    }
+  }, 90_000)
+
   test("reads a busy guest, appends busy then idle, and never reads an idle one", async () => {
     world = await startWorld()
     const w = world
