@@ -54,6 +54,8 @@ describe("the sweep", () => {
     expect(seen.map((item) => item.to)).toEqual(["busy", "idle"])
     expect(seen[1]).toMatchObject({ from: "busy", outcome: "completed" })
     expect(seen[1]!.seq).toBeGreaterThan(seen[0]!.seq)
+    // The watcher's phase changes count the 61 seconds the machine ran, for the record status and job read.
+    expect((await w.ledger.get("review-api", w.context("read")))?.hours).toMatchObject({ existedSeconds: 61, runningSeconds: 61, phase: "idle" })
     w.counter.reset()
     later(w, 61_000)
     await w.watcher.tick()

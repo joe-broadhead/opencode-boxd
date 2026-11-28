@@ -269,7 +269,7 @@ export function fakes(input: { options?: Record<string, unknown>; works?: WorkSn
       id: async () => LEDGER_ID,
       currentId: async () => LEDGER_ID,
       get: async (workId: string) => records.get(workId),
-      list: async () => [...records.values()].filter((item) => item.state === "open"),
+      list: async (filter: { readonly closed?: boolean } = {}) => [...records.values()].filter((item) => filter.closed || item.state === "open"),
       saved,
       update: async (ids: readonly string[], change: (current: ReadonlyMap<string, WorkRecord | undefined>) => Promise<{ write: readonly WorkRecord[]; value: unknown }>) => {
         const result = await change(new Map(ids.map((id) => [id, records.get(id)])))

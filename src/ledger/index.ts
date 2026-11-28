@@ -47,6 +47,9 @@ export function ledgerPort(store: Ledger): LedgerPort {
     },
     saved: (record) => savedState(record),
     async appendEvent(event, context) {
+      // Count the interval before the event lands: if the append fails, the record is already counted to this phase,
+      // so the next event counts from here and no second is counted twice.
+      await store.countPhase(event.workId, event.to, new Date(event.at), context.signal)
       const line = await store.events.append(event, context.signal)
       await store.setPhase(line.workId, line.to)
       return line

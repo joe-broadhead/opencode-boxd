@@ -11,6 +11,7 @@
  * at most `FULL_LIST_MAX_ITEMS`; this file's cache keeps the 300-character cut either way.
  */
 import { BoxdError, boxdError, type Code } from "../errors.js"
+import { hoursAt, shownHours } from "../ledger/hours.js"
 import type { WorkRecord } from "../ledger/types.js"
 import { FULL_TEXT_LIMIT, LIST_ITEM_CONCURRENCY, LIST_MAX_ITEMS, TIMEOUTS, type CallTag, type Listing, type OpContext } from "../ports.js"
 import { excerpt, excerptBlock, reasonOf } from "../redact.js"
@@ -153,6 +154,7 @@ async function jobOf(
   const saved = services.ledger.saved(record)
   const warning = record.warnings?.at(-1)?.code
   const cost = input.cost ? (costs?.get(record.workId) ?? { machine: null, model: observed?.modelCost ?? null }) : undefined
+  const hours = shownHours(hoursAt(record, services.clock.now()))
   // A full read's words, else the cache's cut (a work that is down answers what was last known).
   const lastText = fullText ?? (observed?.lastText ? excerpt(observed.lastText, JOB_TEXT_LIMIT) : undefined)
   const base = { state, saved, outcome, ...(code ? { error: code } : {}) }
@@ -171,6 +173,7 @@ async function jobOf(
     ...(warning ? { warning } : {}),
     guestVersion: observed?.guestVersion ?? null,
     ...(cost ? { cost } : {}),
+    hours,
     ...(tail ? { tail } : {}),
     next:
       listingFailed === undefined
