@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
 import { boxdError } from "./errors.js"
-import type { MachineName } from "./ports.js"
+import { LABEL_VALUE, WORK_LABEL_KEYS, WORK_LABEL_PREFIX, type MachineName, type WorkLabelKey, type WorkLabels } from "./ports.js"
 
 const WORK = /^[a-z][a-z0-9-]{0,24}$/
 const SNAPSHOT = /^[a-z0-9][a-z0-9._-]{0,63}$/
@@ -54,6 +54,41 @@ export function workDirectory(workId: string): string {
 export function assertSharedMachine(name: string): string {
   if (!WORK.test(name)) throw boxdError("NAME_INVALID", `machine "${name}" is not a shared machine name: a letter, then up to 24 lowercase letters, digits or hyphens.`)
   return name
+}
+
+/** A work's labels, each a boxd label value; `field` names the input in a refusal, such as `works[0].labels`. */
+export function assertWorkLabels(value: unknown, field = "labels"): WorkLabels {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw boxdError("NAME_INVALID", `${field} must be an object with any of "product", "role", "feature" and "task".`, { field })
+  }
+  const labels: Partial<Record<WorkLabelKey, string>> = {}
+  for (const [key, label] of Object.entries(value)) {
+    const name = `${field}.${key}`
+    if (!(WORK_LABEL_KEYS as readonly string[]).includes(key)) {
+      throw boxdError("NAME_INVALID", `${name} is not a work label; use product, role, feature or task.`, { field: name })
+    }
+    if (typeof label !== "string" || !LABEL_VALUE.test(label)) {
+      throw boxdError("NAME_INVALID", `${name} must be a boxd label value: up to 63 letters, digits or . _ / @ : - with no spaces.`, { field: name })
+    }
+    labels[key as WorkLabelKey] = label
+  }
+  return labels
+}
+
+/** The `work.<key>` machine labels for a work's labels. */
+export function machineWorkLabels(labels: WorkLabels | undefined): Record<string, string> {
+  if (!labels) return {}
+  return Object.fromEntries(Object.entries(labels).map(([key, value]) => [`${WORK_LABEL_PREFIX}${key}`, value]))
+}
+
+/** A machine's `work.*` labels as a work's labels; an empty value is no label. */
+export function readWorkLabels(labels: Readonly<Record<string, string>>): WorkLabels | undefined {
+  const work: Partial<Record<WorkLabelKey, string>> = {}
+  for (const key of WORK_LABEL_KEYS) {
+    const value = labels[`${WORK_LABEL_PREFIX}${key}`]
+    if (value !== undefined && value !== "") work[key] = value
+  }
+  return Object.keys(work).length > 0 ? work : undefined
 }
 
 export function sharedMachineName(name: string): MachineName {

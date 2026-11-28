@@ -87,6 +87,14 @@ None.
   `reassign` moves an unstarted work's machine to a new id; `golden` builds, lists or prunes golden images, and with
   `repo`, one of the plugin option `warm` repositories, it builds that repository's warm image from its version's image,
   with the repository's checkout and setup script. Every one of them emits `changed`.
+- **Labels.** `ensure` takes `labels`, an object with any of `product`, `role`, `feature` and `task`, each a boxd label
+  value. `product` is the product a work serves; `role` is what it does for the feature, such as `lane` or `review`;
+  `feature` is the feature it serves, as a tracker reference such as `boxd-plugin/59`; and `task` is the task it does,
+  such as `boxd-plugin/130`. An ensure that passes labels replaces them; one that omits them keeps the recorded ones. A
+  work on its own machine carries them as the boxd labels `work.product`, `work.role`, `work.feature` and `work.task`;
+  a slot on a shared machine records them in the ledger only. A rebuild through `boxd_resume` keeps them on the new
+  machine. `boxd_job` and the status works list return them, and an adopted orphan's `work.*` labels are read back into
+  its record.
 - **Orphans.** The fleet status classifies every machine as a work here, another ledger's work, kept by a `keep` selector,
   a golden builder, or an orphan with its reason and whether the plugin may act on it. `ensure` with
   `{ select: "orphans" }` adopts every actionable orphan: it reads the guest's `describe`, writes a record and sets this

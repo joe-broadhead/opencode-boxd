@@ -512,6 +512,7 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
           region: record.region,
           machineId: record.machineId,
           size: record.size,
+          ...(record.labels && Object.keys(record.labels).length > 0 ? { labels: record.labels } : {}),
           phase,
           outcome: outcomeOf(record, obs),
           saved: core.ledger.saved(record),

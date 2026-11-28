@@ -164,6 +164,7 @@ async function jobOf(
   return {
     state,
     workId: record.workId,
+    ...(record.labels && Object.keys(record.labels).length > 0 ? { labels: record.labels } : {}),
     machine: record.machine,
     region: record.region,
     sessionId: record.session?.rootId ?? null,

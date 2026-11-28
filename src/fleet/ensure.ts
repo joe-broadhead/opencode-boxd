@@ -37,7 +37,7 @@
  */
 import { BoxdError, boxdError, inField } from "../errors.js"
 import type { RegionChoice } from "../options.js"
-import { assertModel, assertRepo, assertSharedMachine, sharedAliasOf, sharedMachineName, workDirectory } from "../names.js"
+import { assertModel, assertRepo, assertSharedMachine, assertWorkLabels, machineWorkLabels, readWorkLabels, sharedAliasOf, sharedMachineName, workDirectory } from "../names.js"
 import { resolveLaptopPath, rootsOf } from "../paths.js"
 import {
   LIST_MAX_ITEMS,
@@ -47,6 +47,7 @@ import {
   TIMEOUTS,
   LEDGER_LABEL,
   SHARED_LABEL,
+  WORK_LABEL_PREFIX,
   WORK_LABELS,
   type ChangeTarget,
   type DescribeAnswer,
@@ -62,6 +63,7 @@ import {
   type SetupAnswer,
   type Size,
   type WorkEvent,
+  type WorkLabels,
 } from "../ports.js"
 import type { Phase, WorkRecord } from "../ledger/types.js"
 import { LEDGER_FORMAT } from "../ledger/types.js"
@@ -87,7 +89,7 @@ const REF = /^[A-Za-z0-9._/-]{1,120}$/
 const ENV_NAME = /^[A-Z_][A-Z0-9_]{0,63}$/
 const ENV_LIMIT = 64
 const EMAIL = /^[^\s@<>]+@[^\s@<>]+$/
-const ITEM_KEYS = new Set(["workId", "machine", "region", "size", "model", "git", "repo", "ref", "directory", "title", "env", "wait", "repair", "adopt"])
+const ITEM_KEYS = new Set(["workId", "machine", "region", "size", "model", "git", "repo", "ref", "directory", "title", "env", "labels", "wait", "repair", "adopt"])
 
 /**
  * One create at a time: a create's reservation, budget check and record claim run before the next create checks. Without
@@ -148,6 +150,8 @@ export interface EnsureItem {
   readonly title?: string
   /** The variable names the work declares; an empty list declares none. */
   readonly env?: readonly string[]
+  /** What the work is; an empty object clears them, and omitting the field keeps the recorded ones. */
+  readonly labels?: WorkLabels
   readonly wait: Wait
   readonly repair: boolean
   readonly adopt: boolean
@@ -216,6 +220,7 @@ export async function parseItem(raw: unknown, services: FleetServices, defaultWa
     if (raw.env.includes("OPENCODE_PASSWORD")) throw invalid(field("env"), `${field("env")} cannot declare OPENCODE_PASSWORD: the guest sets it.`)
     env = [...new Set(raw.env as string[])].sort()
   }
+  const labels = raw.labels === undefined ? undefined : assertWorkLabels(raw.labels, field("labels"))
   return {
     workId,
     ...(machine ? { machine } : {}),
@@ -227,6 +232,7 @@ export async function parseItem(raw: unknown, services: FleetServices, defaultWa
     ...(directory ? { directory } : {}),
     ...(raw.title !== undefined ? { title: raw.title as string } : {}),
     ...(env ? { env } : {}),
+    ...(labels ? { labels } : {}),
     wait,
     repair,
     adopt: raw.adopt === true,
@@ -267,12 +273,24 @@ export function carriesLabels(labels: Readonly<Record<string, string>>, workId: 
 }
 
 /**
- * The labels a machine still needs to be this work's: owner, role, work and the ledger that registers it. Another
- * ledger's label is replaced only by an explicit `adopt: true`; otherwise it stays as the evidence it is.
+ * The labels a machine still needs to be this work's: owner, role, work and the ledger that registers it, and its
+ * `work.*` labels when the record has them. Another ledger's label is replaced only by an explicit `adopt: true`;
+ * otherwise it stays as the evidence it is. A `work.*` label the record no longer has is set empty.
  */
-export function missingLabels(labels: Readonly<Record<string, string>>, workId: string, ledgerId: string, adopt = false): Record<string, string> {
+export function missingLabels(labels: Readonly<Record<string, string>>, workId: string, ledgerId: string, adopt = false, workLabels?: WorkLabels): Record<string, string> {
   const wanted: Record<string, string> = { ...WORK_LABELS, work: workId }
   if (adopt || labels[LEDGER_LABEL] === undefined) wanted[LEDGER_LABEL] = ledgerId
+  Object.assign(wanted, workLabelChanges(labels, workLabels))
+  return Object.fromEntries(Object.entries(wanted).filter(([key, value]) => labels[key] !== value))
+}
+
+/** The `work.*` labels a machine still needs for a record's work labels; a label the record no longer has is set empty. */
+export function workLabelChanges(labels: Readonly<Record<string, string>>, workLabels: WorkLabels | undefined): Record<string, string> {
+  if (workLabels === undefined) return {}
+  const wanted = machineWorkLabels(workLabels)
+  for (const key of Object.keys(labels)) {
+    if (key.startsWith(WORK_LABEL_PREFIX) && !(key in wanted)) wanted[key] = ""
+  }
   return Object.fromEntries(Object.entries(wanted).filter(([key, value]) => labels[key] !== value))
 }
 
@@ -517,7 +535,7 @@ export function newRecord(
     readonly machine?: MachineName
     readonly slot?: boolean
     readonly warm?: boolean
-  } & Partial<Pick<WorkRecord, "repo" | "git" | "env" | "model" | "title">>,
+  } & Partial<Pick<WorkRecord, "repo" | "git" | "env" | "labels" | "model" | "title">>,
 ): WorkRecord {
   const at = new Date(machines.now()).toISOString()
   return {
@@ -535,6 +553,7 @@ export function newRecord(
     ...(input.repo ? { repo: input.repo } : {}),
     ...(input.git ? { git: input.git } : {}),
     ...(input.env ? { env: input.env } : {}),
+    ...(input.labels !== undefined ? { labels: input.labels } : {}),
     ...(input.model ? { model: input.model } : {}),
     ...(input.title ? { title: input.title } : {}),
     ...(input.warm ? { warm: true } : {}),
@@ -660,6 +679,8 @@ export async function createAt(
     readonly shared?: string
     /** The size the work asked for, checked against a shared machine that a concurrent create already made. */
     readonly size?: Size
+    /** The work's labels, set as `work.*` labels on a machine of its own; a shared machine never carries them. */
+    readonly labels?: WorkLabels
     readonly reserved?: (landed: boolean) => void
     /** The work has a recorded machine id (a rebuild): a machine that holds the name is not adopted, it is `NOT_OURS`. */
     readonly recordedId?: MachineId | null
@@ -685,6 +706,7 @@ export async function createAt(
           name,
           workId: input.workId,
           ...(input.shared !== undefined ? { shared: input.shared } : {}),
+          ...(input.shared === undefined && input.labels !== undefined ? { labels: input.labels } : {}),
           ledger: ledgerId,
           image: input.image,
           autoSuspendSeconds: 0,
@@ -754,6 +776,8 @@ interface Converged {
   readonly created: boolean
   readonly adopted: boolean
   readonly woke: boolean
+  /** The machine's labels as the create or get showed them. */
+  readonly machineLabels?: Readonly<Record<string, string>>
 }
 
 /** Resizes a machine to `size` when its session is idle; `SESSION_BUSY` when it runs (a resize reboots). */
@@ -775,9 +799,13 @@ async function settleAdopted(machines: Machines, landed: Landed, record: WorkRec
   const asleep = sleeping(landed.owned.status)
   if (asleep) await checkBudget(machines, op)
   const resizeTo = shared === undefined && item.size && landed.info.size && item.size !== landed.info.size ? item.size : undefined
+  let labels: Readonly<Record<string, string>> = landed.info.labels
   await runner.withMachineLock({ id: target.machineId }, op, async () => {
-    const labels = shared !== undefined ? missingSharedLabels(landed.info.labels, shared, ledgerId, item.adopt) : missingLabels(landed.info.labels, item.workId, ledgerId, item.adopt)
-    if (Object.keys(labels).length > 0) await boxd.setLabels(target, labels, op)
+    const missing = shared !== undefined ? missingSharedLabels(landed.info.labels, shared, ledgerId, item.adopt) : missingLabels(landed.info.labels, item.workId, ledgerId, item.adopt, record.labels)
+    if (Object.keys(missing).length > 0) {
+      await boxd.setLabels(target, missing, op)
+      labels = { ...labels, ...missing }
+    }
     if (asleep) {
       roomFor(context, TIMEOUTS.helperChange, "starting", "there is not enough time left in this call to wake the machine")
       await boxd.wake(target, op)
@@ -785,7 +813,7 @@ async function settleAdopted(machines: Machines, landed: Landed, record: WorkRec
     if (resizeTo) await resizeIfIdle(machines, record, target, resizeTo, context, op)
   })
   const settled = resizeTo ? await patch(machines, item.workId, op, (now) => ({ ...(now ?? record), size: resizeTo! })) : record
-  return { target, record: settled, created: false, adopted: true, woke: asleep }
+  return { target, record: settled, created: false, adopted: true, woke: asleep, machineLabels: labels }
 }
 
 /**
@@ -800,6 +828,7 @@ async function recordLanded(machines: Machines, item: EnsureItem, landed: Landed
     const warm = landed.created && created ? created.warm : wasWarm === true
     return {
       ...rest,
+      ...(item.labels !== undefined ? { labels: item.labels } : {}),
       state: "open",
       region: landed.info.region,
       machineId: landed.info.id,
@@ -837,6 +866,7 @@ async function createOrAdopt(machines: Machines, item: EnsureItem, context: Item
       ...(repo ? { repo } : {}),
       ...((item.git ?? options.git) ? { git: item.git ?? options.git } : {}),
       ...(item.env ? { env: item.env } : {}),
+      ...(item.labels !== undefined ? { labels: item.labels } : {}),
       ...(item.model ? { model: item.model } : {}),
       ...(item.title ? { title: item.title } : {}),
     })
@@ -943,14 +973,23 @@ async function createOrAdopt(machines: Machines, item: EnsureItem, context: Item
     }
     const landed = await createAt(
       machines,
-      { workId: item.workId, region, image, adopt: item.adopt, used, ...(shared !== undefined ? { shared, ...(item.size !== undefined ? { size: item.size } : {}) } : {}), ...(reserved ? { reserved } : {}) },
+      {
+        workId: item.workId,
+        region,
+        image,
+        adopt: item.adopt,
+        used,
+        ...(shared !== undefined ? { shared, ...(item.size !== undefined ? { size: item.size } : {}) } : {}),
+        ...(item.labels !== undefined ? { labels: item.labels } : {}),
+        ...(reserved ? { reserved } : {}),
+      },
       context,
       op,
     )
     if (!landed.created) return await adopted(landed)
     const record = await recordLanded(machines, item, landed, claim.record, size, op, { image, warm })
     await recordPhase(machines, item.workId, null, "creating", op)
-    return { target: landed.owned.target, record, created: true, adopted: false, woke: false }
+    return { target: landed.owned.target, record, created: true, adopted: false, woke: false, machineLabels: landed.info.labels }
   } finally {
     // A pick that made no create (adopted, still building, refused) stops counting; a create already ended it.
     reserved?.(false)
@@ -987,11 +1026,11 @@ async function known(machines: Machines, record: WorkRecord & { readonly region:
     // Another size: only for an idle session, because a resize reboots.
     const resized = item.size !== undefined && item.size !== record.size
     if (resized) await resizeIfIdle(machines, record, target, item.size!, context, op)
-    return { target, woke, resized }
+    return { target, woke, resized, labels: owned.labels }
   })
   // The ledger after the machine's lock is given back: work locks are always taken first (§4.1).
   const current: WorkRecord = checked.resized ? await patch(machines, record.workId, op, (now) => ({ ...(now ?? record), size: item.size! })) : record
-  return { target: checked.target, record: current, created: false, adopted: false, woke: checked.woke }
+  return { target: checked.target, record: current, created: false, adopted: false, woke: checked.woke, machineLabels: checked.labels }
 }
 
 /** The input's settings, recorded: the default model, the git identity, the declared variables, the repository, the folder and the title. */
@@ -1001,6 +1040,7 @@ function withInput(machines: Machines, record: WorkRecord, item: EnsureItem, not
     ...(item.model ? { model: item.model } : {}),
     ...(item.git ? { git: item.git } : record.git === undefined && machines.services.options.git ? { git: machines.services.options.git } : {}),
     ...(item.env ? { env: item.env } : {}),
+    ...(item.labels !== undefined ? { labels: item.labels } : {}),
     ...(item.repo ? { repo: item.repo } : {}),
     ...(item.directory ? { laptopDirectory: item.directory } : {}),
     ...(item.title ? { title: item.title } : {}),
@@ -1082,8 +1122,16 @@ export async function ensureOne(machines: Machines, item: EnsureItem, context: I
     }
 
     let current = await patch(machines, item.workId, op, (now) => withInput(machines, now ?? converged!.record, item, notify))
-    if (!converged.created) current = await renewLease(machines, current, converged.target, op)
-    const target = converged.target
+    const landed = converged!
+    // A work on its own machine carries its labels as `work.*`; a slot on a shared machine records them here only.
+    if (current.slot !== true && current.labels !== undefined) {
+      const changes = workLabelChanges(landed.machineLabels ?? {}, current.labels)
+      if (Object.keys(changes).length > 0) {
+        await machines.services.runner.withMachineLock({ id: landed.target.machineId }, op, () => machines.services.boxd.setLabels(landed.target, changes, op))
+      }
+    }
+    if (!landed.created) current = await renewLease(machines, current, landed.target, op)
+    const target = landed.target
     let rebooted = false
     let upgraded = false
     let guestVersion: string | null = null
@@ -1211,10 +1259,20 @@ function sessionFor(described: DescribeAnswer, directory: string | undefined) {
 }
 
 /** What an adopted machine's record says it was: no setup ran, so the machine's own facts are the record's. */
-function adoptedRecord(machines: Machines, item: Classified, id: NonNullable<Classified["row"]["id"]>, workId: string, described: DescribeAnswer, checkout: ReturnType<typeof checkoutFor>, session: ReturnType<typeof sessionFor>): WorkRecord {
+function adoptedRecord(
+  machines: Machines,
+  item: Classified,
+  id: NonNullable<Classified["row"]["id"]>,
+  workId: string,
+  described: DescribeAnswer,
+  checkout: ReturnType<typeof checkoutFor>,
+  session: ReturnType<typeof sessionFor>,
+  machineLabels: Readonly<Record<string, string>>,
+): WorkRecord {
   const at = new Date(machines.now()).toISOString()
   const size = item.row.size ?? machines.services.options.size
   const version = described.opencode ?? machines.services.hostVersion
+  const labels = readWorkLabels(machineLabels)
   return {
     format: LEDGER_FORMAT,
     workId,
@@ -1228,6 +1286,7 @@ function adoptedRecord(machines: Machines, item: Classified, id: NonNullable<Cla
     guestDirectory: checkout?.directory ?? workDirectory(workId),
     ...(checkout?.remote ? { repo: { url: checkout.remote } } : {}),
     ...(session ? { session: { rootId: session.id } } : {}),
+    ...(labels ? { labels } : {}),
     createdAt: at,
     touchedAt: at,
     adopted: { at, from: "orphan" },
@@ -1298,7 +1357,7 @@ async function adoptOrphan(machines: Machines, item: Classified, context: ItemCo
 
   const checkout = checkoutFor(described, workId)
   const session = sessionFor(described, checkout?.directory)
-  const record = adoptedRecord(machines, item, id, workId, described, checkout, session)
+  const record = adoptedRecord(machines, item, id, workId, described, checkout, session, found.labels)
   try {
     await ledger.update([workId], async (current) => {
       if (current.get(workId)?.state === "open") throw boxdError("NOT_OURS", `The work ${workId} was adopted by another call while this one read its machine; nothing was recorded.`)

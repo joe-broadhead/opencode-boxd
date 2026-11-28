@@ -114,6 +114,18 @@ export const READ_INPUT: JsonSchema = object(
 )
 
 const ENSURE_ITEM = {
+  labels: {
+    type: "object",
+    description:
+      "What the work is, for the fleet: product, role, feature and task, each a boxd label value. An ensure that passes labels replaces them; one that omits them keeps the recorded ones. A work on its own machine also carries them as work.product, work.role, work.feature and work.task; a slot on a shared machine records them here only.",
+    properties: {
+      product: string('The product it serves, such as "checkout".'),
+      role: string('What it is doing for the feature, such as "lane" or "review".'),
+      feature: string('The feature it serves, as a tracker reference such as "boxd-plugin/59".'),
+      task: string('The task it does, as a tracker reference such as "boxd-plugin/130".'),
+    },
+    additionalProperties: false,
+  },
   ...WORK_ITEM,
   machine: SHARED_MACHINE,
   region: choice(["auto", ...REGIONS], 'Where a new work goes; "auto" picks the region with the most free machines among those the option "regions" allows. An existing work keeps its own region, though a named region is still checked against "regions".'),
@@ -131,7 +143,7 @@ const ENSURE_ITEM = {
 }
 
 export const ENSURE_INPUT = listable(ENSURE_ITEM, ["workId"], "an object like the single form", {
-  select: choice(["orphans"], 'Adopt every actionable orphan that boxd_status lists, instead of naming works: it reads each guest\'s describe, records the work it finds and sets this ledger\'s labels, without setup, clone, upgrade or resize. Pass either select, works or workId.'),
+  select: choice(["orphans"], 'Adopt every actionable orphan that boxd_status lists, instead of naming works: it reads each guest\'s describe and work.* labels, records the work it finds and sets this ledger\'s labels, without setup, clone, upgrade or resize. Pass either select, works or workId.'),
   dryRun: boolean("With select: list the orphans that match, and change nothing."),
 })
 

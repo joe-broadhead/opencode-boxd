@@ -6,7 +6,7 @@
 import type { Code, ErrorState, WarningCode } from "./errors.js"
 import type { Phase, SavedState } from "./ledger/types.js"
 import type { RegionChoice } from "./options.js"
-import type { DoneReport, MachineId, MachineName, MachineStatus, Rates, Region, RunOutcome, SecretInfo, Size } from "./ports.js"
+import type { DoneReport, MachineId, MachineName, MachineStatus, Rates, Region, RunOutcome, SecretInfo, Size, WorkLabels } from "./ports.js"
 
 /** The facts a refusal can carry beside its code (§3, §5). Plain JSON values only. */
 export interface ErrorFacts {
@@ -164,6 +164,8 @@ export interface WorkBrief {
   /** The shared machine a slot work is on; absent for a work with a machine of its own. */
   readonly machine?: MachineName
   readonly region: Region | null
+  /** What the work is: product, role, feature and task. */
+  readonly labels?: WorkLabels
   readonly phase: Phase
   readonly outcome: RunOutcome | null
   readonly saved: SavedState
@@ -347,6 +349,8 @@ export interface StatusResult {
 
 export interface JobResult extends WorkFields {
   readonly state: Phase
+  /** What the work is: product, role, feature and task. */
+  readonly labels?: WorkLabels
   readonly sessionId: string | null
   readonly outcome: RunOutcome | null
   readonly saved: SavedState

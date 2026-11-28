@@ -15,7 +15,7 @@
  * - **Remotes** are stored without their userinfo.
  * - The folder is 0700 and its files 0600.
  */
-import type { Delivery, DoneReport, MachineId, MachineName, Rates, Reading, Region, RunOutcome, Size, WorkEvent } from "../ports.js"
+import type { Delivery, DoneReport, MachineId, MachineName, Rates, Reading, Region, RunOutcome, Size, WorkEvent, WorkLabels } from "../ports.js"
 import type { WarningCode } from "../errors.js"
 
 export const LEDGER_FORMAT = 1
@@ -173,6 +173,8 @@ export interface WorkRecord {
   readonly git?: { readonly name: string; readonly email: string }
   /** The variable names the work declares, never their values: the guest's OpenCode gets these and nothing else. */
   readonly env?: readonly string[]
+  /** What the work is: product, role, feature and task. On its own machine it also carries them as `work.*` labels. */
+  readonly labels?: WorkLabels
   readonly model?: string
   readonly title?: string
   readonly createdAt: string

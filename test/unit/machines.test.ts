@@ -161,6 +161,76 @@ describe("boxd_ensure: a new work", () => {
     expect(JSON.parse(readFileSync(join(k.counter.fake.disk(machine), "home/boxd/.boxd-plugin/env.json"), "utf8"))).toEqual([])
   })
 
+  test("labels: the record, and work.* labels in the create's argv; an omitted labels keeps them", async () => {
+    const k = await kit()
+    await k.golden("fra")
+    k.reset()
+    const labels = { product: "checkout", role: "lane", feature: "boxd-plugin/59", task: "boxd-plugin/130" }
+    const result = (await k.runs.boxd_ensure({ workId: "labelled", labels }, k.call())) as EnsureResult
+    expect(result.state).toBe("ready")
+    expect((await k.record("labelled"))?.labels).toEqual(labels)
+    const created = k.calls().find((entry) => entry.startsWith("machine new"))!
+    expect(created).toContain("--label work.feature=boxd-plugin/59 --label work.product=checkout --label work.role=lane --label work.task=boxd-plugin/130")
+    expect(k.counter.fake.read().machines.find((entry) => entry.name === "oc-labelled")?.labels).toMatchObject({
+      owner: "boxd",
+      role: "session",
+      work: "labelled",
+      "work.product": "checkout",
+      "work.role": "lane",
+      "work.feature": "boxd-plugin/59",
+      "work.task": "boxd-plugin/130",
+    })
+    k.reset()
+    await k.runs.boxd_ensure({ workId: "labelled" }, k.call())
+    expect((await k.record("labelled"))?.labels).toEqual(labels)
+    expect(k.calls().some((entry) => entry.startsWith("machine label"))).toBe(false)
+  })
+
+  test("a relabel replaces the record, and one setLabels changes only the work.* labels that differ", async () => {
+    const k = await kit()
+    await k.golden("fra")
+    await k.runs.boxd_ensure({ workId: "relabel", labels: { product: "checkout", role: "lane" } }, k.call())
+    k.reset()
+    const boxd = k.services.boxd as unknown as { setLabels: (...args: unknown[]) => Promise<void> }
+    const set = boxd.setLabels
+    let calls = 0
+    boxd.setLabels = async (...args) => {
+      calls += 1
+      await set(...(args as Parameters<typeof set>))
+    }
+    const labels = { product: "checkout", role: "lead", feature: "boxd-plugin/59" }
+    await k.runs.boxd_ensure({ workId: "relabel", labels }, k.call())
+    expect(calls).toBe(1)
+    expect((await k.record("relabel"))?.labels).toEqual(labels)
+    expect(k.counter.fake.read().machines.find((entry) => entry.name === "oc-relabel")?.labels).toMatchObject({
+      "work.product": "checkout",
+      "work.role": "lead",
+      "work.feature": "boxd-plugin/59",
+    })
+  })
+
+  test("a slot work records its labels, and the shared machine carries none of them", async () => {
+    const k = await kit()
+    await k.golden("fra")
+    const labels = { product: "checkout", role: "lane", feature: "boxd-plugin/59", task: "boxd-plugin/130" }
+    await k.runs.boxd_ensure({ workId: "docs", machine: "common", region: "fra", labels }, k.call())
+    expect((await k.record("docs"))?.labels).toEqual(labels)
+    const shared = k.counter.fake.read().machines.find((entry) => entry.name === "oc-shared-common")!
+    expect(shared.labels).toMatchObject({ owner: "boxd", shared: "common", role: "session" })
+    expect(Object.keys(shared.labels).filter((key) => key.startsWith("work."))).toEqual([])
+    expect(k.calls().some((entry) => entry.startsWith("machine label"))).toBe(false)
+  })
+
+  test("a label value boxd would refuse is refused before any CLI call", async () => {
+    const k = await kit()
+    for (const labels of [{ product: "checkout lane" }, { ticket: "x" }, "labels", ["x"], { task: 7 }]) {
+      const error = await errorOf(k.runs.boxd_ensure({ workId: "bad", labels }, k.call()))
+      expect(error).toMatchObject({ code: "NAME_INVALID" })
+      expect(contractCodeOf(error.code ?? "")).toBe("INPUT_INVALID")
+    }
+    expect(k.calls()).toEqual([])
+  })
+
   test("a list: one bad item fails validation before anything runs, and results come back in input order", async () => {
     const k = await kit()
     const bad = await errorOf(k.runs.boxd_ensure({ works: [{ workId: "a" }, { workId: "b", size: "3x9" }] }, k.call()))
@@ -392,6 +462,24 @@ describe("boxd_ensure select orphans", () => {
     expect(again.results.filter((item) => item.state === "adopted")).toEqual([])
     expect(k.calls().some((call) => call.startsWith("machine label"))).toBe(false)
     expect(k.counter.fake.spawns().filter((spawn) => spawn.startedAt >= againStarted && spawn.action)).toEqual([])
+  })
+
+  test("an adopted orphan's work.* labels are read back into its record", async () => {
+    const k = await kit()
+    const labels = {
+      owner: "boxd",
+      role: "session",
+      work: "labelled",
+      "work.product": "checkout",
+      "work.role": "lane",
+      "work.feature": "boxd-plugin/59",
+      "work.task": "boxd-plugin/130",
+    }
+    const machine = await seeded(k, "labelled", labels)
+    const result = (await k.runs.boxd_ensure({ select: "orphans" }, k.call())) as ListResult<OrphanResult>
+    expect(result.results[0]).toMatchObject({ state: "adopted", machine: "oc-labelled", workId: "labelled" })
+    expect((await k.record("labelled"))?.labels).toEqual({ product: "checkout", role: "lane", feature: "boxd-plugin/59", task: "boxd-plugin/130" })
+    expect(k.counter.fake.read().machines.find((entry) => entry.id === machine.id)?.labels).toMatchObject(labels)
   })
 
   test("a shared orphan and an isolated orphan are skipped, with no labels from this ledger and no record", async () => {
@@ -1181,6 +1269,26 @@ describe("boxd_resume (design §3.8)", () => {
     const record = await k.record("phoenix")
     expect(record?.machineId).not.toBe(machine.id)
     expect(record?.session?.rootId).toBe("ses_phoenix")
+  })
+
+  test("a rebuild keeps the work's labels on its new machine", async () => {
+    const k = await kit()
+    await k.golden("fra")
+    const labels = { product: "checkout", role: "lane", feature: "boxd-plugin/59", task: "boxd-plugin/130" }
+    const machine = await known(k, "labelled", { labels })
+    k.counter.fake.update((state) => { state.machines.find((entry) => entry.id === machine.id)!.status = "destroyed" })
+    k.reset()
+    const result = (await k.runs.boxd_resume({ workId: "labelled" }, k.call())) as ResumeResult
+    expect(result).toMatchObject({ state: "ready", rebuilt: true })
+    expect((await k.record("labelled"))?.labels).toEqual(labels)
+    const created = k.calls().find((entry) => entry.startsWith("machine new"))!
+    expect(created).toContain("--label work.feature=boxd-plugin/59 --label work.product=checkout --label work.role=lane --label work.task=boxd-plugin/130")
+    expect(k.counter.fake.read().machines.find((entry) => entry.name === "oc-labelled" && entry.status !== "destroyed")?.labels).toMatchObject({
+      "work.product": "checkout",
+      "work.role": "lane",
+      "work.feature": "boxd-plugin/59",
+      "work.task": "boxd-plugin/130",
+    })
   })
 
   test("a reached budget.machines refuses a resume rebuild before any machine is made", async () => {
