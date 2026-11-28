@@ -298,4 +298,24 @@ describe("the plugin on OpenCode 2.4.1", () => {
       await host.close()
     }
   })
+
+  test("two works ensure into slots on one shared machine", async () => {
+    const host = await startHost()
+    try {
+      const sessionID = await session(host, "build")
+      const first = await attempt(host, sessionID, "build", "boxd_ensure", "reject", { workId: "docs", machine: "common" })
+      const second = await attempt(host, sessionID, "build", "boxd_ensure", "reject", { workId: "review", machine: "common" })
+      expect(first.ok).toBe(true)
+      expect(second.ok).toBe(true)
+      expect(first.output).toMatchObject({ state: "ready", machine: "oc-shared-common", created: true })
+      expect(second.output).toMatchObject({ state: "ready", machine: "oc-shared-common", created: false })
+      expect((second.output as { machineId: string }).machineId).toBe((first.output as { machineId: string }).machineId)
+      const shared = host.boxd.machines().filter((machine) => machine.name === "oc-shared-common" && machine.status !== "destroyed")
+      expect(shared).toHaveLength(1)
+      expect(shared[0]?.labels).toMatchObject({ owner: "boxd", shared: "common" })
+      expect(host.boxd.machines().filter((machine) => machine.name === "oc-docs" || machine.name === "oc-review")).toHaveLength(0)
+    } finally {
+      await host.close()
+    }
+  })
 })

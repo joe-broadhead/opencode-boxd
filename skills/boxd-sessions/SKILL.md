@@ -1,13 +1,13 @@
 ---
 name: boxd-sessions
-description: Run OpenCode sessions on private boxd machines, one work per machine, and bring transcripts and git back. Use for boxd machines, golden images, or many coding sessions in parallel. Not for a helper on this machine (subagent).
+description: Run OpenCode sessions on private boxd machines, one work per machine or slot on a shared one, and bring transcripts and git back. Use for boxd machines, golden images, or many coding sessions in parallel. Not for a helper on this machine (subagent).
 ---
 
 # boxd sessions
 
-A work is one task with one id, one machine (`oc-<workId>`) and one root session plus the child sessions its subagents
-start. This machine is the source of truth; the work's machine is a cache with more CPU. Read a method's description
-before its first call.
+A work is one task with one id, one machine (`oc-<workId>`, or a slot on the shared machine `oc-shared-<name>`) and one
+root session plus the child sessions its subagents start. This machine is the source of truth; the work's machine is a
+cache with more CPU. Read a method's description before its first call.
 
 ## The order
 
@@ -42,6 +42,10 @@ ledger this is. `saved` says whether this machine holds the work: `fresh`, `stal
 Use one list call, not many single calls: `works: [...]` takes up to 300 items, and the results come back in input
 order. `tools.boxd.sleep({ select: "finished" })` sleeps every idle work whose last run ended, and
 `tools.boxd.harvest({ select: "unsaved-finished" })` saves every finished work that is not saved.
+
+For a small work, pass `machine: "<name>"` to `ensure` to take a slot on `oc-shared-<name>` instead of a machine of its
+own. The first work that names it creates it at that work's region and size; later works join it, and a differing size
+or region is refused. The option `slotsPerMachine` caps the open works on it.
 
 ## Orphans
 
@@ -88,8 +92,8 @@ make room, or the owner raises the cap.
 A failed call is `CODE: What happened. Next step: What to do.` Read the next step and make that call. `INPUT_INVALID`
 means the input or the work id is not what the method describes; `UNAVAILABLE` means the machine, the CLI or the guest
 could not answer now, and the sentence says which; `NEEDS_SIGN_IN` means the boxd CLI needs `boxd auth login`;
-`BUDGET_EXCEEDED` means today's machine cost or machine-hours reached the budget with `action: "refuse"`; sleep or drop
-unused works, or ask the owner to raise the cap. `PERMISSION_DENIED` means the access level or a rule refused it.
+`BUDGET_EXCEEDED` means today's machine cost or machine-hours, or a shared machine's slot cap, refused the call; sleep
+or drop unused works, or ask the owner to raise the cap. `PERMISSION_DENIED` means the access level or a rule refused it.
 A drop refused for commits on no remote is `UNAVAILABLE` with a push-first next step: push, then drop again.
 
 ## Do not

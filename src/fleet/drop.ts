@@ -46,6 +46,9 @@ export async function dropWork(services: Services, item: DropItem, context: Work
     [item.workId],
     async (current) => {
       const record = openRecord(current.get(item.workId), item.workId)
+      if (record.slot === true) {
+        throw boxdError("SLOT_UNSUPPORTED", `Dropping ${record.machine} would destroy every other work on the shared machine. Acting on one slot is not available until boxd-plugin#99 lands.`)
+      }
       let machineId = record.machineId
       let gone = record.region === null
       if (!gone && machineId === null) {

@@ -4,7 +4,7 @@
  * `UNHARVESTED_SLEEP`. One `machine get` (the by-id check) and one `machine hibernate`; no config write, because the
  * platform bounds were set at creation. Package C2 owns this file.
  */
-import { BoxdError } from "../errors.js"
+import { BoxdError, boxdError } from "../errors.js"
 import type { SleptBy, WorkRecord } from "../ledger/types.js"
 import type { ChangeTarget, OpContext } from "../ports.js"
 import type { SleepResult } from "../results.js"
@@ -23,6 +23,9 @@ export async function sleepWork(services: Services, item: SleepItem, context: Wo
     [item.workId],
     async (current) => {
       const record = openRecord(current.get(item.workId), item.workId)
+      if (record.slot === true) {
+        throw boxdError("SLOT_UNSUPPORTED", `Sleeping ${record.machine} would hibernate every other work on the shared machine. Acting on one slot is not available until boxd-plugin#99 lands.`)
+      }
       const machine = await machineOf(services, record, op)
       // A machine the by-id check already shows hibernated is slept: no second hibernate.
       await withTarget(services, record, machine, op, async (owned) => (owned.status === "hibernated" ? undefined : hibernate(services, owned.target, op)))

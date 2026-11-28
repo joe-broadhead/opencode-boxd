@@ -37,6 +37,8 @@ export interface Options {
   readonly keep: readonly string[]
   /** A new work's size. */
   readonly size: Size
+  /** The most open works one shared machine may hold. */
+  readonly slotsPerMachine: number
   /** The guest's git identity for every new work; none by default. */
   readonly git?: { readonly name: string; readonly email: string }
   /** Golden image names are `<goldenPrefix>-<opencode version>-<size>`. */
@@ -70,6 +72,7 @@ export const DEFAULT_OPTIONS: Options = {
   keepFree: { fra: 0, nyc: 0 },
   keep: [],
   size: "2x8",
+  slotsPerMachine: 4,
   goldenPrefix: "oc-golden",
   goldenBase: "stock",
   buildGolden: "auto",
@@ -103,6 +106,7 @@ const ACCEPTED = {
   keepFree: `an object with a whole number of machines, 0 or more, for each of ${quoted(REGIONS)} (0 by default)`,
   keep: 'an array of label selectors, each "key=value" or a bare key (empty by default)',
   size: `${quoted(SIZES)} ("2x8" by default)`,
+  slotsPerMachine: "a whole number of works from 1 (4 by default) that one shared machine may hold",
   git: "an object with a non-empty name and an email address",
   goldenPrefix: 'a lowercase name of up to 32 letters, digits or hyphens, starting with a letter ("oc-golden" by default)',
   goldenBase: '"stock" (the default) or a lowercase boxd snapshot name',
@@ -220,6 +224,7 @@ export function parseOptions(raw: unknown): Options {
     keepFree: free as Record<Region, number>,
     keep: [...new Set(keep as string[])],
     size,
+    slotsPerMachine: wholeNumber("slotsPerMachine", input.slotsPerMachine, 1),
     ...(git !== undefined ? { git: { name: (git as { name: string }).name, email: (git as { email: string }).email } } : {}),
     goldenPrefix,
     goldenBase,

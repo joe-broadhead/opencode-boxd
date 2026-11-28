@@ -140,6 +140,8 @@ export interface WorkRecord {
   readonly machine: MachineName
   /** Every change acts on it (design §4.1); null until a `get` answers. */
   readonly machineId: MachineId | null
+  /** True when the work holds a slot on a shared machine, which many open works record. */
+  readonly slot?: true
   readonly size: Size
   /** `opencode` is null until a read has learned the guest's version. */
   readonly image: { readonly name: string; readonly opencode: string | null }

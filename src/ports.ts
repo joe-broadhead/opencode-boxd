@@ -47,6 +47,8 @@ export type MachineName = `oc-${string}`
 export const WORK_LABELS = { role: "session", owner: "boxd" } as const
 /** The label key that names the ledger that registered a work's machine; its value is `LedgerPort.id`. */
 export const LEDGER_LABEL = "ledger"
+/** The label key that names a shared machine; its value is the short name its works give in `machine`. */
+export const SHARED_LABEL = "shared"
 /** The label a golden builder carries; restores inherit it under the work's own `role=session`. */
 export const BUILDER_LABELS = { role: "golden-builder" } as const
 
@@ -353,6 +355,11 @@ export interface CreateWork {
   readonly region: Region
   readonly name: MachineName
   readonly workId: string
+  /**
+   * Set when the work takes a slot on a shared machine: the short name, so the machine is `oc-shared-<name>` and carries
+   * `owner=boxd`, `shared=<name>` and the ledger label instead of `work=<id>`.
+   */
+  readonly shared?: string
   /** The id of the ledger that registers this work, set as the `ledger` label. */
   readonly ledger: string
   readonly image: string
@@ -511,6 +518,8 @@ export interface HealthAnswer {
 
 export interface SetupInput {
   readonly directory: string
+  /** The work's slot on a shared machine: its work id. Absent when the work has a machine of its own. */
+  readonly slot?: string
   readonly repo?: { readonly url: string; readonly ref?: string }
   readonly git?: { readonly name: string; readonly email: string }
   /** The variable names the work declares: the guest's OpenCode starts with these and the machine's basics only. */
@@ -635,7 +644,7 @@ export interface ScrubAnswer {
 export interface GuestPort {
   // Reads: the read rule, the helper already on the machine, no upload, no ledger write.
   /** With `directory`, also the detached clone's progress for that work folder, so a wait needs no second `setup`. */
-  serve(target: ReadTarget, input: { readonly directory?: string }, context: OpContext): Promise<ServeAnswer>
+  serve(target: ReadTarget, input: { readonly directory?: string; readonly slot?: string }, context: OpContext): Promise<ServeAnswer>
   phase(target: ReadTarget, input: { readonly sessionId: string; readonly tail?: number; readonly full?: boolean }, context: OpContext): Promise<PhaseAnswer>
   read(
     target: ReadTarget,

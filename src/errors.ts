@@ -224,6 +224,16 @@ export const CODES = {
       "Today's machine cost or machine-hours have reached the budget's cap, and budget.action is refuse; the figures are in the result. A call that would make a machine run is refused.",
     next: 'Lower the use first: boxd_sleep({ select: "idle" }), then boxd_drop({ select: "saved-finished" }); or raise budget.daily or budget.machineHours. It resets at local midnight.',
   },
+  SLOTS_FULL: {
+    state: "refused",
+    message: "A shared machine already holds as many open works as slotsPerMachine allows; machine, works and cap are in the result. Nothing was changed.",
+    next: 'Use another machine name, drop a work on it with boxd_drop({ workId }), or raise "slotsPerMachine" in the plugin options and restart OpenCode.',
+  },
+  SLOT_UNSUPPORTED: {
+    state: "refused",
+    message: "This work holds a slot on a shared machine, and acting on one slot alone is not available until boxd-plugin#99 lands.",
+    next: "Keep the work for now, or act on the whole shared machine with the boxd CLI (boxd machine remove or hibernate <name>); boxd-plugin#99 will make drop and sleep act on one slot.",
+  },
 
   // Setup.
   RULES_NOT_ADDED: {

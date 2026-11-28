@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto"
 import { boxdError } from "./errors.js"
+import type { MachineName } from "./ports.js"
 
 const WORK = /^[a-z][a-z0-9-]{0,24}$/
 const SNAPSHOT = /^[a-z0-9][a-z0-9._-]{0,63}$/
@@ -42,6 +43,24 @@ export function repositoryHash(url: string): string {
 export function workDirectory(workId: string): string {
   assertWorkId(workId)
   return `/home/boxd/work/${workId}`
+}
+
+/** The short name a work gives a shared machine: `docs` means `oc-shared-docs`. */
+export function assertSharedMachine(name: string): string {
+  if (!WORK.test(name)) throw boxdError("NAME_INVALID", `machine "${name}" is not a shared machine name: a letter, then up to 24 lowercase letters, digits or hyphens.`)
+  return name
+}
+
+export function sharedMachineName(name: string): MachineName {
+  return `oc-shared-${assertSharedMachine(name)}` as MachineName
+}
+
+/** The short name from a shared machine's name, or undefined for a machine a work owns. */
+export function sharedAliasOf(machine: string): string | undefined {
+  const prefix = "oc-shared-"
+  if (!machine.startsWith(prefix)) return undefined
+  const name = machine.slice(prefix.length)
+  return WORK.test(name) ? name : undefined
 }
 
 /** A model reference the guest's OpenCode accepts, such as `anthropic/claude-sonnet-4-5`. */

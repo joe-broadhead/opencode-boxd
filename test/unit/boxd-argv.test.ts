@@ -23,6 +23,17 @@ describe("argv", () => {
     expect(() => argv.createWorkArgs({ ...work, name: "oc-other" })).toThrow(/NAME_INVALID/)
   })
 
+  test("a shared machine's create: oc-shared-<name>, the owner, role, shared and ledger labels, and no work label", () => {
+    const shared = { ...work, name: "oc-shared-common", shared: "common" } as const
+    expect(argv.createWorkArgs(shared)).toEqual([
+      "machine", "new", "oc-shared-common", "--region", "nyc", "--from-snapshot", "oc-golden-2.4.1-4x16",
+      "--label", "ledger=0a1b2c3d4e", "--label", "owner=boxd", "--label", "role=session", "--label", "shared=common",
+      "--auto-suspend-timeout", "0", "--auto-hibernate-timeout", "7200", "--idle-ignore-outbound=off", "--json",
+    ])
+    expect(argv.createWorkArgs(shared).join(" ")).not.toContain("--label work=")
+    expect(() => argv.createWorkArgs({ ...shared, name: "oc-common" })).toThrow(/NAME_INVALID/)
+  })
+
   test("a builder: stock with its size, or a base snapshot; always a delete-after timer", () => {
     expect(argv.createBuilderArgs({ kind: "builder", region: "fra", name: "oc-gb-fra-4x16-ab12", size: "4x16", base: "stock", deleteAfter: "2h" })).toEqual([
       "machine", "new", "oc-gb-fra-4x16-ab12", "--region", "fra", "--vcpu", "4", "--label", "role=golden-builder", "--delete-after", "2h", "--json",

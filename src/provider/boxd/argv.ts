@@ -6,7 +6,7 @@
  */
 import { boxdError } from "../../errors.js"
 import type { ChangeTarget, CreateBuilder, CreateWork, MachineId, MachineName, Region, Size } from "../../ports.js"
-import { LEDGER_LABEL, SIZE_VCPU, WORK_LABELS } from "../../ports.js"
+import { LEDGER_LABEL, SHARED_LABEL, SIZE_VCPU, WORK_LABELS } from "../../ports.js"
 
 const WORK_ID = /^[a-z][a-z0-9-]{0,24}$/
 const SNAPSHOT = /^[a-z0-9][a-z0-9._-]{0,63}$/
@@ -59,9 +59,12 @@ export const getArgs = (region: Region, nameOrId: string) => ["machine", "get", 
  * image: boxd refuses `--vcpu` with `--from-snapshot`, so nothing is resized after.
  */
 export function createWorkArgs(input: CreateWork): string[] {
-  if (!WORK_ID.test(input.workId) || input.name !== `oc-${input.workId}`) throw invalid(`A work machine is oc-<work id>, not ${input.name}.`)
+  if (input.shared !== undefined) {
+    if (!WORK_ID.test(input.shared) || input.name !== `oc-shared-${input.shared}`) throw invalid(`A shared machine is oc-shared-<name>, not ${input.name}.`)
+  } else if (!WORK_ID.test(input.workId) || input.name !== `oc-${input.workId}`) throw invalid(`A work machine is oc-<work id>, not ${input.name}.`)
   if (!Number.isInteger(input.autoHibernateSeconds) || input.autoHibernateSeconds < 60) throw invalid("autoHibernateSeconds must be whole seconds, at least 60.")
   if (input.leaseDays !== undefined && (!Number.isInteger(input.leaseDays) || input.leaseDays < 1)) throw invalid("leaseDays must be a whole number of days, at least 1.")
+  const labels = input.shared !== undefined ? { ...WORK_LABELS, [SHARED_LABEL]: input.shared, [LEDGER_LABEL]: input.ledger } : { ...WORK_LABELS, work: input.workId, [LEDGER_LABEL]: input.ledger }
   return [
     "machine",
     "new",
@@ -70,7 +73,7 @@ export function createWorkArgs(input: CreateWork): string[] {
     input.region,
     "--from-snapshot",
     snapshotArg(input.image),
-    ...labelArgs({ ...WORK_LABELS, work: input.workId, [LEDGER_LABEL]: input.ledger }),
+    ...labelArgs(labels),
     "--auto-suspend-timeout",
     String(input.autoSuspendSeconds),
     "--auto-hibernate-timeout",

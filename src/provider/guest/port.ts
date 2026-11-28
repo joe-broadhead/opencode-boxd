@@ -125,7 +125,14 @@ export function createGuestPort(options: GuestPortOptions): GuestPort {
   }
 
   return {
-    serve: (target, input, context) => read("serve", target, input.directory !== undefined ? { directory: input.directory } : {}, context, readServe),
+    serve: (target, input, context) =>
+      read(
+        "serve",
+        target,
+        { ...(input.directory !== undefined ? { directory: input.directory } : {}), ...(input.slot !== undefined ? { slot: input.slot } : {}) },
+        context,
+        readServe,
+      ),
     phase: (target, input, context) =>
       read(
         "phase",
@@ -146,7 +153,14 @@ export function createGuestPort(options: GuestPortOptions): GuestPort {
     describe: (target, context) => read("describe", target, {}, context, readDescribe),
 
     setup: (target, input, context) =>
-      change("setup", target, { directory: input.directory, ...(input.repo ? { repo: input.repo } : {}), ...(input.git ? { git: input.git } : {}), env: input.env ?? [], opencode: input.opencode }, context, TIMEOUTS.setup, readSetup),
+      change(
+        "setup",
+        target,
+        { directory: input.directory, ...(input.slot !== undefined ? { slot: input.slot } : {}), ...(input.repo ? { repo: input.repo } : {}), ...(input.git ? { git: input.git } : {}), env: input.env ?? [], opencode: input.opencode },
+        context,
+        TIMEOUTS.setup,
+        readSetup,
+      ),
     warm: (target, input, context) => change("warm", target, { repo: input.repo }, context, TIMEOUTS.clone, readWarm),
     prompt: (target, input, context) =>
       change(

@@ -14,6 +14,7 @@ import {
   CALL_BOUND_MS,
   TIMEOUTS,
   LEDGER_LABEL,
+  SHARED_LABEL,
   WORK_LABELS,
   type BoxdPort,
   type ChangeTarget,
@@ -286,7 +287,12 @@ export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
         region: input.region,
         status: "starting",
         size: input.kind === "builder" ? input.size : null,
-        labels: input.kind === "work" ? { ...WORK_LABELS, work: input.workId, [LEDGER_LABEL]: input.ledger } : { ...BUILDER_LABELS },
+        labels:
+          input.kind === "builder"
+            ? { ...BUILDER_LABELS }
+            : input.shared !== undefined
+              ? { ...WORK_LABELS, [SHARED_LABEL]: input.shared, [LEDGER_LABEL]: input.ledger }
+              : { ...WORK_LABELS, work: input.workId, [LEDGER_LABEL]: input.ledger },
         sharing: "private",
         isolated: false,
       }
@@ -421,10 +427,12 @@ export function isChangeTarget(target: ReadTarget | ChangeTarget): target is Cha
 
 /**
  * The plugin's ownership labels (design §3.4 step 2): `owner=boxd` and `work=<id>`, whose `oc-<id>` is the
- * machine's name. A machine renamed by hand keeps the `work` label of the work it belonged to, so its name no longer
- * matches and it gets no adoption target.
+ * machine's name, or `shared=<name>`, whose `oc-shared-<name>` is the shared machine's name. A machine renamed by hand
+ * keeps the label of the work it belonged to, so its name no longer matches and it gets no adoption target.
  */
 export function ownsLabels(info: Pick<MachineInfo, "name" | "labels">): boolean {
+  if (info.labels.owner !== WORK_LABELS.owner) return false
   const named = typeof info.labels.work === "string" && info.name === `oc-${info.labels.work}`
-  return named && info.labels.owner === WORK_LABELS.owner
+  const shared = typeof info.labels[SHARED_LABEL] === "string" && info.name === `oc-shared-${info.labels[SHARED_LABEL]}`
+  return named || shared
 }

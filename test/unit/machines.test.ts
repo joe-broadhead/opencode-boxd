@@ -6,6 +6,7 @@ import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { Database } from "bun:sqlite"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
+import { contractCodeOf } from "../../src/handlers/refusals.js"
 import type { WorkRecord } from "../../src/ledger/types.js"
 import type { EnsureResult, ListResult, OrphanResult, Refusal, ResumeResult, GoldenResult } from "../../src/results.js"
 import { budgetProblems, SPAWN_BUDGETS } from "../support/spawn-count.js"
@@ -1428,5 +1429,98 @@ describe("a get's label-based target only adopts a work with no recorded machine
     k.counter.fake.machine({ name: "oc-common", region: "fra", sharing: "shared", labels: { owner: "boxd", role: "session", work: "common" } })
     expect((await k.services.boxd.get("fra", "oc-common", op)).owned).toBeUndefined()
     expect((await errorOf(k.runs.boxd_ensure({ workId: "common" }, k.call()))).code).toBe("MACHINE_SHARED")
+  })
+})
+
+describe("boxd_ensure: a slot on a shared machine", () => {
+  test("two works with one machine make one create and two slots, both ready", async () => {
+    const k = await kit()
+    await k.golden("fra", "4x16")
+    k.reset()
+    const seen: Array<{ action: string; input: { slot?: string } }> = []
+    const setup = k.services.guest.setup
+    k.services.guest.setup = async (target, input, context) => {
+      seen.push({ action: "setup", input: { slot: input.slot } })
+      return setup(target, input, context)
+    }
+    const serve = k.services.guest.serve
+    k.services.guest.serve = async (target, input, context) => {
+      seen.push({ action: "serve", input: { slot: input.slot } })
+      return serve(target, input, context)
+    }
+
+    const first = (await k.runs.boxd_ensure({ workId: "docs", machine: "common", region: "fra", size: "4x16" }, k.call())) as EnsureResult
+    const second = (await k.runs.boxd_ensure({ workId: "review", machine: "common" }, k.call())) as EnsureResult
+
+    expect(first).toMatchObject({ state: "ready", machine: "oc-shared-common", region: "fra", size: "4x16", created: true })
+    expect(second).toMatchObject({ state: "ready", machine: "oc-shared-common", machineId: first.machineId, size: "4x16", created: false })
+    const created = k.calls().filter((entry) => entry.startsWith("machine new"))
+    expect(created).toHaveLength(1)
+    expect(created[0]).toContain("--label owner=boxd")
+    expect(created[0]).toContain("--label shared=common")
+    expect(created[0]).not.toContain("--label work=")
+    expect(k.calls().some((entry) => entry.startsWith("machine resize"))).toBe(false)
+    expect(await k.record("docs")).toMatchObject({ slot: true, machine: "oc-shared-common", machineId: first.machineId, region: "fra", size: "4x16" })
+    expect(await k.record("review")).toMatchObject({ slot: true, machine: "oc-shared-common", machineId: first.machineId, size: "4x16" })
+    expect(seen.filter((entry) => entry.action === "setup").map((entry) => entry.input.slot)).toEqual(["docs", "review"])
+  })
+
+  test("a work past slotsPerMachine is refused before anything is created or set up", async () => {
+    const k = await kit({ options: { slotsPerMachine: 2 } })
+    await k.golden("fra")
+    await k.runs.boxd_ensure({ workId: "docs", machine: "common", region: "fra" }, k.call())
+    await k.runs.boxd_ensure({ workId: "review", machine: "common" }, k.call())
+    k.reset()
+
+    const call = k.call()
+    const error = await errorOf(k.runs.boxd_ensure({ workId: "third", machine: "common" }, call))
+    expect(error).toMatchObject({ code: "SLOTS_FULL", details: { machine: "oc-shared-common", works: 2, cap: 2 } })
+    expect(contractCodeOf(error.code ?? "")).toBe("BUDGET_EXCEEDED")
+    expect(error.what ?? "").toContain("slotsPerMachine")
+    expect(await k.record("third")).toBeUndefined()
+    expect(k.calls().some((entry) => /^machine (new|label|wake|resize)/.test(entry))).toBe(false)
+    expect(k.counter.fake.spawns().filter((spawn) => spawn.call === call.id && spawn.action === "setup")).toHaveLength(0)
+  })
+
+  test("a later size or region that differs from the shared machine is refused, and nothing is resized or moved", async () => {
+    const k = await kit()
+    await k.golden("fra")
+    await k.runs.boxd_ensure({ workId: "docs", machine: "common", region: "fra", size: "2x8" }, k.call())
+    k.reset()
+
+    const sized = await errorOf(k.runs.boxd_ensure({ workId: "review", machine: "common", size: "4x16" }, k.call()))
+    expect(sized).toMatchObject({ code: "NAME_INVALID", details: { field: "size" } })
+    const moved = await errorOf(k.runs.boxd_ensure({ workId: "review", machine: "common", region: "nyc" }, k.call()))
+    expect(moved).toMatchObject({ code: "NAME_INVALID", details: { field: "region" } })
+    expect(await k.record("review")).toBeUndefined()
+    expect(k.calls().some((entry) => /^machine (new|resize|label|wake)/.test(entry))).toBe(false)
+  })
+
+  test("two concurrent ensures for a new shared machine make one machine", async () => {
+    const k = await kit()
+    await k.golden("all")
+    k.reset()
+    const [one, two] = (await Promise.all([
+      k.runs.boxd_ensure({ workId: "one", machine: "common", region: "fra" }, k.call()),
+      k.runs.boxd_ensure({ workId: "two", machine: "common", region: "fra" }, k.call()),
+    ])) as EnsureResult[]
+
+    expect([one.state, two.state]).toEqual(["ready", "ready"])
+    expect(one.machineId).toBe(two.machineId)
+    expect(k.counter.fake.read().machines.filter((machine) => machine.name === "oc-shared-common" && machine.status !== "destroyed")).toHaveLength(1)
+  })
+
+  test("a work never moves between its own machine and a shared one", async () => {
+    const k = await kit()
+    await k.golden("fra")
+    await k.runs.boxd_ensure({ workId: "own", region: "fra" }, k.call())
+    const move = await errorOf(k.runs.boxd_ensure({ workId: "own", machine: "common" }, k.call()))
+    expect(move).toMatchObject({ code: "NAME_INVALID", details: { field: "machine" } })
+
+    const shared = (await k.runs.boxd_ensure({ workId: "slot", machine: "common", region: "fra" }, k.call())) as EnsureResult
+    const kept = (await k.runs.boxd_ensure({ workId: "slot" }, k.call())) as EnsureResult
+    expect(kept).toMatchObject({ state: "ready", machine: "oc-shared-common", machineId: shared.machineId })
+    const other = await errorOf(k.runs.boxd_ensure({ workId: "slot", machine: "other" }, k.call()))
+    expect(other).toMatchObject({ code: "NAME_INVALID", details: { field: "machine" } })
   })
 })

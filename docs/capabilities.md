@@ -63,7 +63,8 @@ None.
   open works name) and each region's own row in `perRegion`. When the limit cannot be read the counts still show and
   `limit` and `free` are null; when the listing cannot be read the report says so instead of showing a zero.
 - **Changes.** `ensure` makes a work exist and converges it; with `repo` it starts from the repository's warm image when
-  one exists, and its answer says `warm` and, for a work this version made, once ready, `readySeconds`. `submit` admits a
+  one exists, and its answer says `warm` and, for a work this version made, once ready, `readySeconds`. With `machine`
+  it puts the work in a slot on the shared machine `oc-shared-<name>` instead of a machine of its own. `submit` admits a
   prompt; `harvest` exports the session tree and copies the files back; `sleep` hibernates; `resume` wakes or rebuilds;
   `reassign` moves an unstarted work's machine to a new id; `golden` builds, lists or prunes golden images. Every one of
   them emits `changed`.

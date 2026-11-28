@@ -151,6 +151,12 @@
           "default": "2x8",
           "description": "A new work's machine size, vCPU x GiB."
         },
+        "slotsPerMachine": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 4,
+          "description": "The most open works one shared machine may hold."
+        },
         "git": {
           "type": "object",
           "properties": {

@@ -519,6 +519,19 @@ describe("boxd_drop", () => {
     expect(machineState(machine).status).toBe("running")
   })
 
+  test("refuses a slot work before touching the shared machine, until #99", async () => {
+    const shared = counter.fake.machine({ name: "oc-shared-docs", region: "fra", labels: { owner: "boxd", role: "session", shared: "docs" } })
+    await openWork("slot-drop", { slot: true, machine: "oc-shared-docs", machineId: shared.id as MachineId })
+    const context = call()
+    const refused = await errorOf(runs.boxd_drop({ workId: "slot-drop" }, context))
+    expect(refused).toMatchObject({ code: "SLOT_UNSUPPORTED" })
+    expect(refused.what).toContain("#99")
+    expect(refused.next).toContain("whole shared machine")
+    expect((await record("slot-drop"))!.state).toBe("open")
+    expect(machineState(shared).status).toBe("running")
+    expect(noHelp(countOf(context.id))).toEqual({})
+  })
+
   test("refuses UNPUSHED while a local branch holds a commit no remote ref has (#39), with the commits and the push step", async () => {
     const machine = await savedWork("unpushed")
     const tree = treeOf(machine, "unpushed")
@@ -659,6 +672,18 @@ describe("boxd_sleep", () => {
     expect(stored.warnings?.map((warning) => warning.code)).toEqual(["UNHARVESTED_SLEEP"])
     // An already hibernated machine still answers asleep.
     expect(await runs.boxd_sleep({ workId: "nap" }, call())).toMatchObject({ state: "asleep" })
+  })
+
+  test("refuses a slot work before hibernating the shared machine, until #99", async () => {
+    const shared = counter.fake.machine({ name: "oc-shared-docs", region: "fra", labels: { owner: "boxd", role: "session", shared: "docs" } })
+    await openWork("slot-sleep", { slot: true, machine: "oc-shared-docs", machineId: shared.id as MachineId })
+    const context = call()
+    const refused = await errorOf(runs.boxd_sleep({ workId: "slot-sleep" }, context))
+    expect(refused).toMatchObject({ code: "SLOT_UNSUPPORTED" })
+    expect(refused.what).toContain("#99")
+    expect(refused.next).toContain("whole shared machine")
+    expect(machineState(shared).status).toBe("running")
+    expect(noHelp(countOf(context.id))).toEqual({})
   })
 
   test("every change targets the recorded id through the by-id check: a re-pointed name that carries the plugin's labels is NOT_OURS for each tool", async () => {

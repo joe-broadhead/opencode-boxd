@@ -44,6 +44,11 @@ export const REPO = string("An https://github.com/owner/repo URL, cloned into th
 export const REF = string("A branch or tag for the clone.")
 export const DIRECTORY = string("The folder here for the work, inside the project or an allowed root; the project by default. The guest always works in /home/boxd/work/<work id>.")
 export const TITLE = string("The guest session's title; the work id by default.")
+export const SHARED_MACHINE = {
+  type: "string",
+  pattern: "^[a-z][a-z0-9-]{0,24}$",
+  description: 'Take a slot on the shared machine oc-shared-<name> instead of a machine of the work\'s own. The first work that names it creates it at that work\'s region and size; later works join it, and a differing size or region is refused.',
+} satisfies JsonSchema
 
 /**
  * A single form and a list form in one object schema: exactly one of `workId` and `works` (or a selector, in `extra`).
@@ -110,6 +115,7 @@ export const READ_INPUT: JsonSchema = object(
 
 const ENSURE_ITEM = {
   ...WORK_ITEM,
+  machine: SHARED_MACHINE,
   region: choice(["auto", ...REGIONS], 'Where a new work goes; "auto" picks the region with the most free machines among those the option "regions" allows. An existing work keeps its own region, though a named region is still checked against "regions".'),
   size: SIZE,
   model: { ...MODEL, description: `${MODEL.description as string} Recorded as the work's default, for its first session.` },
