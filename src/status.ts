@@ -11,7 +11,7 @@ import { COMMAND_STEM, DISPLAY_NAME, SUPPORTED_HOST } from "./constants.js"
 import { isSupportedHost } from "./host-version.js"
 import type { Access, Options } from "./options.js"
 import { CAPS } from "./ports.js"
-import type { AttentionItem, AutomationState, CostBlock, StatusResult } from "./results.js"
+import type { AttentionItem, AutomationState, CostBlock, MachineCounts, StatusResult } from "./results.js"
 import { workList } from "./fleet/status.js"
 
 /** What one report read needs. The fleet read is the plugin's own, with no guest read. */
@@ -97,6 +97,22 @@ interface ReportInput {
 const SYMBOLS: Readonly<Record<string, string>> = { EUR: "€", USD: "$", GBP: "£" }
 const money = (amount: number, currency: string) => (SYMBOLS[currency] ? `${SYMBOLS[currency]}${amount.toFixed(2)}` : `${amount.toFixed(2)} ${currency}`)
 
+const THOUSANDS = new Intl.NumberFormat("en-GB")
+const thousands = (value: number) => THOUSANDS.format(value)
+const MACHINE_STATES: readonly (keyof MachineCounts)[] = ["running", "starting", "standby", "hibernated", "stopped", "other"]
+
+/** The organisation's machines against its limit, by state, and this ledger's share; a null limit keeps the counts. */
+function machinesText(block: StatusResult["machines"]): string {
+  const split = MACHINE_STATES.filter((state) => block.byState[state] > 0)
+    .map((state) => `${thousands(block.byState[state])} ${state}`)
+    .join(", ")
+  const states = split === "" ? "" : ` (${split})`
+  const limit =
+    block.limit === null ? `${thousands(block.inUse)} in use${states}; the machine limit could not be read` : `${thousands(block.inUse)} of ${thousands(block.limit)} in use${states}`
+  const works = block.works === 0 ? "none are this ledger's works" : block.works === 1 ? "1 is this ledger's work" : `${thousands(block.works)} are this ledger's works`
+  return `${limit}; ${works}`
+}
+
 function costText(cost: CostBlock | undefined): string {
   if (cost === undefined) return "not read"
   const machines = `${cost.perHour.running} running, ${cost.perHour.asleep} asleep`
@@ -165,7 +181,7 @@ function reportText(input: ReportInput): string {
   const attention = value?.attention ?? []
   const groups = value?.groups ?? []
   const attentionText = attention.length || groups.length ? `${groups.map((group) => `${group.count} works ${group.why}`).concat(attention.map((item: AttentionItem) => `${item.workId} ${item.why}`)).join("; ")}; boxd_job has each detail` : "none"
-  const machines = (value?.regions ?? []).map((region) => `${region.region} ${region.inUse} of ${region.limit} in use, ${region.free} free`).join("; ") || "the machine limit could not be read"
+  const machines = value ? (value.cli.signedIn ? machinesText(value.machines) : "not read: the machine listing failed") : "not read"
   const rows = [
     `${DISPLAY_NAME} status`,
     `- boxd CLI: ${signedIn === true ? "signed in (it answered the machine listing; the plugin never reads your account or credentials)" : signedIn === false ? "not signed in, or not reachable (the machine listing failed)" : "not checked"}`,

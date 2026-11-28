@@ -17,7 +17,20 @@ export function fleet(overrides: Partial<StatusResult> = {}): StatusResult {
     attention: [],
     more: 0,
     cursorExpired: false,
-    machines: { counts: { work: 0, "other-ledger": 0, kept: 0, golden: 0, orphan: 0 }, orphans: [], more: 0 },
+    machines: {
+      counts: { work: 0, "other-ledger": 0, kept: 0, golden: 0, orphan: 0 },
+      orphans: [],
+      more: 0,
+      limit: 600,
+      inUse: 0,
+      free: 600,
+      byState: { running: 0, starting: 0, standby: 0, hibernated: 0, stopped: 0, other: 0 },
+      works: 0,
+      perRegion: [
+        { region: "fra", limit: 300, inUse: 0, free: 300, byState: { running: 0, starting: 0, standby: 0, hibernated: 0, stopped: 0, other: 0 }, works: 0 },
+        { region: "nyc", limit: 300, inUse: 0, free: 300, byState: { running: 0, starting: 0, standby: 0, hibernated: 0, stopped: 0, other: 0 }, works: 0 },
+      ],
+    },
     fleet: {},
     cost: {
       currency: "EUR",

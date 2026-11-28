@@ -103,15 +103,32 @@ describe("reads", () => {
     expect([missing?.code, missing?.details.kind]).toEqual(["BOXD_FAILED", "missing"])
   })
 
-  test("the machine limit per region, cached for a minute; the org-wide shape gives every region the same headroom", async () => {
+  test("the machine limit per region, cached for a minute; the org-wide shape is one organisation limit, never a sum", async () => {
     fake.update((state) => { state.limits = { fra: 2, nyc: 5 } })
     fake.machine({ name: "oc-a", region: "fra" })
-    expect(await boxd.machineLimit(context())).toEqual([
-      { region: "fra", limit: 2, inUse: 1, free: 1 },
-      { region: "nyc", limit: 5, inUse: 0, free: 5 },
-    ])
+    expect(await boxd.machineLimit(context())).toEqual({
+      org: 7,
+      regions: [
+        { region: "fra", limit: 2, inUse: 1, free: 1 },
+        { region: "nyc", limit: 5, inUse: 0, free: 5 },
+      ],
+    })
     await boxd.machineLimit(context())
     expect(fake.calls().filter((call) => call.startsWith("manage machine-limit"))).toHaveLength(1)
+
+    // boxd's org-wide answer: the one limit the organisation holds, which every region's row repeats.
+    fake.update((state) => {
+      state.limitShape = "org"
+      state.limits = { org: 9 }
+    })
+    const org = createBoxdCli({ bin: fake.bin, runner, now })
+    expect(await org.machineLimit(context())).toEqual({
+      org: 9,
+      regions: [
+        { region: "fra", limit: 9, inUse: 1, free: 8 },
+        { region: "nyc", limit: 9, inUse: 0, free: 9 },
+      ],
+    })
   })
 
   test("usage for an owner, and a plain refusal for a member", async () => {

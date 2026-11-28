@@ -22,6 +22,7 @@ import {
   type Listing,
   type MachineId,
   type MachineInfo,
+  type MachineLimit,
   type MachineLockKey,
   type MachineName,
   type MachineStatus,
@@ -29,7 +30,6 @@ import {
   type OpContext,
   type ReadTarget,
   type Region,
-  type RegionLimit,
   type SnapshotRow,
   type SpawnResult,
 } from "../../ports.js"
@@ -93,7 +93,7 @@ export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
   const holds = (key: MachineLockKey) => runner.holds(key)
 
   let listing: Listing | undefined
-  let limits: { readonly at: number; readonly value: readonly RegionLimit[] } | undefined
+  let limits: { readonly at: number; readonly value: MachineLimit } | undefined
   let snapshots: { readonly at: number; readonly value: readonly SnapshotRow[] } | undefined
 
   /** One CLI call: the flavour check first, then the child in its pool, then the stderr table on a failure. */
@@ -362,12 +362,13 @@ export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
       return runner.join("boxd:machine-limit", context, async (flight) => {
         const result = await cli(machineLimitArgs(), flight, TIMEOUTS.cliRead)
         const answer = parseMachineLimit(parseJson(result.stdout, "boxd manage machine-limit"))
-        // The org-wide answer is a limit that every region applies to its own machines (provisional until live
-        // check L3): each region's use is counted from the listing, never taken from the org's total.
-        const value =
+        // The org-wide answer is one limit that every region applies to its own machines (provisional until live
+        // check L3): each region's use is counted from the listing, never taken from the org's total. The
+        // organisation's limit is the one boxd stated, or the sum of the regions' own.
+        const value: MachineLimit =
           "perRegion" in answer
-            ? answer.perRegion
-            : regionLimits(answer.limit, (await list({ maxAgeMs: TIMEOUTS.phaseListingMaxAgeMs }, flight)).machines)
+            ? { org: answer.perRegion.reduce((sum, region) => sum + region.limit, 0), regions: answer.perRegion }
+            : { org: answer.limit, regions: regionLimits(answer.limit, (await list({ maxAgeMs: TIMEOUTS.phaseListingMaxAgeMs }, flight)).machines) }
         limits = { at: now(), value }
         return value
       })

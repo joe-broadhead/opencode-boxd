@@ -184,6 +184,10 @@ describe("the plugin on OpenCode 2.4.1", () => {
   test("the /boxd command posts the report", async () => {
     const host = await startHost()
     try {
+      // Two machines boxd counts against the organisation's limit, in two states: the report shows the counts even
+      // though the machine limit is the only other read the line needs.
+      host.boxd.seed("oc-asleep", { region: "fra", status: "hibernated" })
+      host.boxd.seed("oc-busy", { region: "nyc", status: "running" })
       const sessionID = await session(host, "build")
       await host.client.sessions.command({ sessionID, name: "boxd", text: "" })
       const posted = await until("/boxd posts its report", async () => {
@@ -194,6 +198,7 @@ describe("the plugin on OpenCode 2.4.1", () => {
       expect(posted).toContain("boxd status")
       expect(posted).toContain("- Next step:")
       expect(posted).toContain("- Access:")
+      expect(posted).toContain("- Machines: 2 of 600 in use (1 running, 1 hibernated); none are this ledger's works")
     } finally {
       await host.close()
     }

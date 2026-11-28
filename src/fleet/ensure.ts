@@ -566,7 +566,10 @@ export async function createAt(
         // Taken, but not shown yet: the same call again finds it (never BOXD_FAILED for a machine that is there).
         throw new NotNow("creating", `boxd refused ${name} in ${input.region} because the name is taken, but its machine get does not show that machine yet`)
       }
-      if (error instanceof BoxdError && error.code === "MACHINE_LIMIT") throw limitAtCreate(error, input.region, await boxd.machineLimit(op).catch(() => []), input.used, machines.inFlight, options.regions)
+      if (error instanceof BoxdError && error.code === "MACHINE_LIMIT") {
+        const limits = await boxd.machineLimit(op).then((answer) => answer.regions, () => [])
+        throw limitAtCreate(error, input.region, limits, input.used, machines.inFlight, options.regions)
+      }
       throw error
     } finally {
       end(landed)
@@ -719,7 +722,7 @@ async function createOrAdopt(machines: Machines, item: EnsureItem, context: Item
   const canWarm = warmImage !== undefined && warmRegions.size > 0
   const imageRegions = canWarm ? warmRegions : new Set(REGIONS.filter((region) => allowed.includes(region) && snapshots.some((row) => row.region === region && row.name === versionImage)))
   const imageAt = (region: Region) => (canWarm && warmRegions.has(region) ? warmImage! : versionImage)
-  const limits = where ? [] : await boxd.machineLimit(op)
+  const limits = where ? [] : (await boxd.machineLimit(op)).regions
   // The pick and its reservation in one step, with nothing awaited between: items picking at once count each other.
   const want = where ?? pickRegion({ choice: item.region ?? options.region, limits, keepFree: options.keepFree, inFlight: machines.inFlight, used, withImage: imageRegions, allowed })
   let reserved: ((landed: boolean) => void) | undefined = where ? undefined : machines.inFlight.reserve(want)
