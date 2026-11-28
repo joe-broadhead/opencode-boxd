@@ -38,9 +38,11 @@ import {
   readPhase,
   readPrompt,
   readRead,
+  readRelease,
   readScrub,
   readServe,
   readSetup,
+  readSlots,
   readUpgrade,
   readWarm,
 } from "./answers.js"
@@ -124,13 +126,16 @@ export function createGuestPort(options: GuestPortOptions): GuestPort {
     return parse(answerOf(second, action), true)
   }
 
+  const slot = (value: string | undefined) => (value ? { slot: value } : {})
+
   return {
-    serve: (target, input, context) => read("serve", target, input.directory !== undefined ? { directory: input.directory } : {}, context, readServe),
+    serve: (target, input, context) =>
+      read("serve", target, { ...(input.directory !== undefined ? { directory: input.directory } : {}), ...slot(input.slot) }, context, readServe),
     phase: (target, input, context) =>
       read(
         "phase",
         target,
-        { sessionId: input.sessionId, ...(input.tail ? { tail: input.tail } : {}), ...(input.full ? { full: true } : {}) },
+        { sessionId: input.sessionId, ...slot(input.slot), ...(input.tail ? { tail: input.tail } : {}), ...(input.full ? { full: true } : {}) },
         context,
         (answer) => readPhase(answer, input.full === true),
       ),
@@ -138,15 +143,30 @@ export function createGuestPort(options: GuestPortOptions): GuestPort {
       read(
         "read",
         target,
-        { directory: input.directory, maxBytes: input.maxBytes, ...(input.path !== undefined ? { path: input.path } : {}), ...(input.log ? { log: input.log } : {}), ...(input.tail ? { tail: input.tail } : {}) },
+        {
+          directory: input.directory,
+          ...slot(input.slot),
+          maxBytes: input.maxBytes,
+          ...(input.path !== undefined ? { path: input.path } : {}),
+          ...(input.log ? { log: input.log } : {}),
+          ...(input.tail ? { tail: input.tail } : {}),
+        },
         context,
         (answer) => readRead(answer, input.log === "server" ? "server.log" : (input.path ?? "")),
       ),
     health: (target, context) => read("health", target, {}, context, readHealth),
     describe: (target, context) => read("describe", target, {}, context, readDescribe),
+    slots: (target, context) => read("slots", target, {}, context, readSlots),
 
     setup: (target, input, context) =>
-      change("setup", target, { directory: input.directory, ...(input.repo ? { repo: input.repo } : {}), ...(input.git ? { git: input.git } : {}), env: input.env ?? [], opencode: input.opencode }, context, TIMEOUTS.setup, readSetup),
+      change(
+        "setup",
+        target,
+        { directory: input.directory, ...slot(input.slot), ...(input.repo ? { repo: input.repo } : {}), ...(input.git ? { git: input.git } : {}), env: input.env ?? [], opencode: input.opencode },
+        context,
+        TIMEOUTS.setup,
+        readSetup,
+      ),
     warm: (target, input, context) => change("warm", target, { repo: input.repo }, context, TIMEOUTS.clone, readWarm),
     prompt: (target, input, context) =>
       change(
@@ -154,6 +174,7 @@ export function createGuestPort(options: GuestPortOptions): GuestPort {
         target,
         {
           directory: input.directory,
+          ...slot(input.slot),
           sessionId: input.sessionId,
           title: input.title,
           text: input.text,
@@ -165,11 +186,12 @@ export function createGuestPort(options: GuestPortOptions): GuestPort {
         TIMEOUTS.helperChange,
         readPrompt,
       ),
-    interrupt: (target, input, context) => change("interrupt", target, { sessionId: input.sessionId }, context, TIMEOUTS.helperChange, () => undefined),
-    upgrade: (target, input, context) => change("upgrade", target, { version: input.version }, context, TIMEOUTS.upgrade, readUpgrade),
-    export: (target, input, context) => change("export", target, { rootId: input.rootId, ...(input.partial ? { partial: true } : {}) }, context, TIMEOUTS.helperChange, readExport),
-    import: (target, input, context) => change("import", target, { directory: input.directory, files: input.files }, context, TIMEOUTS.helperChange, readImport),
-    git: (target, input, context) => change("git", target, { directory: input.directory, ...(input.rootId ? { rootId: input.rootId } : {}) }, context, TIMEOUTS.helperChange, readGit),
+    interrupt: (target, input, context) => change("interrupt", target, { sessionId: input.sessionId, ...slot(input.slot) }, context, TIMEOUTS.helperChange, () => undefined),
+    upgrade: (target, input, context) => change("upgrade", target, { version: input.version, ...slot(input.slot) }, context, TIMEOUTS.upgrade, readUpgrade),
+    export: (target, input, context) => change("export", target, { rootId: input.rootId, ...slot(input.slot), ...(input.partial ? { partial: true } : {}) }, context, TIMEOUTS.helperChange, readExport),
+    import: (target, input, context) => change("import", target, { directory: input.directory, ...slot(input.slot), files: input.files }, context, TIMEOUTS.helperChange, readImport),
+    git: (target, input, context) => change("git", target, { directory: input.directory, ...slot(input.slot), ...(input.rootId ? { rootId: input.rootId } : {}) }, context, TIMEOUTS.helperChange, readGit),
+    release: (target, input, context) => change("release", target, { slot: input.slot }, context, TIMEOUTS.helperChange, readRelease),
     scrub: (target, context) => change("scrub", target, {}, context, TIMEOUTS.helperChange, readScrub),
   }
 }

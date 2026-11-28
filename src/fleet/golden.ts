@@ -16,7 +16,8 @@
  *    size, or from a base snapshot in that region, resized after the restore when its size differs.
  * 2. The helper's `upgrade` to this laptop's OpenCode (a change: it installs the v1 helper first), then the user's
  *    `goldenSetup` script, when one is set, copied up and run once.
- * 3. The helper's `scrub`: it refuses a base with `auth.json` (`GOLDEN_HAS_CREDENTIAL`) or an OpenCode session
+ * 3. The helper's `scrub`: it refuses a base with work slots (`GOLDEN_HAS_SLOT`), `auth.json`
+ *    (`GOLDEN_HAS_CREDENTIAL`) or an OpenCode session
  *    (`GOLDEN_BUILD_FAILED`), then stops the server and removes the env file, the password, the exports and the work
  *    folders, keeping warm checkouts.
  * 4. `snapshots save` under the image's name, then the builder is removed (its timer removes it if the laptop goes).
@@ -143,7 +144,7 @@ export function createGolden(services: FleetServices, settings: { readonly bound
   /** A failure of one step, as the build's own refusal, unless it already says what to do. */
   function stepFailed(step: string, error: unknown): unknown {
     if (!(error instanceof BoxdError)) return error
-    if (["CANCELLED", "GOLDEN_HAS_CREDENTIAL", "GOLDEN_BUILD_FAILED", "GOLDEN_MISSING", "MACHINE_LIMIT", "SIZE_UNAVAILABLE", "BOXD_MISSING", "PATH_REFUSED", "NAME_INVALID"].includes(error.code)) return error
+    if (["CANCELLED", "GOLDEN_HAS_CREDENTIAL", "GOLDEN_HAS_SLOT", "GOLDEN_BUILD_FAILED", "GOLDEN_MISSING", "MACHINE_LIMIT", "SIZE_UNAVAILABLE", "BOXD_MISSING", "PATH_REFUSED", "NAME_INVALID"].includes(error.code)) return error
     return boxdError("GOLDEN_BUILD_FAILED", `The golden build failed at "${step}": ${error.what}`, { step })
   }
 
@@ -209,6 +210,7 @@ export function createGolden(services: FleetServices, settings: { readonly bound
           step = "scrub"
           const scrub = await guest.scrub(target, context)
           if (scrub.refused === "has-credential") throw boxdError("GOLDEN_HAS_CREDENTIAL", `The base "${base}" holds ~/.local/share/opencode/auth.json: model credentials are never baked into an image.`)
+          if (scrub.refused === "has-slot") throw boxdError("GOLDEN_HAS_SLOT", `The base "${base}" holds work slots under ~/.boxd-plugin/slots: a slot belongs to one work, so an image must not carry it.`)
           if (scrub.refused === "has-session") {
             throw boxdError("GOLDEN_BUILD_FAILED", `The base "${base}" has an OpenCode session in its database: it is a used machine, not an image. Build from "stock", or from a clean base.`, { step })
           }

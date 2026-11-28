@@ -743,6 +743,114 @@ describe("the work tree", () => {
   })
 })
 
+describe("slots", () => {
+  test("two works keep their own port, password, sessions, exports and folder; release touches only its own", async () => {
+    const one = startFakeGuest({ version: "2.4.1" })
+    const two = startFakeGuest({ version: "2.4.1" })
+    try {
+      fake.update((state) => {
+        state.guestPorts = { one: one.port, two: two.port }
+      })
+      const oneDirectory = "/home/boxd/work/one"
+      const twoDirectory = "/home/boxd/work/two"
+      const setupSlot = (slot: string, directory: string) =>
+        change((target) => runtime.guest.setup(target, { directory, slot, opencode: "2.4.1" }, context()))
+      expect(await setupSlot("one", oneDirectory)).toMatchObject({ server: "up", workspace: "ready" })
+      expect(await setupSlot("two", twoDirectory)).toMatchObject({ server: "up", workspace: "ready" })
+      expect(await runtime.guest.slots(await readTarget(), context())).toEqual([
+        { workId: "one", port: one.port, server: "up", busy: false },
+        { workId: "two", port: two.port, server: "up", busy: false },
+      ])
+      const firstPassword = readFileSync(onDisk("/home/boxd/.boxd-plugin/slots/one/password"), "utf8")
+      const secondPassword = readFileSync(onDisk("/home/boxd/.boxd-plugin/slots/two/password"), "utf8")
+      expect(firstPassword).not.toBe(secondPassword)
+
+      one.next("ses_one")
+      two.next("ses_two")
+      const prompt = (slot: string, directory: string) =>
+        change((target) => runtime.guest.prompt(target, { directory, slot, sessionId: null, title: slot, text: "go", delivery: "steer" }, context()))
+      await prompt("one", oneDirectory)
+      await prompt("two", twoDirectory)
+      expect([...one.sessions.keys()]).toEqual(["ses_one"])
+      expect([...two.sessions.keys()]).toEqual(["ses_two"])
+      expect(await runtime.guest.phase(await readTarget(), { sessionId: "ses_one", slot: "one" }, context())).toMatchObject({ phase: "busy" })
+      expect((await runtime.guest.slots(await readTarget(), context())).map((slot) => slot.busy)).toEqual([true, true])
+
+      one.complete("ses_one")
+      const exported = await change((target) => runtime.guest.export(target, { rootId: "ses_one", slot: "one" }, context()))
+      expect(exported).toMatchObject({ outcome: "exported", sessions: [{ id: "ses_one" }] })
+      expect(existsSync(onDisk("/home/boxd/.boxd-plugin/slots/one/exports/ses_one.json"))).toBe(true)
+      expect(existsSync(onDisk("/home/boxd/.boxd-plugin/slots/two/exports/ses_one.json"))).toBe(false)
+
+      for (const directory of [oneDirectory, twoDirectory]) Bun.spawnSync(["git", "init", "--quiet", onDisk(directory)])
+      writeFileSync(onDisk(`${oneDirectory}/one.txt`), "one")
+      writeFileSync(onDisk(`${twoDirectory}/two.txt`), "two")
+      const oneGit = await change((target) => runtime.guest.git(target, { directory: oneDirectory, slot: "one", rootId: "ses_one" }, context()))
+      const twoGit = await change((target) => runtime.guest.git(target, { directory: twoDirectory, slot: "two" }, context()))
+      expect(oneGit.untracked.map((item) => item.path)).toEqual(["one.txt"])
+      expect(oneGit.sessions?.map((session) => session.id)).toEqual(["ses_one"])
+      expect(twoGit.untracked.map((item) => item.path)).toEqual(["two.txt"])
+
+      expect(await change((target) => runtime.guest.release(target, { slot: "one" }, context()))).toEqual({
+        slot: "one",
+        removed: ["/home/boxd/.boxd-plugin/slots/one", "/home/boxd/work/one"],
+      })
+      expect(existsSync(onDisk("/home/boxd/.boxd-plugin/slots/one"))).toBe(false)
+      expect(existsSync(onDisk(oneDirectory))).toBe(false)
+      expect(existsSync(onDisk("/home/boxd/.boxd-plugin/slots/two"))).toBe(true)
+      expect(existsSync(onDisk(twoDirectory))).toBe(true)
+      expect(existsSync(onDisk(GUEST_HELPER_PATH))).toBe(true)
+      expect(await runtime.guest.slots(await readTarget(), context())).toEqual([{ workId: "two", port: two.port, server: "up", busy: true }])
+      expect(await runtime.guest.serve(await readTarget(), { slot: "two" }, context())).toMatchObject({ server: "up" })
+    } finally {
+      await one.close()
+      await two.close()
+    }
+  })
+
+  // The report is read through its own slot's Place: if phase's or export's done_report is given Place(None), the
+  // slot's server is not reached and this test fails at the done it expects for slot one.
+  test("a done report stays in its own slot: one slot declares done, the other answers none", async () => {
+    const one = startFakeGuest({ version: "2.4.1" })
+    const two = startFakeGuest({ version: "2.4.1" })
+    try {
+      fake.update((state) => {
+        state.guestPorts = { one: one.port, two: two.port }
+      })
+      const setupSlot = (slot: string) =>
+        change((target) => runtime.guest.setup(target, { directory: `/home/boxd/work/${slot}`, slot, opencode: "2.4.1" }, context()))
+      await setupSlot("one")
+      await setupSlot("two")
+      one.next("ses_one_done")
+      two.next("ses_two_idle")
+      const prompt = (slot: string) =>
+        change((target) => runtime.guest.prompt(target, { directory: `/home/boxd/work/${slot}`, slot, sessionId: null, title: slot, text: "go", delivery: "steer" }, context()))
+      await prompt("one")
+      await prompt("two")
+      const at = 1_763_200_000_000
+      one.tool("ses_one_done", "boxd_done", { summary: "Slot one is finished.", prs: ["o/r#7"] }, at)
+      one.complete("ses_one_done")
+      two.complete("ses_two_idle")
+      const report = { at: new Date(at).toISOString(), summary: "Slot one is finished.", prs: ["o/r#7"] }
+      const declared = await runtime.guest.phase(await readTarget(), { sessionId: "ses_one_done", slot: "one" }, context())
+      expect(declared).toMatchObject({ phase: "idle", outcome: "completed", done: report })
+      const exported = await change((target) => runtime.guest.export(target, { rootId: "ses_one_done", slot: "one" }, context()))
+      if (exported.outcome !== "exported") throw new Error(exported.reason)
+      expect(exported.run).toMatchObject({ outcome: "completed", done: report })
+      const other = await runtime.guest.phase(await readTarget(), { sessionId: "ses_two_idle", slot: "two" }, context())
+      expect(other).toMatchObject({ phase: "idle", outcome: "completed" })
+      expect(other.done).toBeUndefined()
+      const otherExport = await change((target) => runtime.guest.export(target, { rootId: "ses_two_idle", slot: "two" }, context()))
+      if (otherExport.outcome !== "exported") throw new Error(otherExport.reason)
+      expect(otherExport.run).toMatchObject({ outcome: "completed" })
+      expect(otherExport.run.done).toBeUndefined()
+    } finally {
+      await one.close()
+      await two.close()
+    }
+  })
+})
+
 describe("machine care", () => {
   // The guest is Linux: health reads /proc, which a macOS test machine does not have.
   test.skipIf(process.platform !== "linux")("health: memory, load and the heaviest processes by name", async () => {
