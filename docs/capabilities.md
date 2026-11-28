@@ -41,9 +41,9 @@ None.
 ## Notes
 
 - **Reads.** `status` answers the contract's plugin status (host range, no plugin-held accounts, agents missing the
-  access rules, one next step). `events_list` reads the local ledger's phase changes, oldest first, with a cursor bound
-  to the plugin, the source and the local identity; it makes no boxd call and never wakes a machine. `job` reads one
-  work or many live.
+  access rules, one next step). `events_list` reads the local ledger's changes, oldest first, including a wait for input
+  that starts or clears, with a cursor bound to the plugin, the source and the local identity; it makes no boxd call and
+  never wakes a machine. `job` reads one work or many live.
   `read` reads one file or the guest's server log without a harvest. `probe` says whose ledger this is.
 - **Work events.** Each event carries at most one `change:` label, so an automation keys on one word: `change:started`
   when a work goes `busy`, `change:waiting` when it waits on a person, `change:finished` when its run completes or the

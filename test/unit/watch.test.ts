@@ -1,8 +1,10 @@
-// The watcher and its notices (design §3.13): the sweep reads only busy, running guests and appends each phase change;
-// subscribers get every event in seq order, the change tools' events included; a notice goes only to the work's root
-// coordinator, at most once a minute, coalesced, with plugin words only; a gone, archived or re-parented target gets
-// none and is unsubscribed; a refused wake is retried once as queue; "off" posts nothing.
+// The watcher and its notices (design §3.13): the sweep reads only busy, running guests and appends each change, a wait
+// for input that starts or clears included; subscribers get every event in seq order, the change tools' events included;
+// a notice goes only to the work's root coordinator, at most once a minute, coalesced, with plugin words only; a gone,
+// archived or re-parented target gets none and is unsubscribed; a refused wake is retried once as queue; "off" posts
+// nothing.
 import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test"
+import { listWorks } from "../../src/handlers/events.js"
 import { NOTICE_MAX_WORKS, noticeItem, noticeText } from "../../src/notices.js"
 import type { ChangeTarget, MachineId, MachineName, WorkEvent } from "../../src/ports.js"
 import type { WorkRecord } from "../../src/ledger/types.js"
@@ -283,6 +285,89 @@ describe("the changed nudge", () => {
     const page = await w.ledger.eventsSince(0, w.context("read"))
     expect(page.events.map((event) => [event.workId, event.to])).toEqual([["done", "busy"]])
     expect(w.services.watch.snapshot().works.map((work) => [work.workId, work.phase])).toEqual([["done", "busy"]])
+  })
+})
+
+describe("the wait for input", () => {
+  const shifts = (events: readonly WorkEvent[]) => events.filter((item) => item.workId === "review-api").map((item) => [item.from, item.to, item.needsInput ?? null])
+
+  test("a busy work that gains a permission, keeps it, then loses it appends exactly the start and the clear", async () => {
+    world = await startWorld()
+    const w = world
+    w.sessions.add(COORDINATOR)
+    await w.work("review-api", { busy: true, notify: COORDINATOR })
+    const seen: WorkEvent[] = []
+    w.watcher.watch.subscribe((item) => seen.push(item))
+    await w.watcher.tick()
+    w.guest.pending.set("ses_review_api", "permission")
+    later(w, 61_000)
+    await w.watcher.tick()
+    // The wait's start reaches the coordinator as a phase change does.
+    await w.watcher.flushNotices()
+    expect(w.sessions.posted.some((post) => post.text.includes("review-api busy (waits on a permission)"))).toBe(true)
+    // The wait lasts two more sweeps: it appends once, not once a sweep.
+    later(w, 61_000)
+    await w.watcher.tick()
+    later(w, 61_000)
+    await w.watcher.tick()
+    w.guest.pending.delete("ses_review_api")
+    later(w, 61_000)
+    await w.watcher.tick()
+    const events = (await w.ledger.eventsSince(0, w.context("read", "boxd_events_list"))).events
+    expect(shifts(events)).toEqual([
+      [null, "busy", null],
+      ["busy", "busy", "permission"],
+      ["busy", "busy", null],
+    ])
+    expect(shifts(seen)).toEqual(shifts(events))
+    // Through events_list, the start carries the label the bridge wakes on; the clear carries none.
+    const page = await listWorks(
+      { ledger: w.ledger, identity: () => ({ id: "os-user:lane@studio", label: "lane on studio" }), now: () => w.clock.now },
+      { source: "works", since: "2026-11-16T00:00:00Z" },
+    )
+    expect(page.events.filter((item) => item.thread === "boxd-work:review-api").map((item) => item.labels)).toEqual([
+      ["change:started", "phase:busy"],
+      ["change:waiting", "phase:busy", "needs:permission"],
+      ["phase:busy"],
+    ])
+  })
+
+  test("a phase change that carries a wait appends one event, not two", async () => {
+    world = await startWorld()
+    const w = world
+    await w.work("review-api", { busy: true })
+    await w.watcher.tick()
+    w.guest.pending.set("ses_review_api", "permission")
+    w.guest.complete("ses_review_api")
+    later(w, 61_000)
+    await w.watcher.tick()
+    const events = (await w.ledger.eventsSince(0, w.context("read", "boxd_events_list"))).events
+    expect(shifts(events)).toEqual([
+      [null, "busy", null],
+      ["busy", "idle", "permission"],
+    ])
+    later(w, 61_000)
+    await w.watcher.tick()
+    expect(shifts((await w.ledger.eventsSince(0, w.context("read", "boxd_events_list"))).events)).toHaveLength(2)
+  })
+
+  test("a restart does not append a wait the log already holds", async () => {
+    world = await startWorld()
+    const w = world
+    await w.work("review-api", { busy: true })
+    await w.watcher.tick()
+    w.guest.pending.set("ses_review_api", "permission")
+    later(w, 61_000)
+    await w.watcher.tick()
+    const { createWatch } = await import("../../src/watch.js")
+    const again = createWatch({ ...w.services }, { autoStart: false })
+    later(w, 61_000)
+    await again.tick()
+    expect(shifts((await w.ledger.eventsSince(0, w.context("read", "boxd_events_list"))).events)).toEqual([
+      [null, "busy", null],
+      ["busy", "busy", "permission"],
+    ])
+    await again.dispose()
   })
 })
 
