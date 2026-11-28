@@ -42,6 +42,7 @@ import {
   readServe,
   readSetup,
   readUpgrade,
+  readWarm,
 } from "./answers.js"
 import { HELPER_UPLOAD_PATH, helperFile, packagedHelperPath } from "./helper.js"
 
@@ -146,6 +147,7 @@ export function createGuestPort(options: GuestPortOptions): GuestPort {
 
     setup: (target, input, context) =>
       change("setup", target, { directory: input.directory, ...(input.repo ? { repo: input.repo } : {}), ...(input.git ? { git: input.git } : {}), env: input.env ?? [], opencode: input.opencode }, context, TIMEOUTS.setup, readSetup),
+    warm: (target, input, context) => change("warm", target, { repo: input.repo }, context, TIMEOUTS.clone, readWarm),
     prompt: (target, input, context) =>
       change(
         "prompt",

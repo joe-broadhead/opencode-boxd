@@ -194,7 +194,7 @@ export const TIMEOUTS = {
   helperRead: 10_000,
   helperChange: 30_000,
   setup: 30_000,
-  /** `setup`'s clone runs detached on the guest with this bound of its own. */
+  /** A clone, or a warm checkout's fetch, runs on the guest with this bound of its own. */
   clone: 300_000,
   upgrade: 180_000,
   create: 60_000,
@@ -442,7 +442,7 @@ export interface SessionMarks {
 export interface ServeAnswer {
   readonly server: "up" | "starting" | "down"
   readonly opencode: string | null
-  /** The detached clone's progress, while one runs. */
+  /** The detached clone's or warm refresh's progress, while one runs. */
   readonly clone?: "running" | "done" | "failed"
 }
 
@@ -512,9 +512,17 @@ export interface SetupInput {
 export interface SetupAnswer {
   readonly server: "up" | "starting"
   readonly opencode: string
-  /** `cloning` when the clone was started detached; the wait polls `serve` for it. */
+  /**
+   * `cloning` while a clone, or a warm checkout's fetch and checkout, runs detached; the wait polls `serve` for it.
+   * `ready` once the work folder holds a checkout at the requested commit.
+   */
   readonly workspace: "ready" | "cloning"
   readonly helperUploaded: boolean
+}
+
+/** `warm`: a repository's checkout under `~/.boxd-plugin/warm`, for a golden image; `path` is that checkout. */
+export interface WarmAnswer {
+  readonly path: string
 }
 
 export interface PromptInput {
@@ -610,7 +618,7 @@ export interface DescribeAnswer {
 /** `scrub`: what the golden build removed, step by step (design §2.3). */
 export interface ScrubAnswer {
   readonly removed: readonly string[]
-  /** A refusal: the base's OpenCode database holds a session, or it has an `auth.json`. */
+  /** A refusal: the base's OpenCode database holds a session, or it holds model or git credentials. */
   readonly refused?: "has-session" | "has-credential"
 }
 
@@ -630,6 +638,8 @@ export interface GuestPort {
 
   // Changes: under the machine lock, after the by-id check. A change uploads the v1 helper when it is missing or older.
   setup(target: ChangeTarget, input: SetupInput, context: OpContext): Promise<SetupAnswer>
+  /** Keeps a repository's checkout under the helper's folder, for a golden image (#72). */
+  warm(target: ChangeTarget, input: { readonly repo: { readonly url: string; readonly ref?: string } }, context: OpContext): Promise<WarmAnswer>
   prompt(target: ChangeTarget, input: PromptInput, context: OpContext): Promise<PromptAnswer>
   interrupt(target: ChangeTarget, input: { readonly sessionId: string }, context: OpContext): Promise<void>
   upgrade(target: ChangeTarget, input: { readonly version: string }, context: OpContext): Promise<{ readonly opencode: string }>
