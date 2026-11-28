@@ -562,6 +562,36 @@ export interface GitAnswer {
   readonly sessions?: readonly SessionMarks[]
 }
 
+/** One work checkout on a machine with no record, as `describe` reads it before the machine is adopted. */
+export interface DescribeWork {
+  readonly directory: string
+  readonly remote: string | null
+  readonly branch: string | null
+  readonly head: string | null
+  readonly dirty: boolean
+  readonly untracked: number
+  /** Commits on a local branch, tag, stash or detached HEAD that no remote ref contains; -1 when unknown. */
+  readonly unpushed: number
+  /** False when the guest could not run the check: an adoption must keep the work rather than guess. */
+  readonly unpushedKnown: boolean
+}
+
+/** One root session on a machine with no record. */
+export interface DescribeSession {
+  readonly id: string
+  readonly directory: string
+  readonly busy: boolean
+  /** A pending permission or form ask: a person must answer it before the machine is touched. */
+  readonly needsInput: "form" | "permission" | null
+}
+
+/** `describe`: the works, root sessions and installed OpenCode of a machine with no record. */
+export interface DescribeAnswer {
+  readonly opencode: string | null
+  readonly works: readonly DescribeWork[]
+  readonly sessions: readonly DescribeSession[]
+}
+
 /** `scrub`: what the golden build removed, step by step (design §2.3). */
 export interface ScrubAnswer {
   readonly removed: readonly string[]
@@ -580,6 +610,8 @@ export interface GuestPort {
     context: OpContext,
   ): Promise<ReadAnswer>
   health(target: ReadTarget, context: OpContext): Promise<HealthAnswer>
+  /** A machine with no record: its work checkouts, root sessions and installed OpenCode, read without a setup. */
+  describe(target: ReadTarget, context: OpContext): Promise<DescribeAnswer>
 
   // Changes: under the machine lock, after the by-id check. A change uploads the v1 helper when it is missing or older.
   setup(target: ChangeTarget, input: SetupInput, context: OpContext): Promise<SetupAnswer>

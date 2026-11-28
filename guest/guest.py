@@ -6,7 +6,7 @@ One JSON object on stdin, one JSON line on stdout: {"ok": true, "protocol": 1, .
 ~/.boxd-plugin/guest.py, talks only to the guest's own OpenCode server on localhost, and uses the standard
 library only.
 
-Read actions (phase, read, health, serve) never start, write or upload anything. Change actions (setup, prompt,
+Read actions (serve, phase, read, health, describe) never start, write or upload anything. Change actions (setup, prompt,
 interrupt, upgrade, export, import, git, scrub) first check that this file is the copy the laptop expects (its
 sha256): an older copy answers HELPER_OUTDATED and does nothing, and the laptop uploads the new one. An upload runs
 once with --install, which moves it to the stable path before it acts.
@@ -50,6 +50,7 @@ def guest(path):
 
 HOME = "/home/boxd"
 WORK_ROOT = HOME + "/work"
+SESSION_DB = HOME + "/.local/share/opencode/opencode.db"
 HELPER_HOME = local(HOME + "/.boxd-plugin")
 HELPER_PATH = HELPER_HOME + "/guest.py"
 PASSWORD_PATH = HELPER_HOME + "/password"
@@ -710,6 +711,116 @@ def action_health(request):
     )
 
 
+def describe_work(directory):
+    """One work checkout: its git state and the commits no remote ref holds. It takes no optional lock, so it writes
+    nothing; a count it cannot read is unknown, never 0."""
+    def git(*args, text=True):
+        return pinned_git(directory, "--no-optional-locks", *args, text=text)
+
+    status = git("status", "--porcelain=v1", "-z", "--untracked-files=no")
+    listed = git("ls-files", "-z", "--others", "--exclude-standard")
+    if status.returncode != 0 or listed.returncode != 0:
+        fail("GUEST_FAILED", "git status failed: " + (status.stderr + listed.stderr).strip()[-200:])
+    head = git("rev-parse", "--verify", "--quiet", "HEAD")
+    remote = git("remote", "get-url", "origin")
+    branch = git("branch", "--show-current")
+    unpushed_count, _unpushed, unpushed_known = unpushed_commits(git)
+    head_sha = head.stdout.strip() if head.returncode == 0 else ""
+    remote_url = remote.stdout.strip() if remote.returncode == 0 else ""
+    branch_name = branch.stdout.strip() if branch.returncode == 0 else ""
+    return {
+        "directory": guest(directory),
+        "remote": strip_userinfo(remote_url) or None,
+        "branch": branch_name or None,
+        "head": head_sha or None,
+        "dirty": any(record for record in status.stdout.split("\x00") if record),
+        "untracked": sum(1 for name in listed.stdout.split("\x00") if name),
+        "unpushed": unpushed_count,
+        "unpushedKnown": unpushed_known,
+    }
+
+
+def describe_works():
+    """Every work folder that is its own git checkout. A folder without one is not a work; a checkout that does not
+    carry a work id, or whose checkout cannot be read, fails the read, so an adoption never guesses at a machine's
+    state."""
+    try:
+        names = sorted(os.listdir(local(WORK_ROOT)))
+    except OSError:
+        return []
+    works = []
+    for name in names:
+        directory = os.path.join(local(WORK_ROOT), name)
+        if os.path.islink(directory) or not os.path.isdir(directory):
+            continue
+        checkout = os.path.exists(os.path.join(directory, ".git"))
+        if not re.fullmatch(r"[a-z][a-z0-9-]{0,24}", name):
+            if checkout:
+                fail("GIT_UNKNOWN", f"{name} is a git checkout that is not a work folder")
+            continue
+        if not checkout:
+            continue
+        if not own_repository(directory):
+            fail("GIT_UNKNOWN", f"{name} is not a readable git checkout")
+        works.append(describe_work(directory))
+    return works
+
+
+def stored_sessions():
+    """The root sessions in the OpenCode store, busy from their own stamps when no server runs. A store that cannot be
+    read fails the read: an empty list would let an adoption or a removal act on sessions it never saw. The store is
+    opened read-only; SQLite may create a `-shm` sidecar for a WAL store, which changes no data."""
+    database = local(SESSION_DB)
+    if not os.path.exists(database):
+        return []
+    try:
+        connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
+        try:
+            rows = connection.execute(
+                "select id, directory, time_busy, time_idle from session_v2 where coalesce(parent_id, '') = '' order by id"
+            ).fetchall()
+        finally:
+            connection.close()
+    except sqlite3.Error as error:
+        fail("GUEST_FAILED", f"the session store could not be read: {error}")
+    sessions = []
+    for sid, directory, busy, idle in rows:
+        if not isinstance(sid, str) or not SESSION.fullmatch(sid) or not isinstance(directory, str) or not directory.startswith("/"):
+            fail("GUEST_FAILED", "the session store holds an unreadable root session")
+        sessions.append({"id": sid, "directory": directory, "busy": busy is not None and (idle is None or busy > idle), "needsInput": None})
+    return sessions
+
+
+def pending_input(request, sid):
+    """A pending permission or form ask: a person must answer it. A failed read fails describe, never reads as none."""
+    for kind in ("permission", "form"):
+        pending = http(request, "GET", f"/api/session/{sid}/{kind}")
+        if not isinstance(pending, list):
+            fail("GUEST_FAILED", f"the session {kind} listing did not answer a list")
+        if pending:
+            return kind
+    return None
+
+
+def describe_sessions(request):
+    """The root sessions, with the running server's answer for whether each runs or waits on a person. A server that is
+    down is left down: the store's busy stamps answer instead."""
+    sessions = stored_sessions()
+    if not sessions or not server_up(request):
+        return sessions
+    active = http(request, "GET", "/api/session/active") or {}
+    for session in sessions:
+        session["busy"] = session["id"] in active
+        session["needsInput"] = pending_input(request, session["id"])
+    return sessions
+
+
+def action_describe(request):
+    """A machine with no record: each work checkout, each root session and the installed OpenCode. It reads only; it
+    starts no server and changes nothing in the work, OpenCode or its sessions."""
+    emit({"opencode": opencode_version() or "", "works": describe_works(), "sessions": describe_sessions(request)})
+
+
 # ── Change actions ────────────────────────────────────────────────────────────────────────────────────────────────
 
 
@@ -1264,7 +1375,7 @@ def has_sessions(request):
     """Whether the base's OpenCode database holds any session: the server's list when it runs, else the database."""
     if server_up(request):
         return bool(all_sessions(request))
-    database = local(HOME + "/.local/share/opencode/opencode.db")
+    database = local(SESSION_DB)
     if not os.path.exists(database):
         return False
     try:
@@ -1304,7 +1415,7 @@ def action_scrub(request):
 
 # ── Dispatch ──────────────────────────────────────────────────────────────────────────────────────────────────────
 
-READS = {"serve": action_serve, "phase": action_phase, "read": action_read, "health": action_health}
+READS = {"serve": action_serve, "phase": action_phase, "read": action_read, "health": action_health, "describe": action_describe}
 CHANGES = {
     "setup": action_setup,
     "prompt": action_prompt,
