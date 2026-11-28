@@ -15,6 +15,7 @@ import {
   CALL_BOUND_MS,
   TIMEOUTS,
   LEDGER_LABEL,
+  REGISTRY_LABELS,
   SHARED_LABEL,
   WORK_LABELS,
   type BoxdPort,
@@ -36,9 +37,12 @@ import {
   type SpawnResult,
 } from "../../ports.js"
 import {
+  backupsArgs,
   copyFromArgs,
   copyToArgs,
+  copyTreeArgs,
   createBuilderArgs,
+  createRegistryArgs,
   createWorkArgs,
   envListArgs,
   execArgs,
@@ -266,7 +270,7 @@ export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
     async create(input, context): Promise<CreatedMachine> {
       const key: MachineLockKey = { create: { region: input.region, name: input.name as MachineName } }
       if (holds && !holds(key)) throw new Error(`A create of ${input.name} must run inside runner.withMachineLock({ create: { region, name } }).`)
-      const args = input.kind === "work" ? createWorkArgs(input) : createBuilderArgs(input)
+      const args = input.kind === "work" ? createWorkArgs(input) : input.kind === "builder" ? createBuilderArgs(input) : createRegistryArgs(input)
       let result: SpawnResult
       try {
         result = await cli(args, context, TIMEOUTS.create, { machine: input.name, region: input.region })
@@ -292,9 +296,11 @@ export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
         labels:
           input.kind === "builder"
             ? { ...BUILDER_LABELS }
-            : input.shared !== undefined
-              ? { ...WORK_LABELS, [SHARED_LABEL]: input.shared, [LEDGER_LABEL]: input.ledger }
-              : { ...WORK_LABELS, work: input.workId, [LEDGER_LABEL]: input.ledger, ...machineWorkLabels(input.labels) },
+            : input.kind === "registry"
+              ? { ...REGISTRY_LABELS, [LEDGER_LABEL]: input.ledger }
+              : input.shared !== undefined
+                ? { ...WORK_LABELS, [SHARED_LABEL]: input.shared, [LEDGER_LABEL]: input.ledger }
+                : { ...WORK_LABELS, work: input.workId, [LEDGER_LABEL]: input.ledger, ...machineWorkLabels(input.labels) },
         sharing: "private",
         isolated: false,
       }
@@ -352,12 +358,22 @@ export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
       await cli(leaseArgs(target, days), context, CHANGE_MS, { machine: target.machineId, region: target.region })
     },
 
+    async setBackups(target, period, context) {
+      change(target)
+      await cli(backupsArgs(target, period), context, CHANGE_MS, { machine: target.machineId, region: target.region })
+    },
+
     exec,
 
     async copyTo(target, localPath, guestPath, context) {
       // A read never uploads: only a target from checkOwned can be copied to.
       change(target)
       await cli(copyToArgs(target.region, target.name, localPath, guestPath), context, TIMEOUTS.cp, { machine: target.name, region: target.region })
+    },
+
+    async copyTree(target, localPath, guestPath, context) {
+      change(target)
+      await cli(copyTreeArgs(target.region, target.name, localPath, guestPath), context, TIMEOUTS.cp, { machine: target.name, region: target.region })
     },
 
     async copyFrom(target, guestPath, localPath, context) {

@@ -50,6 +50,14 @@ describe("argv", () => {
     )
   })
 
+  test("a registry: oc-reg-<ledger id>, its three labels, and boxd's own auto-hibernate default", () => {
+    expect(argv.createRegistryArgs({ kind: "registry", region: "fra", name: "oc-reg-0a1b2c3d4e", ledger: "0a1b2c3d4e" })).toEqual([
+      "machine", "new", "oc-reg-0a1b2c3d4e", "--region", "fra", "--label", "ledger=0a1b2c3d4e", "--label", "owner=boxd", "--label", "role=registry", "--json",
+    ])
+    expect(argv.createRegistryArgs({ kind: "registry", region: "fra", name: "oc-reg-0a1b2c3d4e", ledger: "0a1b2c3d4e" }).join(" ")).not.toMatch(/auto-hibernate|delete-after|--vcpu/)
+    expect(() => argv.createRegistryArgs({ kind: "registry", region: "fra", name: "oc-reg-short", ledger: "short" })).toThrow(/NAME_INVALID/)
+  })
+
   test("every change acts on the machine id, in its region", () => {
     expect(argv.wakeArgs(target)).toEqual(["machine", "wake", "vm_0042", "--region", "nyc", "--json"])
     expect(argv.hibernateArgs(target)).toEqual(["machine", "hibernate", "vm_0042", "--region", "nyc", "--json"])
@@ -59,6 +67,8 @@ describe("argv", () => {
     expect(argv.renameArgs(target, "oc-next")).toEqual(["machine", "rename", "vm_0042", "oc-next", "-y", "--region", "nyc", "--json"])
     expect(argv.labelSetArgs(target, "work", "next")).toEqual(["machine", "label", "set", "vm_0042", "work", "next", "--region", "nyc"])
     expect(argv.leaseArgs(target, 2)).toEqual(["machine", "config", "set", "vm_0042", "delete-after", "2d", "--region", "nyc"])
+    expect(argv.backupsArgs(target, "24h")).toEqual(["machine", "config", "set", "vm_0042", "backups.period", "24h", "--region", "nyc"])
+    expect(() => argv.backupsArgs(target, "often")).toThrow(/NAME_INVALID/)
     expect(argv.saveSnapshotArgs(target, "oc-golden-2.4.1-2x8")).toEqual(["snapshots", "save", "vm_0042", "oc-golden-2.4.1-2x8", "--region", "nyc", "--json"])
   })
 
@@ -80,6 +90,9 @@ describe("argv", () => {
     ])
     expect(argv.execArgs("fra", "oc-a", "free -m", 60, true)).toContain("--json")
     expect(argv.copyToArgs("fra", "oc-a", "/laptop/guest.py", "/home/boxd/.boxd-plugin-upload.py")).toEqual(["machine", "cp", "/laptop/guest.py", "oc-a:/home/boxd/.boxd-plugin-upload.py", "--region", "fra"])
+    expect(argv.copyTreeArgs("fra", "oc-a", "/laptop/untracked", "/home/boxd/.boxd-plugin/registry/untracked")).toEqual([
+      "machine", "cp", "-r", "/laptop/untracked", "oc-a:/home/boxd/.boxd-plugin/registry/untracked", "--region", "fra",
+    ])
     expect(argv.copyFromArgs("fra", "oc-a", "/home/boxd/.boxd-plugin/exports/ses_a.json", "/laptop/x.tmp")).toEqual(["machine", "cp", "oc-a:/home/boxd/.boxd-plugin/exports/ses_a.json", "/laptop/x.tmp", "--region", "fra"])
     expect(() => argv.copyFromArgs("fra", "oc-a", "/home/boxd/../etc/passwd", "/x")).toThrow(/NAME_INVALID/)
     expect(() => argv.execArgs("fra", "oc-a", "  ", 5, false)).toThrow(/NAME_INVALID/)

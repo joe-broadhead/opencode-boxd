@@ -7,7 +7,7 @@
  * the list and the call that acts on it.
  */
 import type { WorkRecord } from "../ledger/types.js"
-import { BUILDER_LABELS, LEDGER_LABEL, WORK_LABELS, type MachineRow, type Region } from "../ports.js"
+import { BUILDER_LABELS, LEDGER_LABEL, REGISTRY_LABELS, REGISTRY_PREFIX, WORK_LABELS, type MachineRow, type Region } from "../ports.js"
 import type { MachineClass, MachineSummary, OrphanMachine, OrphanReason } from "../results.js"
 
 /** A work id as a machine name carries it: `oc-<id>`. */
@@ -60,13 +60,15 @@ export function classifyMachines(machines: readonly MachineRow[], records: reado
       const recorded = byName.has(`${machine.region}/${machine.name}`) || (machine.id !== null && byId.has(machine.id))
       const machineClass: MachineClass = recorded
         ? "work"
-        : machine.name.startsWith("oc-gb-") || labels.role === BUILDER_LABELS.role
-          ? "golden"
-          : labels[LEDGER_LABEL] !== undefined && labels[LEDGER_LABEL] !== ledgerId
-            ? "other-ledger"
-            : kept(labels, keep)
-              ? "kept"
-              : "orphan"
+        : labels.role === REGISTRY_LABELS.role || machine.name.startsWith(REGISTRY_PREFIX)
+          ? "registry"
+          : machine.name.startsWith("oc-gb-") || labels.role === BUILDER_LABELS.role
+            ? "golden"
+            : labels[LEDGER_LABEL] !== undefined && labels[LEDGER_LABEL] !== ledgerId
+              ? "other-ledger"
+              : kept(labels, keep)
+                ? "kept"
+                : "orphan"
       if (machineClass !== "orphan") return { row: machine, machineClass, actionable: false }
       const why: OrphanReason = labels[LEDGER_LABEL] === undefined ? (legacy ? "legacy-labels" : "no-ledger") : "no-record"
       // A session machine is the plugin's to act on; any other orphan is someone else's, whatever its name.
@@ -78,7 +80,7 @@ export function classifyMachines(machines: readonly MachineRow[], records: reado
 
 /** Every machine's class counted, with the orphans listed and capped, actionable first; the limit figures are the caller's. */
 export function machineSummary(classified: readonly Classified[], limit: number): Pick<MachineSummary, "counts" | "orphans" | "more"> {
-  const counts: Record<MachineClass, number> = { work: 0, "other-ledger": 0, kept: 0, golden: 0, orphan: 0 }
+  const counts: Record<MachineClass, number> = { work: 0, registry: 0, "other-ledger": 0, kept: 0, golden: 0, orphan: 0 }
   const found: OrphanMachine[] = []
   for (const item of classified) {
     counts[item.machineClass] += 1
@@ -95,6 +97,8 @@ export function classReason(item: Classified): string {
   switch (item.machineClass) {
     case "work":
       return "a work in this ledger already records it"
+    case "registry":
+      return "it is a ledger's registry machine"
     case "other-ledger":
       return "another ledger's label names it"
     case "kept":

@@ -128,6 +128,7 @@ function machineClassesText(counts: StatusResult["machines"]["counts"]): string 
   const count = (value: number, one: string, many: string) => `${value} ${value === 1 ? one : many}`
   return [
     count(counts.work, "work", "works"),
+    count(counts.registry, "registry", "registries"),
     count(counts["other-ledger"], "work in another ledger", "works in another ledger"),
     count(counts.kept, "kept machine", "kept machines"),
     count(counts.golden, "golden builder", "golden builders"),
@@ -162,6 +163,14 @@ function budgetText(budget: StatusResult["budget"], currency: string): string | 
     parts.push(`${label.match}: ${uses.join(", ")}`)
   }
   return `${parts.join("; ")}${budget.state === "reached" ? " (reached)" : budget.state === "unknown" ? " (partly unknown)" : ""}`
+}
+
+/** The durable copy: its machine, when it was last complete, the works it holds, and any warning. */
+function registryText(registry: StatusResult["registry"]): string {
+  if (!registry) return "none yet; it appears after the first work"
+  const works = registry.works.length === 1 ? "1 work" : `${registry.works.length} works`
+  const copied = registry.lastCopyAt ? `last complete copy ${registry.lastCopyAt}` : "no complete copy yet"
+  return `${registry.machine} (${registry.region}), ${copied}; holds ${works}${registry.warning ? `; ${registry.warning}` : ""}`
 }
 
 function automationText(automation: AutomationState | undefined, notices: Options["notices"]): string {
@@ -214,6 +223,7 @@ function reportText(input: ReportInput): string {
     `- Machines: ${machines}`,
     `- Machine classes: ${value ? (value.cli.signedIn ? machineClassesText(value.machines.counts) : "not read: the machine listing failed") : "not read"}`,
     `- Orphans: ${value ? (value.cli.signedIn ? orphansText(value.machines) : "not read: the machine listing failed") : "not read"}`,
+    `- Registry: ${value ? registryText(value.registry) : "not read"}`,
     `- Cost: ${costText(value?.cost)}`,
     ...(value?.budget ? [`- Budget: ${budgetText(value.budget, value.cost.currency) ?? "not read"}`] : []),
     `- Automation: ${automationText(value?.automation, sources.options.notices)}`,

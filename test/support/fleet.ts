@@ -18,7 +18,7 @@ export function fleet(overrides: Partial<StatusResult> = {}): StatusResult {
     more: 0,
     cursorExpired: false,
     machines: {
-      counts: { work: 0, "other-ledger": 0, kept: 0, golden: 0, orphan: 0 },
+      counts: { work: 0, registry: 0, "other-ledger": 0, kept: 0, golden: 0, orphan: 0 },
       orphans: [],
       more: 0,
       limit: 600,

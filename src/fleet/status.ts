@@ -584,6 +584,7 @@ export async function fleetStatus(services: FleetServices, input: StatusInput, c
   const health = services.runner.health()
   const watchHealth = handle?.health()
 
+  const registry = handle?.registry()
   return {
     state: "ok",
     cursor,
@@ -600,6 +601,7 @@ export async function fleetStatus(services: FleetServices, input: StatusInput, c
     more,
     cursorExpired,
     machines,
+    ...(registry ? { registry } : {}),
     fleet,
     ...(secrets
       ? {

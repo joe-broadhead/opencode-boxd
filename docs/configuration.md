@@ -35,6 +35,8 @@ The status read classifies every machine in the organisation, not only the machi
 of:
 
 - a work in this ledger;
+- this ledger's registry machine (`role=registry`), which is never an orphan and is not counted against
+  `budget.machines`;
 - a work in another ledger, when its `ledger=` label names another ledger;
 - kept, when it matches a selector in `keep`;
 - a golden builder;

@@ -265,7 +265,7 @@ export interface BudgetState {
 }
 
 /** How status accounts for one machine in the organisation. */
-export type MachineClass = "work" | "other-ledger" | "kept" | "golden" | "orphan"
+export type MachineClass = "work" | "registry" | "other-ledger" | "kept" | "golden" | "orphan"
 
 /** Why a machine is an orphan: no `ledger` label, this ledger's label with no record, or the plugin's legacy labels only. */
 export type OrphanReason = "no-ledger" | "no-record" | "legacy-labels"
@@ -325,6 +325,18 @@ export interface MachineSummary {
   readonly perRegion: readonly RegionMachines[]
 }
 
+/** The durable copy on its registry machine: where it is, when it was last complete, and what it holds. */
+export interface RegistryStatus {
+  readonly machine: MachineName
+  readonly region: Region
+  /** The last complete copy, or absent before the first one finishes. */
+  readonly lastCopyAt?: string
+  /** The works whose records the copy holds. */
+  readonly works: readonly string[]
+  /** Why the copy is more than one sweep behind, or failed. */
+  readonly warning?: string
+}
+
 export interface StatusResult {
   readonly state: "ok"
   readonly cursor: number
@@ -343,6 +355,8 @@ export interface StatusResult {
   readonly cursorExpired: boolean
   /** Every machine in the organisation: classified, with the orphans listed and capped, and against boxd's limit. */
   readonly machines: MachineSummary
+  /** This ledger's durable copy, once a registry machine is needed. */
+  readonly registry?: RegistryStatus
   readonly fleet: { readonly authFailures?: { readonly count: number; readonly since: string; readonly note: string } }
   readonly credentials?: { readonly secrets: readonly SecretInfo[]; readonly setAt: null; readonly missing: string }
   /** Always: the estimate per hour and today; per work with `include: ["cost"]`. */

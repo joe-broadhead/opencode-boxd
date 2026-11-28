@@ -104,7 +104,7 @@ describe("boxd_status", () => {
     world.counter.fake.machine({ name: "oc-legacy", region: "fra", labels: { owner: "boxd", role: "session", work: "legacy" } })
     world.counter.fake.machine({ name: "oc-leftover", region: "fra", labels: { ledger: ledgerId, owner: "boxd", role: "session", work: "leftover" } })
     const answer = await status()
-    expect(answer.machines.counts).toEqual({ work: 1, "other-ledger": 1, kept: 2, golden: 1, orphan: 3 })
+    expect(answer.machines.counts).toEqual({ work: 1, registry: 0, "other-ledger": 1, kept: 2, golden: 1, orphan: 3 })
     expect(answer.machines.orphans).toEqual([
       { machine: "oc-leftover", region: "fra", status: "running", why: "no-record", actionable: true, next: 'boxd_ensure({ workId: "leftover" }) adopts it' },
       { machine: "oc-legacy", region: "fra", status: "running", why: "legacy-labels", actionable: true, next: 'boxd_ensure({ workId: "legacy" }) adopts it' },

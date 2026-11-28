@@ -3,7 +3,7 @@
 // level, a change asks at ask-changes and is denied at read-only, and the one RPC id carries every method.
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { createHash } from "node:crypto"
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { warmImageName } from "../../src/fleet/warm.js"
@@ -302,7 +302,8 @@ describe("the plugin on OpenCode 2.4.1", () => {
       expect(labels.get("oc-theirs")).toEqual({ owner: "boxd", role: "session", work: "theirs", ledger: "ffffffffff" })
       expect(labels.get("lead-boxd")).toEqual({ team: "lead" })
       expect(labels.get("oc-operator")).toEqual({})
-      expect(host.boxd.calls().some((call) => /^machine (new|cp|resize|reboot|wake|hibernate)/.test(call))).toBe(false)
+      // Adoption changes no work machine. The watcher's registry copy may touch its own machine in the background.
+      expect(host.boxd.calls().some((call) => /^machine (new|cp|resize|reboot|wake|hibernate)/.test(call) && !call.includes("oc-reg-"))).toBe(false)
       expect(host.boxd.fake.spawns().filter((spawn) => spawn.startedAt >= started && spawn.action).map((spawn) => spawn.action)).toEqual(["describe", "describe"])
       // A second call adopts nothing, and touches no machine.
       host.boxd.fake.update((state) => { state.log = [] })
@@ -398,6 +399,48 @@ describe("the plugin on OpenCode 2.4.1", () => {
       expect(shared).toHaveLength(1)
       expect(shared[0]?.labels).toMatchObject({ owner: "boxd", shared: "common" })
       expect(host.boxd.machines().filter((machine) => machine.name === "oc-docs" || machine.name === "oc-review")).toHaveLength(0)
+    } finally {
+      await host.close()
+    }
+  })
+
+  test("the registry machine holds every record and export byte for byte, and status names the copy", async () => {
+    const host = await startHost()
+    try {
+      const workId = "durable"
+      const sessionID = await session(host, "build")
+      expect((await attempt(host, sessionID, "build", "boxd_ensure", "reject", { workId })).ok).toBe(true)
+      const sent = await attempt(host, sessionID, "build", "boxd_submit", "reject", { workId, text: "Finish the task." })
+      expect(sent.ok).toBe(true)
+      host.guest.complete((sent.output as { sessionId: string }).sessionId)
+      expect((await attempt(host, sessionID, "build", "boxd_harvest", "reject", { workId })).ok).toBe(true)
+
+      const ledgerRoot = host.ledger
+      const ledgerId = readFileSync(join(ledgerRoot, "ledger-id"), "utf8").trim()
+      const registry = await until("the registry machine is made", async () => host.boxd.machines().find((machine) => machine.labels.role === "registry" && machine.labels.ledger === ledgerId))
+      const remoteLedger = join(host.boxd.fake.disk(registry), "home/boxd/.boxd-plugin/registry", ledgerId)
+      const localWork = join(ledgerRoot, "v1", "works", workId)
+      const remoteWork = join(remoteLedger, "v1", "works", workId)
+      await until("the registry copy catches up", async () => {
+        try {
+          if (readFileSync(join(remoteLedger, "ledger-id"), "utf8") !== readFileSync(join(ledgerRoot, "ledger-id"), "utf8")) return false
+          if (!readFileSync(join(localWork, "work.json")).equals(readFileSync(join(remoteWork, "work.json")))) return false
+          const localExports = readdirSync(join(localWork, "exports")).filter((name) => name.endsWith(".json"))
+          return localExports.length > 0 && localExports.every((name) => readFileSync(join(localWork, "exports", name)).equals(readFileSync(join(remoteWork, "exports", name))))
+        } catch {
+          return false
+        }
+      })
+
+      const posted = await until("/boxd names the registry and its last copy", async () => {
+        await host.client.sessions.command({ sessionID, name: "boxd", text: "" })
+        const inbox = await host.client.session.inbox.list({ sessionID })
+        const synthetic = inbox.findLast((item) => item.type === "synthetic")
+        const text = synthetic?.type === "synthetic" ? synthetic.payload.text : ""
+        return text.includes(`- Registry: oc-reg-${ledgerId} (fra), last complete copy `) ? text : undefined
+      })
+      expect(posted).toMatch(new RegExp(`- Registry: oc-reg-${ledgerId} \\(fra\\), last complete copy \\d{4}-\\d{2}-\\d{2}T`))
+      expect(posted).toContain("holds 1 work")
     } finally {
       await host.close()
     }

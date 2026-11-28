@@ -7,7 +7,7 @@
  */
 import type { WorkRecord } from "../ledger/types.js"
 import type { BudgetLabelMatch } from "../options.js"
-import { LEDGER_LABEL, type Listing, type WorkLabels } from "../ports.js"
+import { LEDGER_LABEL, REGISTRY_LABELS, type Listing, type WorkLabels } from "../ports.js"
 
 export interface MachineCounts {
   /** The machines this ledger holds: its labelled machines and its creates not in the listing yet. */
@@ -33,7 +33,8 @@ export function machineCounts(listing: Listing, ledgerId: string, pending: reado
   }
   const ledgerNames = new Set(
     listed
-      .filter((machine) => machine.labels["ledger"] === ledgerId || (machine.id !== null && recordIds.has(machine.id)) || recorded.has(`${machine.region}/${machine.name}`))
+      .filter((machine) => machine.labels.role !== REGISTRY_LABELS.role)
+      .filter((machine) => machine.labels.ledger === ledgerId || (machine.id !== null && recordIds.has(machine.id)) || recorded.has(`${machine.region}/${machine.name}`))
       .map((machine) => `${machine.region}/${machine.name}`),
   )
   let pendingCreates = 0

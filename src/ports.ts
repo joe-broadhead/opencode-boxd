@@ -51,6 +51,10 @@ export const LEDGER_LABEL = "ledger"
 export const SHARED_LABEL = "shared"
 /** The label a golden builder carries; restores inherit it under the work's own `role=session`. */
 export const BUILDER_LABELS = { role: "golden-builder" } as const
+/** The registry machine's own role; it carries `ledger=<id>` too, and is never a work or an orphan. */
+export const REGISTRY_LABELS = { role: "registry", owner: "boxd" } as const
+/** The registry machine's name: `oc-reg-<ledgerId>`. */
+export const REGISTRY_PREFIX = "oc-reg-"
 
 /**
  * boxd's label value grammar: up to 63 letters, digits or `.` `_` `/` `@` `:` `-`; empty is allowed. The plugin refuses
@@ -398,6 +402,18 @@ export interface CreateBuilder {
   readonly deleteAfter: string
 }
 
+/**
+ * The ledger's registry machine: `oc-reg-<ledgerId>`, labelled `owner=boxd`, `role=registry` and `ledger=<id>`. It takes
+ * boxd's own auto-hibernate default, so the copy is durable without a delete timer.
+ */
+export interface CreateRegistry {
+  readonly kind: "registry"
+  readonly region: Region
+  readonly name: MachineName
+  /** The id of the ledger whose copy it holds, set as the `ledger` label. */
+  readonly ledger: string
+}
+
 export interface BoxdPort {
   /** Refuses the in-VM CLI with `BOXD_MISSING`; one flight per binary (F9). */
   assertLaptopCli(context: OpContext): Promise<void>
@@ -414,7 +430,7 @@ export interface BoxdPort {
    */
   checkOwned(region: Region, name: MachineName, machineId: MachineId, context: OpContext): Promise<Owned>
   /** Creates the machine and records nothing; `owned` targets the id `machine new --json` answered. */
-  create(input: CreateWork | CreateBuilder, context: OpContext): Promise<CreatedMachine>
+  create(input: CreateWork | CreateBuilder | CreateRegistry, context: OpContext): Promise<CreatedMachine>
   wake(target: ChangeTarget, context: OpContext): Promise<void>
   hibernate(target: ChangeTarget, context: OpContext): Promise<void>
   remove(target: ChangeTarget, context: OpContext): Promise<void>
@@ -424,6 +440,8 @@ export interface BoxdPort {
   setLabels(target: ChangeTarget, labels: Readonly<Record<string, string>>, context: OpContext): Promise<void>
   /** `machine config set <id> delete-after <N>d`: a `leaseDays` renewal, at most once per 6 hours per work (§C.2). */
   renewLease(target: ChangeTarget, days: number, context: OpContext): Promise<void>
+  /** `machine config set <id> backups.period <period>`: the registry's scheduled disk backups. */
+  setBackups(target: ChangeTarget, period: string, context: OpContext): Promise<void>
   /**
    * `machine exec` with `--timeout`, so boxd kills the remote side too. `json: false` keeps stdout and stderr apart
    * (`boxd_exec`). For a read, the target is a `ReadTarget` and the runner applies the read rule first.
@@ -436,6 +454,8 @@ export interface BoxdPort {
   ): Promise<SpawnResult>
   /** `machine cp` to the guest: changes only (a read never uploads). */
   copyTo(target: ChangeTarget, localPath: string, guestPath: string, context: OpContext): Promise<void>
+  /** `machine cp -r` to the guest: one folder, for the registry's `untracked/` sets. */
+  copyTree(target: ChangeTarget, localPath: string, guestPath: string, context: OpContext): Promise<void>
   /** `machine cp` from the guest straight to a laptop file, so the bytes never pass through the server. */
   copyFrom(target: ReadTarget | ChangeTarget, guestPath: string, localPath: string, context: OpContext): Promise<void>
   machineLimit(context: OpContext): Promise<MachineLimit>

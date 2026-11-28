@@ -40,11 +40,24 @@ label. A shared machine carries `shared=<name>` instead of `work=<id>`, and ever
 id; the ledger label is still its operator's. The label lets one operator tell another operator's live work from a
 machine that no work owns, because a ledger lives on its operator's machine.
 
+## The registry copy
+
+The ledger keeps a durable copy of itself on a registry machine, `oc-reg-<ledgerId>`, labelled `owner=boxd`,
+`role=registry` and `ledger=<id>`. The watcher's sweep makes it on first need in the region of the ledger's first work,
+sets `backups.period` to `24h`, and leaves boxd's own auto-hibernate on. It copies the `ledger-id` file, every work
+record, every stored export, every patch and each `untracked/` set whose digest changed, and never a lock, a temp file,
+`index.json` or `events.jsonl`. A file arrives at a staged path and is renamed over its old copy, and an `untracked/`
+set moves only after every file in it arrived, so a failed copy leaves the last good copy whole. No tool call waits for
+the copy. The registry class is never an orphan, is never adoptable and is not counted against `budget.machines`. The
+copy is append-only: a work whose files leave the local ledger stays on the registry, while status's `works` names the
+records the latest sync found in the local ledger.
+
 ## Machine classes and orphans
 
-The fleet status classifies every machine in the organisation: a work in this ledger, a work in another ledger (its
-`ledger=` label is not this ledger's id), a kept machine (it matches a selector in the `keep` option), a golden builder,
-or an orphan. An orphan also says why it has no owner: no ledger label, this ledger's label without a record, or only the
+The fleet status classifies every machine in the organisation: a work in this ledger, its registry machine, a work in
+another ledger (its `ledger=` label is not this ledger's id), a kept machine (it matches a selector in the `keep`
+option), a golden builder, or an orphan. An orphan also says why it has no owner: no ledger label, this ledger's label
+without a record, or only the
 plugin's legacy labels. Only a session machine is actionable: `role=session`, or an `oc-<id>` name with the legacy
 labels. Any other orphan is listed with the next step "label it, or add a selector to keep", and no rule ever acts on it.
 

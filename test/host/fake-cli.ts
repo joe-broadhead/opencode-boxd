@@ -23,6 +23,8 @@ export interface FakeMachine {
   autoHibernate: number
   ignoreOutbound: string
   deleteAfter?: string
+  backupsPeriod?: string
+  backupsRetention?: string
   /** boxd's VM agent does not answer: every exec fails with "cannot connect to VM agent" until a reboot. */
   agentSilent?: boolean
   /** A woken machine's OpenCode server is not listening yet: this many guest actions still see it down. */

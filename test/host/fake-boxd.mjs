@@ -339,10 +339,12 @@ switch (verb) {
   case "machine config": {
     const [action, nameOrId, key, value] = positionals
     if (action !== "set") fail(`error: unsupported config command ${action}`)
-    if (!["delete-after", "auto-hibernate.timeout", "auto-suspend.timeout", "idle.ignore-outbound"].includes(key)) fail(`error: unknown setting ${key}`)
+    if (!["delete-after", "auto-hibernate.timeout", "auto-suspend.timeout", "idle.ignore-outbound", "backups.period", "backups.retention"].includes(key)) fail(`error: unknown setting ${key}`)
     update((state) => {
       const machine = must(state, region, nameOrId)
       if (key === "delete-after") machine.deleteAfter = value
+      if (key === "backups.period") machine.backupsPeriod = value
+      if (key === "backups.retention") machine.backupsRetention = value
     })
     process.stdout.write(`${key} for ${nameOrId}: ${value}\n`)
     break
@@ -498,7 +500,8 @@ function copy() {
     const path = toLocal(state, machine, up.path)
     if (!existsSync(source)) fail(`error: ${source}: no such file`)
     mkdirSync(dirname(path), { recursive: true })
-    copyFileSync(source, path)
+    if (flags["-r"]) cpSync(source, path, { recursive: true })
+    else copyFileSync(source, path)
     process.stdout.write(`copied ${source} → ${target} (${statSync(path).size} bytes)\n`)
     return
   }
