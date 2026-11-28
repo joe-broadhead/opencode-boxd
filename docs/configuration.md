@@ -15,6 +15,7 @@ Every option is optional. Set them under the plugin entry in `opencode.json`.
 | `size` | `1x4` \| `2x8` \| `4x16` \| `8x32` | `"2x8"` | A new work's machine size, vCPU x GiB. |
 | `slotsPerMachine` | integer | `4` | The most open works one shared machine may hold. |
 | `git` | object | — | The guest's git identity for every new work. Never a token. |
+| `workSecrets` | array | `[]` | Secrets each new work mints here and gives its OpenCode, each { name, mint, revoke? }: name is a variable name, and mint and revoke are argv run here with the work id appended. A mint's standard output is copied to the work's machine without passing through the ledger, an event, a log line, a tool's output or any argv; revoke runs at drop. |
 | `goldenPrefix` | string | `"oc-golden"` | Golden image names are <goldenPrefix>-<opencode version>-<size>. |
 | `goldenBase` | string | `"stock"` | What a golden build starts from: stock, or a snapshot name in the region it lives in. |
 | `goldenSetup` | string | — | An absolute path here to a script the golden builder runs before the scrub. |
@@ -28,6 +29,28 @@ Every option is optional. Set them under the plugin entry in `opencode.json`.
 | `leaseDays` | integer | `0` | A delete-after lease renewed on activity, in days; 0 is off. |
 | `budget` | object | — | Machine cost per day, machine-hours and machine caps, warned about or refused at: daily in the organisation's billing currency, machine-hours this ledger's works may run per local day, machines this ledger may hold, the organisation's machine count, and caps by work label. |
 <!-- /generated:configuration -->
+
+## Work secrets
+
+`workSecrets` gives each new work its own secret, such as a capped model key. Each entry is `{ name, mint, revoke? }`:
+`name` is the variable name the work's OpenCode receives, and `mint` is an argv run here with the work id appended. Its
+standard output, without a trailing line break, is copied straight to the work's machine with `machine cp` from
+standard input, mode 600, under the helper's folder. The value never reaches the ledger, an event, a log line, a tool's
+output or any argv; only the name is recorded. A mint that fails refuses the work before any session starts. At drop,
+each `revoke` runs with the work id, after the guard passes and before the machine is removed; a failed revoke keeps the
+work open. A rebuilt machine revokes the old values and mints new ones.
+
+```json
+{
+  "workSecrets": [
+    {
+      "name": "MODELS_API_KEY",
+      "mint": ["bun", "scripts/lane-key.ts", "mint"],
+      "revoke": ["bun", "scripts/lane-key.ts", "revoke"]
+    }
+  ]
+}
+```
 
 ## Machine classes
 

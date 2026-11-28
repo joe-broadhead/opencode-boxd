@@ -106,6 +106,20 @@ describe("a work's OpenCode environment", () => {
     expect(seen.PATH).toContain(bin)
   })
 
+  test("a work's own secret file reaches the server environment, and a missing one starts nothing", async () => {
+    const secrets = join(home, ".boxd-plugin/secrets")
+    mkdirSync(secrets, { recursive: true, mode: 0o700 })
+    writeFileSync(join(secrets, "MODELS_API_KEY"), "minted-value")
+    chmodSync(join(secrets, "MODELS_API_KEY"), 0o600)
+    expect(await setup({ secrets: ["MODELS_API_KEY"] }, false)).toMatchObject({ ok: true, server: "starting" })
+    const seen = startedWith()
+    expect(seen.MODELS_API_KEY).toBe("minted-value")
+    expect(seen.OPERATOR_FIRST).toBeUndefined()
+    rmSync(serverEnv, { force: true })
+    expect(await setup({ secrets: ["MISSING_KEY"] }, false)).toMatchObject({ ok: false, error: "SECRET_FAILED" })
+    expect(existsSync(serverEnv)).toBe(false)
+  })
+
   test("a declared variable comes from boxd's variables file when the process does not hold it", async () => {
     mkdirSync(join(root, "etc/profile.d"), { recursive: true })
     writeFileSync(join(root, "etc/profile.d/boxd-env.sh"), "# Generated\nexport FILE_DECLARED='from file'\nexport FILE_OTHER=hidden\n")
@@ -140,9 +154,15 @@ describe("a work's OpenCode environment", () => {
     expect(existsSync(serverEnv)).toBe(false)
   })
 
-  test("two slots keep their own port, password and declared variables; a scrub refuses while they exist", async () => {
-    const alpha = await run({ action: "setup", directory: "/home/boxd/work/alpha", slot: "alpha", env: ["DECLARED_KEY"], opencode: "2.4.1" })
-    const beta = await run({ action: "setup", directory: "/home/boxd/work/beta", slot: "beta", env: ["OPERATOR_FIRST"], opencode: "2.4.1" })
+  test("two slots keep their own port, password, declared variables and secrets; a scrub refuses while they exist", async () => {
+    for (const [slot, name, value] of [["alpha", "ALPHA_KEY", "alpha-value"], ["beta", "BETA_KEY", "beta-value"]] as const) {
+      const secrets = join(home, `.boxd-plugin/slots/${slot}/secrets`)
+      mkdirSync(secrets, { recursive: true, mode: 0o700 })
+      writeFileSync(join(secrets, name), value)
+      chmodSync(join(secrets, name), 0o600)
+    }
+    const alpha = await run({ action: "setup", directory: "/home/boxd/work/alpha", slot: "alpha", env: ["DECLARED_KEY"], secrets: ["ALPHA_KEY"], opencode: "2.4.1" })
+    const beta = await run({ action: "setup", directory: "/home/boxd/work/beta", slot: "beta", env: ["OPERATOR_FIRST"], secrets: ["BETA_KEY"], opencode: "2.4.1" })
     expect(alpha).toMatchObject({ ok: true, server: "starting" })
     expect(beta).toMatchObject({ ok: true, server: "starting" })
     const alphaPort = Number(readFileSync(join(home, ".boxd-plugin/slots/alpha/port"), "utf8"))
@@ -152,10 +172,12 @@ describe("a work's OpenCode environment", () => {
       expect(port).toBeGreaterThanOrEqual(4100)
       expect(port).toBeLessThan(4200)
     }
-    expect(startedWith(alphaPort)).toMatchObject({ DECLARED_KEY: "declared-value", OPENCODE_PASSWORD: expect.any(String) })
+    expect(startedWith(alphaPort)).toMatchObject({ DECLARED_KEY: "declared-value", ALPHA_KEY: "alpha-value", OPENCODE_PASSWORD: expect.any(String) })
     expect(startedWith(alphaPort).OPERATOR_FIRST).toBeUndefined()
-    expect(startedWith(betaPort)).toMatchObject({ OPERATOR_FIRST: "operator-gh", OPENCODE_PASSWORD: expect.any(String) })
+    expect(startedWith(alphaPort).BETA_KEY).toBeUndefined()
+    expect(startedWith(betaPort)).toMatchObject({ OPERATOR_FIRST: "operator-gh", BETA_KEY: "beta-value", OPENCODE_PASSWORD: expect.any(String) })
     expect(startedWith(betaPort).DECLARED_KEY).toBeUndefined()
+    expect(startedWith(betaPort).ALPHA_KEY).toBeUndefined()
     expect(readFileSync(join(home, ".boxd-plugin/slots/alpha/password"), "utf8")).not.toBe(readFileSync(join(home, ".boxd-plugin/slots/beta/password"), "utf8"))
 
     expect(await run({ action: "scrub" })).toMatchObject({ ok: true, removed: [], refused: "has-slot" })

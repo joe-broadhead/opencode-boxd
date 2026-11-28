@@ -23,6 +23,10 @@ reads a guest.
   user has passwordless sudo. Until a work's session runs as a user without these, treat every variable the machine
   holds as readable by the session. The ledger records the names, never the values. `ensure` restarts a server that
   runs with other variables once its session is idle, and answers `SESSION_BUSY` while it runs.
+- A `workSecrets` value is minted by the command you name and copied straight to the helper's folder on the work's
+  machine, then added to the server's environment under its name. This laptop keeps only the name: the value is not in
+  the ledger, an event, a log line, a tool's output or any argv. It is a real value on the guest, so `exec` can print
+  it, and at drop the configured `revoke` command runs with the work id.
 - A secret that is not host-bound is a real value on the guest, and `exec` can print it.
 - Model credentials are never baked into a golden image; a base that holds `auth.json` is refused.
 - A work acts only with the identity it was given, never its operator's. `ensure` and `submit` refuse a work with

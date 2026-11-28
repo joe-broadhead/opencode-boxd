@@ -158,6 +158,11 @@ export const CODES = {
     message: "The guest folder could not be made or cloned.",
     next: "Read the message (clone auth, disk), fix it, then boxd_ensure({ workId }).",
   },
+  SECRET_FAILED: {
+    state: "failed",
+    message: "A work secret could not be minted, copied to the machine or revoked.",
+    next: 'Fix the command or its inputs in the plugin option "workSecrets", then call again. A work whose mint failed starts no session, and one whose revoke failed stays open with its machine.',
+  },
 
   // Drop's guard.
   NOT_SAVED: {

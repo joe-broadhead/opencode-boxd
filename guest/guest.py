@@ -65,6 +65,7 @@ SERVER_LOG = HELPER_HOME + "/server.log"
 SERVER_PID = HELPER_HOME + "/server.pid"
 SETUP_LOG = HELPER_HOME + "/setup.log"
 ENV_NAMES = HELPER_HOME + "/env.json"
+SECRETS = HELPER_HOME + "/secrets"
 CLONES = HELPER_HOME + "/clones"
 WARM = HELPER_HOME + "/warm"
 EXPORTS = HELPER_HOME + "/exports"
@@ -276,6 +277,7 @@ class Place:
         self.server_pid = os.path.join(self.home, "server.pid")
         self.setup_log = os.path.join(self.home, "setup.log")
         self.env_names = os.path.join(self.home, "env.json")
+        self.secrets = os.path.join(self.home, "secrets")
         self.clones = os.path.join(self.home, "clones")
         self.exports = os.path.join(self.home, "exports")
         self.harvest = os.path.join(self.home, "harvest")
@@ -378,14 +380,16 @@ class Place:
         except GuestError:
             return False
 
-    def start_server(self, request, names=None):
+    def start_server(self, request, names=None, secrets=None):
         """Starts `opencode serve` on the slot's port with its own password, detached, logging to its server.log. It runs
-        with the machine's basics and the declared names only; without names it keeps the ones it was last started with."""
+        with the machine's basics, the declared names and the work's own secrets only; without names it keeps the ones
+        it was last started with."""
         self.ensure_password()
         if names is None:
             names = applied_env_names(self) or []
+            secrets = {name: read_secret(self, name) for name in names if os.path.isfile(os.path.join(self.secrets, name))}
         write_file(self.env_names, json.dumps(names).encode(), 0o600)
-        env = session_env(names)
+        env = session_env(names, secrets)
         env["OPENCODE_PASSWORD"] = self.read_password()
         port = self.port(request, create=True)
         with open(self.server_log, "ab") as log:
@@ -459,19 +463,44 @@ BASIC_NAMES = frozenset(
 )
 ENV_NAME = re.compile(r"[A-Z_][A-Z0-9_]{0,63}")
 ENV_LIMIT = 64
+SECRET_LIMIT = 64 * 1024
 # boxd writes the machine's variables here at every boot; a command that does not start a login shell lacks them.
 PROFILE_ENV = "/etc/profile.d/boxd-env.sh"
 
 
-def env_names(value):
+def names_of(value, field):
     """The variable names a request declares: a sorted, checked list."""
     if value is None:
         return []
     if not isinstance(value, list) or len(value) > ENV_LIMIT or not all(isinstance(name, str) and ENV_NAME.fullmatch(name) for name in value):
-        fail("NAME_INVALID", f"env must be a list of at most {ENV_LIMIT} variable names such as GH_TOKEN")
+        fail("NAME_INVALID", f"{field} must be a list of at most {ENV_LIMIT} variable names such as GH_TOKEN")
     if "OPENCODE_PASSWORD" in value:
-        fail("NAME_INVALID", "env cannot declare OPENCODE_PASSWORD: the helper sets it")
+        fail("NAME_INVALID", f"{field} cannot declare OPENCODE_PASSWORD: the helper sets it")
     return sorted(set(value))
+
+
+def env_names(value):
+    return names_of(value, "env")
+
+
+def secret_names(value):
+    return names_of(value, "secrets")
+
+
+def read_secret(place, name):
+    """One work secret's value from the helper's own folder, never a value from the machine's environment."""
+    path = os.path.join(place.secrets, name)
+    try:
+        with open(path, "rb") as handle:
+            data = handle.read(SECRET_LIMIT + 1)
+    except OSError:
+        fail("SECRET_FAILED", f"the work secret {name} is not on the machine")
+    if len(data) > SECRET_LIMIT:
+        fail("SECRET_FAILED", f"the work secret {name} is larger than {SECRET_LIMIT} bytes")
+    try:
+        return data.decode("utf8")
+    except UnicodeDecodeError:
+        fail("SECRET_FAILED", f"the work secret {name} is not UTF-8 text")
 
 
 def profile_env():
@@ -492,11 +521,14 @@ def profile_env():
     return found
 
 
-def session_env(names):
+def session_env(names, secrets=None):
     """The environment of a work's OpenCode: the machine's basics and the declared names, from this process or the
-    machine's own variables file. An undeclared variable is dropped from the server's environment, and so from the commands it starts directly."""
+    machine's own variables file, plus the work's own secrets. An undeclared variable is dropped from the server's
+    environment, and so from the commands it starts directly."""
     source = {**profile_env(), **os.environ}
-    return {name: value for name, value in source.items() if name in names or name in BASIC_NAMES or name.startswith("LC_")}
+    env = {name: value for name, value in source.items() if name in names or name in BASIC_NAMES or name.startswith("LC_")}
+    env.update(secrets or {})
+    return env
 
 
 def applied_env_names(place):
@@ -1333,17 +1365,20 @@ def action_setup(request):
     place.ensure_password()
     ensure_done_plugin()
     names = env_names(request.get("env"))
+    secret_list = secret_names(request.get("secrets"))
+    values = {name: read_secret(place, name) for name in secret_list}
+    applied = sorted(set(names + secret_list))
     version = opencode_version()
     state = place.server_state(request)
     if state == "down":
-        place.start_server(request, names)
+        place.start_server(request, applied, values)
         state = "starting"
-    elif applied_env_names(place) != names:
+    elif applied_env_names(place) != applied:
         # The server runs with other variables (or an older helper's whole environment): restart it, never mid-run.
         if place.http(request, "GET", "/api/session/active"):
             fail("SESSION_BUSY", "the work's OpenCode runs with other variables and is busy; ensure again when it is idle")
         place.stop_server()
-        place.start_server(request, names)
+        place.start_server(request, applied, values)
         state = "starting"
     git_identity(request.get("git"))
     workspace = "ready"
@@ -1810,7 +1845,7 @@ def action_scrub(request):
             subprocess.run(["sudo", "-n", "rm", "-f", env_file], check=True, capture_output=True)
         removed.append(env_file)
     # WARM stays: a warm image carries its repositories' checkouts for the works that fork from it.
-    for path in (PASSWORD_PATH, ENV_NAMES, EXPORTS, HARVEST, STAGING, IMPORTS, CLONES, SERVER_LOG, SETUP_LOG, SLOTS, local(WORK_ROOT)):
+    for path in (PASSWORD_PATH, ENV_NAMES, SECRETS, EXPORTS, HARVEST, STAGING, IMPORTS, CLONES, SERVER_LOG, SETUP_LOG, SLOTS, local(WORK_ROOT)):
         if remove(path):
             removed.append(guest(path))
     emit({"removed": removed})

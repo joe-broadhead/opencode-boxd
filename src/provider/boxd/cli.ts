@@ -39,6 +39,7 @@ import {
 import {
   backupsArgs,
   copyFromArgs,
+  copyStdinToArgs,
   copyToArgs,
   copyTreeArgs,
   createBuilderArgs,
@@ -103,12 +104,12 @@ export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
   let snapshots: { readonly at: number; readonly value: readonly SnapshotRow[] } | undefined
 
   /** One CLI call: the flavour check first, then the child in its pool, then the stderr table on a failure. */
-  async function cli(args: readonly string[], context: OpContext, timeoutMs: number, asked: Asked = {}, guard?: () => void, front = false): Promise<SpawnResult> {
+  async function cli(args: readonly string[], context: OpContext, timeoutMs: number, asked: Asked = {}, guard?: () => void, front = false, stdin?: string): Promise<SpawnResult> {
     await assertLaptopCli(bin, runner, context)
     const command = `boxd ${args.filter((arg) => !arg.startsWith("-")).slice(0, 2).join(" ")}`
     let result: SpawnResult
     try {
-      result = await runner.spawn({ ...context, bin, args, timeoutMs, ...(guard ? { guard } : {}), ...(front ? { front } : {}) })
+      result = await runner.spawn({ ...context, bin, args, timeoutMs, ...(stdin !== undefined ? { stdin } : {}), ...(guard ? { guard } : {}), ...(front ? { front } : {}) })
     } catch (error) {
       // A CLI that is not signed in starts a browser sign-in and waits: the timeout cut it, and its words say why.
       const partial = partialOutput(error)
@@ -374,6 +375,11 @@ export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
     async copyTree(target, localPath, guestPath, context) {
       change(target)
       await cli(copyTreeArgs(target.region, target.name, localPath, guestPath), context, TIMEOUTS.cp, { machine: target.name, region: target.region })
+    },
+
+    async copyStdinTo(target, guestPath, data, context) {
+      change(target)
+      await cli(copyStdinToArgs(target.region, target.name, guestPath), context, TIMEOUTS.cp, { machine: target.name, region: target.region }, undefined, false, data)
     },
 
     async copyFrom(target, guestPath, localPath, context) {

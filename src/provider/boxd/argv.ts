@@ -171,6 +171,18 @@ export const copyTreeArgs = (region: Region, machine: MachineName, localPath: st
   region,
 ]
 
+/** An upload from standard input, mode 600: the value of a work secret, never a laptop file or an argv. */
+export const copyStdinToArgs = (region: Region, machine: MachineName, guestPath: string) => [
+  "machine",
+  "cp",
+  "-",
+  `${machineArg(machine)}:${guestPathArg(guestPath)}`,
+  "--mode",
+  "600",
+  "--region",
+  region,
+]
+
 export const copyFromArgs = (region: Region, machine: MachineName, guestPath: string, localPath: string) => [
   "machine",
   "cp",

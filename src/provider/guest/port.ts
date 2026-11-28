@@ -162,7 +162,15 @@ export function createGuestPort(options: GuestPortOptions): GuestPort {
       change(
         "setup",
         target,
-        { directory: input.directory, ...slot(input.slot), ...(input.repo ? { repo: input.repo } : {}), ...(input.git ? { git: input.git } : {}), env: input.env ?? [], opencode: input.opencode },
+        {
+          directory: input.directory,
+          ...slot(input.slot),
+          ...(input.repo ? { repo: input.repo } : {}),
+          ...(input.git ? { git: input.git } : {}),
+          env: input.env ?? [],
+          secrets: input.secrets ?? [],
+          opencode: input.opencode,
+        },
         context,
         TIMEOUTS.setup,
         readSetup,

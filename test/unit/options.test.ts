@@ -13,6 +13,7 @@ const DEFAULTS: Options = {
   keep: [],
   size: "2x8",
   slotsPerMachine: 4,
+  workSecrets: [],
   goldenPrefix: "oc-golden",
   goldenBase: "stock",
   warm: [],
@@ -47,6 +48,19 @@ describe("plugin options", () => {
     expect(parseOptions({ keep: [] })).toMatchObject({ keep: [] })
     expect(parseOptions({ keep: ["team=lead", "runner", "team=lead"] })).toMatchObject({ keep: ["team=lead", "runner"] })
     expect(parseOptions({ git: { name: "Review Bot", email: "bot@example.invalid" } })).toMatchObject({ git: { name: "Review Bot", email: "bot@example.invalid" } })
+    expect(
+      parseOptions({
+        workSecrets: [
+          { name: "MODELS_API_KEY", mint: ["bun", "/srv/lane-key.ts", "mint"], revoke: ["bun", "/srv/lane-key.ts", "revoke"] },
+          { name: "OTHER_KEY", mint: ["/srv/other.sh"] },
+        ],
+      }),
+    ).toMatchObject({
+      workSecrets: [
+        { name: "MODELS_API_KEY", mint: ["bun", "/srv/lane-key.ts", "mint"], revoke: ["bun", "/srv/lane-key.ts", "revoke"] },
+        { name: "OTHER_KEY", mint: ["/srv/other.sh"] },
+      ],
+    })
     expect(parseOptions({ goldenPrefix: "team-golden", goldenBase: "opencode-golden", goldenSetup: "/srv/setup.sh" })).toMatchObject({
       goldenPrefix: "team-golden",
       goldenBase: "opencode-golden",
@@ -110,6 +124,15 @@ describe("plugin options", () => {
       { git: { name: "x" } },
       { git: { name: "", email: "a@b.c" } },
       { git: { name: "x", email: "not an email" } },
+      { workSecrets: "MODELS_API_KEY" },
+      { workSecrets: [{ name: "lower_key", mint: ["/srv/mint"] }] },
+      { workSecrets: [{ name: "OPENCODE_PASSWORD", mint: ["/srv/mint"] }] },
+      { workSecrets: [{ name: "MODELS_API_KEY", mint: [] }] },
+      { workSecrets: [{ name: "MODELS_API_KEY", mint: ["/srv/mint", 2] }] },
+      { workSecrets: [{ name: "MODELS_API_KEY", mint: ["/srv/mint"], revoke: [] }] },
+      { workSecrets: [{ name: "MODELS_API_KEY" }] },
+      { workSecrets: [{ name: "MODELS_API_KEY", mint: ["/srv/mint"], extra: true }] },
+      { workSecrets: [{ name: "MODELS_API_KEY", mint: ["/srv/mint"] }, { name: "MODELS_API_KEY", mint: ["/srv/other"] }] },
       { goldenPrefix: "Not A Prefix" },
       { goldenPrefix: "x".repeat(40) },
       { goldenBase: "Not A Snapshot" },

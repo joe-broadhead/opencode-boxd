@@ -21,6 +21,7 @@ import type { WorkRecord } from "../ledger/types.js"
 import { digestFile } from "../paths.js"
 import { REGIONS, type ChangeTarget, type GitAnswer, type MachineId, type MachineName, type OpContext } from "../ports.js"
 import type { DropResult } from "../results.js"
+import { revokeWorkSecrets } from "./secrets.js"
 import { assertWorkIdInput, nowIso, openRecord, optionalBoolean, type WorkContext, type Services } from "./sessions-common.js"
 
 /** The most paths a refusal names for a program (`paths`); `count` has them all. */
@@ -70,11 +71,15 @@ export async function dropWork(services: Services, item: DropItem, context: Work
             throw error
           }
           await guard(services, record, target, op)
+          await revokeWorkSecrets(services, record, op)
           await services.boxd.remove(target, op)
           return false
         })
       }
-      if (gone) await assertGone(services, record, machineId, item.confirmGone, op)
+      if (gone) {
+        await assertGone(services, record, machineId, item.confirmGone, op)
+        await revokeWorkSecrets(services, record, op)
+      }
       const at = nowIso(services)
       const unsaved = record.lastSubmit !== undefined && services.ledger.saved(record) !== "fresh"
       const next: WorkRecord = { ...record, ...(machineId ? { machineId } : {}), state: "closed", closed: { at, how: gone ? "gone" : "dropped" } }

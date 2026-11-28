@@ -231,6 +231,8 @@ export const TIMEOUTS = {
   resize: 90_000,
   reboot: 90_000,
   cp: 120_000,
+  /** A command from `workSecrets`: a mint or revoke run here, with the work id appended. */
+  workSecret: 60_000,
   laptopImport: 120_000,
   goldenStep: 300_000,
   /** `ensure` waits this long for the guest's OpenCode by default. */
@@ -456,6 +458,8 @@ export interface BoxdPort {
   copyTo(target: ChangeTarget, localPath: string, guestPath: string, context: OpContext): Promise<void>
   /** `machine cp -r` to the guest: one folder, for the registry's `untracked/` sets. */
   copyTree(target: ChangeTarget, localPath: string, guestPath: string, context: OpContext): Promise<void>
+  /** `machine cp` from standard input to the guest, mode 600: a minted value never touches the laptop's disk or an argv. */
+  copyStdinTo(target: ChangeTarget, guestPath: string, data: string, context: OpContext): Promise<void>
   /** `machine cp` from the guest straight to a laptop file, so the bytes never pass through the server. */
   copyFrom(target: ReadTarget | ChangeTarget, guestPath: string, localPath: string, context: OpContext): Promise<void>
   machineLimit(context: OpContext): Promise<MachineLimit>
@@ -560,6 +564,8 @@ export interface SetupInput {
   readonly git?: { readonly name: string; readonly email: string }
   /** The variable names the work declares: the guest's OpenCode starts with these and the machine's basics only. */
   readonly env?: readonly string[]
+  /** The work secret names whose values the helper adds to the server's environment from its own folder. */
+  readonly secrets?: readonly string[]
   /** The laptop's OpenCode: the helper reports the guest's, and `upgrade` is a separate action. */
   readonly opencode: string
 }
