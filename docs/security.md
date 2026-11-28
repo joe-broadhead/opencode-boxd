@@ -6,10 +6,18 @@
 - A work's prompt, its listed files and its git identity go to the guest when you call `submit` or `ensure`.
 - A guest's session export, its named files and its git patch and untracked files come back on `harvest`, into the
   ledger and this machine's OpenCode.
+- The automation copies the ledger's records, exports, patches, untracked files and `ledger-id` to its registry
+  machine in the organisation, by digest.
 - `exec` runs exactly the argv you pass on the guest and returns the last 32 KiB of stdout and 8 KiB of stderr.
 
 Nothing else is sent: no transcript is uploaded on a read, no file is copied in unless you name it, and status never
 reads a guest.
+
+## The registry machine
+
+The registry machine holds the ledger's durable copy: every record, export, patch and untracked file, so the same
+transcripts and work data as the operator's machine. It is private to the operator: the plugin never shares it, and no
+other member of the organisation can reach it. Its scheduled disk backups hold the same data.
 
 ## Credentials
 

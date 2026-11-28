@@ -67,6 +67,21 @@ describe("the boxd-sessions skill", () => {
     expect(capabilities).toContain("outcome: completed")
   })
 
+  test("teaches the registry copy, its report and what the machine holds", () => {
+    const read = (path: string) => readFileSync(join(ROOT, path), "utf8")
+    const architecture = read("docs/architecture.md")
+    expect(architecture).toContain("oc-reg-<ledgerId>")
+    expect(architecture).toContain("backups.period")
+    expect(architecture).toContain("24h")
+    expect(architecture).toContain("`/boxd` and `status` show the machine")
+    const security = read("docs/security.md")
+    expect(security).toContain("The registry machine")
+    expect(security).toContain("patches, untracked files and `ledger-id`")
+    expect(security).toContain("every record, export, patch and untracked file")
+    expect(security).toContain("transcripts")
+    expect(security).toContain("private to the operator")
+  })
+
   test("states the account, the access levels and the error form", () => {
     const text = readSkills()[0]!.content
     for (const phrase of ["no plugin-held account", "`all`", "`ask-changes`", "`read-only`", "CODE: What happened. Next step: What to do."]) expect(text).toContain(phrase)

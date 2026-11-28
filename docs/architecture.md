@@ -50,7 +50,8 @@ record, every stored export, every patch and each `untracked/` set whose digest 
 set moves only after every file in it arrived, so a failed copy leaves the last good copy whole. No tool call waits for
 the copy. The registry class is never an orphan, is never adoptable and is not counted against `budget.machines`. The
 copy is append-only: a work whose files leave the local ledger stays on the registry, while status's `works` names the
-records the latest sync found in the local ledger.
+records the latest sync found in the local ledger. `/boxd` and `status` show the machine, the time of the last complete
+copy, the works it holds and a warning when the copy is more than one sweep behind or failed.
 
 ## Machine classes and orphans
 
