@@ -1,5 +1,5 @@
 /**
- * `events.jsonl` (design §2.2, §3.1, §3.13): phase changes, one JSON line each, with a sequence number that is
+ * `events.jsonl` (design §2.2, §3.1, §3.13): changes, one JSON line each, with a sequence number that is
  * `boxd_status`'s cursor. Append-only: a line is appended and never rewritten, so this file is the one exception to the
  * copy-on-write rule. At `EVENTS_ROTATE_BYTES` the file is renamed to `events.1.jsonl`, so the log keeps at least the
  * last 5 MiB; a cursor older than the oldest kept event answers `cursorExpired: true`, and the caller gives the full view.
