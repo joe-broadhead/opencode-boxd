@@ -36,3 +36,42 @@ export default {
 - `events_list` never calls boxd and never wakes a machine. A change that needs a decision is a `boxd_job` or `/boxd`
   read, not an event's text.
 - A write method emits `changed`, so an app can also re-read on the bus event instead of polling.
+
+## The nightly warm-image rebuild
+
+Set the plugin option `warm` to the repositories whose checkouts, toolchains and dependencies a work should find
+already on its machine: one `{ repo, setup }` for each, where `setup` is a script here that installs them inside the
+checkout. The nightly automation rebuilds every warm image in every allowed region at the option `size`, and reports
+each failure in one line:
+
+```ts
+import type { Automation } from "@opencode/plugin"
+
+export default {
+  name: "boxd-warm-images",
+  every: "24 hours",
+  async run() {
+    const result = await tools.boxd.golden({ warm: "all", rebuild: true })
+    const failures = result.failures ?? []
+    const building = result.building ?? []
+    if (failures.length === 0 && building.length === 0) return { state: { built: result.images.length, building: 0, failed: 0 } }
+    const lines = [
+      ...(building.length > 0 ? [`building: ${building.length} (the next run joins them)`] : []),
+      ...failures.map((failure) => `${failure.repo} (${failure.region}): ${failure.error}: ${failure.message}`),
+    ]
+    return { state: { built: result.images.length, building: building.length, failed: failures.length }, prompt: lines.join("\n") }
+  },
+} satisfies Automation
+```
+
+- Each `{ repo, setup }` in `warm` names a repository and a script here that installs its toolchain and dependencies
+  inside the checkout. `ref` warms another branch or tag.
+- A warm image starts from its OpenCode version's golden image in the same region, so the first rebuild also builds
+  that image when it is missing.
+- A few builders run in each region at once, so the rebuild stays inside the machine limit beside the lanes.
+- A failed build is one repository and region. The other repositories still rebuild, and `failures` names each one with
+  its code, message and next step.
+- A build still running when the call's bound comes is in `building`, not `failures`: it goes on, and the next run
+  joins it. The recipe reports it as a count, not as a failure.
+- A prune removes a warm image whose repository is no longer in `warm`, or whose OpenCode version is not current,
+  unless an open work records it. Call `tools.boxd.golden({ prune: true })` after the rebuild when you need it.

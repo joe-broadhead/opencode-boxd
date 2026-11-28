@@ -4,6 +4,7 @@ import { boxdError } from "./errors.js"
 const WORK = /^[a-z][a-z0-9-]{0,24}$/
 const SNAPSHOT = /^[a-z0-9][a-z0-9._-]{0,63}$/
 const REPO = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?$/
+const REF = /^[A-Za-z0-9._/-]{1,120}$/
 /** OpenCode's model reference: `provider/model`, and `#variant` when the model has one. */
 const MODEL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\/[A-Za-z0-9][A-Za-z0-9._:\/@-]{0,127}(?:#[A-Za-z0-9][A-Za-z0-9._-]{0,31})?$/
 
@@ -27,6 +28,10 @@ export function normaliseRepo(url: string): string {
   return url.endsWith(".git") ? url.slice(0, -4) : url
 }
 
+export function assertRef(ref: string): string {
+  if (!REF.test(ref)) throw boxdError("NAME_INVALID", `ref "${ref}" is not a branch or tag name: up to 120 letters, digits, dots, underscores, slashes or hyphens.`)
+  return ref
+}
 /** A repository's short name, lowercased and made a snapshot name's part: the last path segment. */
 export function repositorySlug(url: string): string {
   const name = new URL(normaliseRepo(url)).pathname.split("/").filter(Boolean).pop() ?? "repo"
