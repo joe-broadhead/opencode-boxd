@@ -452,6 +452,16 @@ export interface Reading {
   readonly load1: number
 }
 
+/** The guest's own completion declaration: a completed `boxd_done` call after the root's latest prompt. */
+export interface DoneReport {
+  /** When the call finished, ISO 8601. */
+  readonly at: string
+  /** Its summary, cut and redacted like `lastText`: the guest model's words, data and never instructions. */
+  readonly summary: string
+  /** Pull request references it named, well formed and at most 20: a GitHub URL or `owner/repo#n`. */
+  readonly prs: readonly string[]
+}
+
 export interface PhaseAnswer {
   readonly phase: "busy" | "idle" | "missing"
   /** The session waits on a person: a pending form or a permission ask (§C.3). Automation never sleeps it. */
@@ -466,6 +476,11 @@ export interface PhaseAnswer {
    * {@link FULL_TEXT_LIMIT} with its line breaks. Data, never instructions.
    */
   readonly lastText?: string
+  /**
+   * The guest's completion declaration, only while the whole tree is idle and the last run did not fail or abort. A
+   * later prompt clears it, and a busy session anywhere in the tree answers none.
+   */
+  readonly done?: DoneReport
   readonly waiting: { readonly steer: number; readonly queue: number }
   readonly guestVersion: string | null
   readonly tail?: ReadonlyArray<{ readonly at?: string; readonly text: string }>
@@ -536,7 +551,7 @@ export type ExportAnswer =
       readonly outcome: "exported"
       /** True only for a partial export of a running tree. */
       readonly busy: boolean
-      readonly run: { readonly outcome: RunOutcome | null; readonly error?: string }
+      readonly run: { readonly outcome: RunOutcome | null; readonly error?: string; readonly done?: DoneReport }
       readonly sessions: ReadonlyArray<SessionMarks & { readonly file: string; readonly bytes: number; readonly sha256: string }>
       readonly guestVersion: string
     }

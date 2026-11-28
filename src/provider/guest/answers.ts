@@ -9,6 +9,7 @@ import {
   FULL_TEXT_LIMIT,
   GUEST_PROTOCOL,
   type DescribeAnswer,
+  type DoneReport,
   type ExportAnswer,
   type GitAnswer,
   type HealthAnswer,
@@ -88,6 +89,9 @@ const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
 const GUEST_FILE = /^\/home\/boxd\/[A-Za-z0-9_./-]+$/
 const WORK_DIRECTORY = /^\/home\/boxd\/work\/[a-z][a-z0-9-]{0,24}$/
 const ABSOLUTE_PATH = /^\/[A-Za-z0-9_./-]+$/
+/** A pull request a done report may name: a GitHub URL, or the same as `owner/repo#n`. */
+const PR_URL = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]*$/
+const PR_REF = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#[1-9][0-9]*$/
 
 const version = (value: unknown): string | null => (string(value) && VERSION.test(value) ? value : null)
 const pendingInput = (value: unknown): "form" | "permission" | null | undefined =>
@@ -104,6 +108,22 @@ function reading(value: unknown): Reading | undefined {
 }
 
 const OUTCOMES: ReadonlySet<string> = new Set<RunOutcome>(["completed", "failed", "aborted"])
+
+/**
+ * The guest's completion declaration. Its summary is the model's words, so it is cut and redacted like `lastText`; a
+ * malformed report is no report, and `prs` keeps only well-formed references, without repeats, at most 20.
+ */
+function doneReport(value: unknown, full = false): DoneReport | undefined {
+  const item = value as Json | undefined
+  if (!item || !string(item.summary)) return undefined
+  const at = iso(item.at)
+  const summary = full ? excerptBlock(item.summary, FULL_TEXT_LIMIT) : excerpt(item.summary, TEXT_LIMIT)
+  if (!at || !summary) return undefined
+  const prs = Array.isArray(item.prs)
+    ? [...new Set(item.prs.flatMap((pr) => (string(pr) && (PR_URL.test(pr) || PR_REF.test(pr)) ? [pr] : [])))].slice(0, 20)
+    : []
+  return { at, summary, prs }
+}
 
 export function readServe(answer: Json): ServeAnswer {
   if (answer.server !== "up" && answer.server !== "starting" && answer.server !== "down") throw shape("serve")
@@ -133,6 +153,7 @@ export function readPhase(answer: Json, full = false): PhaseAnswer {
     : undefined
   const read = reading(answer.reading)
   const at = iso(answer.lastActivityAt)
+  const done = doneReport(answer.done, full)
   return {
     phase: answer.phase,
     outcome,
@@ -143,6 +164,7 @@ export function readPhase(answer: Json, full = false): PhaseAnswer {
     ...(error ? { error } : {}),
     ...(at ? { lastActivityAt: at } : {}),
     ...(lastText ? { lastText } : {}),
+    ...(done ? { done } : {}),
     ...(tail ? { tail } : {}),
     ...(finite(answer.modelCost) && answer.modelCost >= 0 ? { modelCost: answer.modelCost } : {}),
   }
@@ -220,7 +242,8 @@ export function readExport(answer: Json): ExportAnswer {
   const run = (answer.run ?? {}) as Json
   const outcome = string(run.outcome) && OUTCOMES.has(run.outcome) ? (run.outcome as RunOutcome) : null
   const error = outcome === "failed" ? errorLine(run.error) : undefined
-  return { outcome: "exported", busy: answer.busy, run: { outcome, ...(error ? { error } : {}) }, sessions, guestVersion: answer.guestVersion }
+  const done = doneReport(run.done)
+  return { outcome: "exported", busy: answer.busy, run: { outcome, ...(error ? { error } : {}), ...(done ? { done } : {}) }, sessions, guestVersion: answer.guestVersion }
 }
 
 const files = (action: string, value: unknown) => {

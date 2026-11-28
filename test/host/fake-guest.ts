@@ -20,13 +20,22 @@ export interface FakeSession {
   model?: { providerID: string; id: string; variant?: string }
 }
 
+export type FakePart = {
+  type: string
+  text?: string
+  /** A tool part: the tool's name, the call's input and status, and when it ended. */
+  name?: string
+  state?: { status: string; input?: Record<string, unknown>; error?: string }
+  time?: { created?: number; completed?: number }
+}
+
 export type FakeMessage = {
   type: string
   text?: string
   outcome?: "succeeded" | "failed" | "interrupted"
   error?: { type: string; message: string }
   time?: { created: number }
-  content?: Array<{ type: string; text: string }>
+  content?: Array<FakePart>
 }
 
 export interface FakeGuest {
@@ -56,6 +65,8 @@ export interface FakeGuest {
   complete(sessionID: string): void
   /** The session's model wrote this text, as an assistant message at `at` (epoch milliseconds). */
   say(sessionID: string, text: string, at: number): void
+  /** The session's model completed a tool call, as OpenCode records one: a tool part in an assistant message at `at`. */
+  tool(sessionID: string, name: string, input: Record<string, unknown>, at: number, status?: "completed" | "error" | "running"): void
   close(): Promise<void>
 }
 
@@ -176,7 +187,7 @@ export function startFakeGuest(options: { readonly version?: string } = {}): Fak
         }
         session.busy = true
         session.interrupted = false
-        session.messages.push({ type: "user", text: String(body.text ?? "") })
+        session.messages.push({ type: "user", text: String(body.text ?? ""), time: { created: session.updated } })
         return json({ data: { id: `msg_${session.messages.length - 1}`, admitted: session.id } })
       }
       const exported = /^\/api\/experimental\/session\/(ses_[A-Za-z0-9_-]+)\/export$/.exec(path)
@@ -256,6 +267,19 @@ export function startFakeGuest(options: { readonly version?: string } = {}): Fak
       const session = sessions.get(sessionID)
       if (session) {
         session.messages.push({ type: "assistant", time: { created: at }, content: [{ type: "reasoning", text: "thinking" }, { type: "text", text }] })
+        session.updated = at
+      }
+    },
+    tool: (sessionID: string, name: string, input: Record<string, unknown>, at: number, status = "completed") => {
+      const session = sessions.get(sessionID)
+      if (session) {
+        // A failed call still ends at `completed`; a running one has no end yet.
+        const time = status === "running" ? { created: at } : { completed: at }
+        session.messages.push({
+          type: "assistant",
+          time: { created: at },
+          content: [{ type: "tool", name, state: { status, input, ...(status === "error" ? { error: "the tool call failed" } : {}) }, time }],
+        })
         session.updated = at
       }
     },

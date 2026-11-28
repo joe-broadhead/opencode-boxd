@@ -287,6 +287,102 @@ describe("sessions", () => {
     expect(phase).toMatchObject({ phase: "idle", outcome: "completed", lastActivityAt: "2025-11-15T09:46:40.000Z" })
   })
 
+  /** A work whose root ran once and declared itself done at `at`: the fake's first prompt is stamped at 1. */
+  async function finished(sessionID: string, summary: string, prs: unknown[], at: number): Promise<void> {
+    await setup()
+    guestServer.next(sessionID)
+    await change((target) => runtime.guest.prompt(target, { directory: DIRECTORY, sessionId: null, title: "t", text: "go", delivery: "steer" }, context()))
+    guestServer.tool(sessionID, "boxd_done", { summary, prs }, at)
+    guestServer.complete(sessionID)
+  }
+
+  test("phase: an idle tree with a completed boxd_done call answers the report", async () => {
+    const at = 1_763_200_000_000
+    await finished("ses_done", "The review is finished. The key is sk-abcdefghijklmnopqrstuvwx", ["https://github.com/o/r/pull/12", "o/r#7"], at)
+    const phase = await runtime.guest.phase(await readTarget(), { sessionId: "ses_done" }, context())
+    expect(phase).toMatchObject({
+      phase: "idle",
+      outcome: "completed",
+      done: { at: new Date(at).toISOString(), summary: "The review is finished. The key is [redacted]", prs: ["https://github.com/o/r/pull/12", "o/r#7"] },
+    })
+  })
+
+  test("phase: a failed boxd_done call is no report", async () => {
+    const at = 1_763_200_000_000
+    await setup()
+    guestServer.next("ses_refused")
+    await change((target) => runtime.guest.prompt(target, { directory: DIRECTORY, sessionId: null, title: "t", text: "go", delivery: "steer" }, context()))
+    guestServer.tool("ses_refused", "boxd_done", { summary: "Too early." }, at, "error")
+    guestServer.complete("ses_refused")
+    const phase = await runtime.guest.phase(await readTarget(), { sessionId: "ses_refused" }, context())
+    expect(phase).toMatchObject({ phase: "idle", outcome: "completed" })
+    expect(phase.done).toBeUndefined()
+  })
+
+  test("phase: a later prompt clears an earlier done report", async () => {
+    const at = 1_763_200_000_000
+    await finished("ses_done", "First run.", [], at)
+    guestServer.sessions.get("ses_done")!.updated = at + 1000
+    await change((target) => runtime.guest.prompt(target, { directory: DIRECTORY, sessionId: "ses_done", title: "t", text: "again", delivery: "steer" }, context()))
+    guestServer.complete("ses_done")
+    const phase = await runtime.guest.phase(await readTarget(), { sessionId: "ses_done" }, context())
+    expect(phase).toMatchObject({ phase: "idle", outcome: "completed" })
+    expect(phase.done).toBeUndefined()
+  })
+
+  test("phase: a busy child clears the root's done report", async () => {
+    const at = 1_763_200_000_000
+    await finished("ses_done", "First run.", [], at)
+    guestServer.sessions.set("ses_child", { id: "ses_child", parentID: "ses_done", busy: true, directory: DIRECTORY, messages: [], inbox: [], updated: at + 1000 })
+    const phase = await runtime.guest.phase(await readTarget(), { sessionId: "ses_done" }, context())
+    expect(phase).toMatchObject({ phase: "busy" })
+    expect(phase.done).toBeUndefined()
+  })
+
+  test("phase: a failed or aborted last run has no done report", async () => {
+    const at = 1_763_200_000_000
+    await finished("ses_done", "First run.", [], at)
+    guestServer.fail("ses_done", { type: "provider.auth", message: "401 Unauthorized" })
+    const failed = await runtime.guest.phase(await readTarget(), { sessionId: "ses_done" }, context())
+    expect(failed).toMatchObject({ phase: "idle", outcome: "failed" })
+    expect(failed.done).toBeUndefined()
+    await finished("ses_gone", "Second run.", [], at)
+    guestServer.interrupt("ses_gone")
+    const aborted = await runtime.guest.phase(await readTarget(), { sessionId: "ses_gone" }, context())
+    expect(aborted).toMatchObject({ phase: "idle", outcome: "aborted" })
+    expect(aborted.done).toBeUndefined()
+  })
+
+  test("phase: an oversized done summary is cut like lastText, and full keeps it whole", async () => {
+    const at = 1_763_200_000_000
+    const summary = `Finished. ${"word ".repeat(1000).trim()}`
+    await finished("ses_long", summary, [], at)
+    const target = await readTarget()
+    const cut = await runtime.guest.phase(target, { sessionId: "ses_long" }, context())
+    expect(Array.from(cut.done!.summary)).toHaveLength(300)
+    expect(cut.done!.summary.endsWith("…")).toBe(true)
+    expect((await runtime.guest.phase(target, { sessionId: "ses_long", full: true }, context())).done!.summary).toBe(summary)
+  })
+
+  test("export: the run carries the done report, with only well-formed pull requests", async () => {
+    const at = 1_763_200_000_000
+    const prs = ["https://github.com/o/r/pull/12", "o/r#7", "https://github.com/o/r/pull/0", "https://example.com/o/r/pull/1", "o/r#", 7, "o/r#7"]
+    await finished("ses_export", "Exported.", prs, at)
+    const answer = await change((target) => runtime.guest.export(target, { rootId: "ses_export" }, context()))
+    if (answer.outcome !== "exported") throw new Error(answer.reason)
+    expect(answer.run).toEqual({ outcome: "completed", done: { at: new Date(at).toISOString(), summary: "Exported.", prs: ["https://github.com/o/r/pull/12", "o/r#7"] } })
+  })
+
+  test("export: a partial export of a running tree carries no done report", async () => {
+    const at = 1_763_200_000_000
+    await finished("ses_export_busy", "Not yet.", [], at)
+    guestServer.sessions.set("ses_busy_child", { id: "ses_busy_child", parentID: "ses_export_busy", busy: true, directory: DIRECTORY, messages: [], inbox: [], updated: at + 1000 })
+    const answer = await change((target) => runtime.guest.export(target, { rootId: "ses_export_busy", partial: true }, context()))
+    if (answer.outcome !== "exported") throw new Error(answer.reason)
+    expect(answer).toMatchObject({ busy: true, run: { outcome: "completed" } })
+    expect(answer.run.done).toBeUndefined()
+  })
+
   test("phase stays busy when the root runs, whatever the children say", async () => {
     await setup()
     guestServer.sessions.set("ses_root", { id: "ses_root", busy: true, directory: DIRECTORY, messages: [], inbox: [], updated: 1_700_000_000_000 })

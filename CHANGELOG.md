@@ -4,6 +4,8 @@
 
 - Every work's machine carries the label `ledger=<id>`, naming the ledger that registered it. `boxd_ensure` sets it on a
   create and on an adoption, and the automation pass adds it once to an open work's machine that lacks it.
+- The guest helper's `phase` and `export` read the newest completed `boxd_done` call after the root's latest prompt
+  as `done: { at, summary, prs }`, only while the whole tree is idle and the last run did not fail or abort.
 - A work's OpenCode server starts with the machine's basics and the variable names the work declares in `ensure` as
   `env`, without the operator's other variables. A session can still read them from boxd's variables file, a login shell
   or sudo.
