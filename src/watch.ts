@@ -22,7 +22,7 @@ import { LEDGER_PATHS, type Phase, type WorkRecord } from "./ledger/types.js"
 import { base, codeOf, notRead, observe, observeFailure, outcomeOf, phaseOf, promptedSince, readGuest, recordPhase, STATUS_TEXT_LIMIT, wantsRead, type Observed } from "./fleet/model.js"
 import { FileNoticeCursors } from "./notice-cursors.js"
 import { checkTarget, NoticeQueue, type DroppedNotice, type GoneCause } from "./notices.js"
-import type { FleetSnapshot, FleetWatch, Listing, OpContext, WorkEvent, WorkSnapshot } from "./ports.js"
+import type { DoneReport, FleetSnapshot, FleetWatch, Listing, OpContext, WorkEvent, WorkSnapshot } from "./ports.js"
 import { TIMEOUTS } from "./ports.js"
 import { reasonOf } from "./redact.js"
 import type { CoreServices, Dispose } from "./services.js"
@@ -60,6 +60,8 @@ export interface WatchOptions {
   /** Start the timer at once (the plugin) or not (tests, which call `tick`). */
   readonly autoStart?: boolean
   readonly intervalMs?: number
+  /** Called when a work becomes done: the plugin nudges the works source with the contract's `changed`. */
+  readonly changed?: (workId: string) => void | Promise<void>
 }
 
 export interface Watcher {
@@ -247,6 +249,7 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
   async function append(record: WorkRecord, phase: Phase, obs: Observed | undefined, op: OpContext): Promise<void> {
     const before = logged.get(record.workId)
     const outcome = phase === "idle" ? outcomeOf(record, obs) : undefined
+    const done = phase === "idle" ? obs?.done : undefined
     // An idle event carries a code for a failed run, and for any code the observation has (a missing session).
     const code = phase === "idle" ? (outcome === "failed" || obs?.code ? codeOf(record, obs) : undefined) : phase === "unreachable" ? obs?.code : undefined
     const sleptByPlugin = record.slept && (!before || Date.parse(record.slept.at) >= Date.parse(before.at))
@@ -256,6 +259,7 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
       from: before?.phase ?? null,
       to: phase,
       ...(phase === "idle" ? { outcome: outcome ?? null } : {}),
+      ...(done ? { done: true as const } : {}),
       ...(code ? { code } : {}),
       ...(phase === "asleep" ? { asleepBy: sleptByPlugin ? record.slept!.by : "idle-or-cli" } : {}),
       ...(obs?.needsInput && (phase === "busy" || phase === "idle") ? { needsInput: obs.needsInput } : {}),
@@ -266,6 +270,33 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
     logged.set(record.workId, { phase: line.to, at: line.at, seenAt: Date.now() })
     // A first sight of a work the log never named is a fact to record, not news for its coordinator.
     dispatch(line, line.from !== null)
+    if (!done) return
+    // The record keeps the report, so a restart, a sleep and a harvest keep it; then a subscriber hears the source changed.
+    await recordDone(record, done, op)
+    try {
+      await options.changed?.(record.workId)
+    } catch (error) {
+      core.report("watch", `The changed nudge for ${record.workId} failed: ${reasonOf(error)}.`)
+    }
+  }
+
+  /** Keeps a done report the sweep saw in the record; a later prompt wins over it. Never throws. */
+  async function recordDone(record: WorkRecord, done: DoneReport, op: OpContext): Promise<void> {
+    if (record.done?.at === done.at) return
+    try {
+      await core.ledger.update(
+        [record.workId],
+        async (current) => {
+          const now = current.get(record.workId)
+          const submitted = now?.lastSubmit ? Date.parse(now.lastSubmit.at) : Number.NaN
+          if (now?.state !== "open" || now.done?.at === done.at || (!Number.isNaN(submitted) && submitted > Date.parse(done.at))) return { write: [], value: undefined }
+          return { write: [{ ...now, done }], value: undefined }
+        },
+        op,
+      )
+    } catch (error) {
+      if (!abort.signal.aborted) core.report("watch", `The done report for ${record.workId} was not recorded: ${reasonOf(error)}.`)
+    }
   }
 
   async function sweep(open: readonly WorkRecord[], op: OpContext): Promise<void> {

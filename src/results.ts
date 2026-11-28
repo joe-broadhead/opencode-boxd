@@ -6,7 +6,7 @@
 import type { Code, ErrorState, WarningCode } from "./errors.js"
 import type { Phase, SavedState } from "./ledger/types.js"
 import type { RegionChoice } from "./options.js"
-import type { MachineId, MachineName, MachineStatus, Region, RunOutcome, SecretInfo, Size } from "./ports.js"
+import type { DoneReport, MachineId, MachineName, MachineStatus, Region, RunOutcome, SecretInfo, Size } from "./ports.js"
 
 /** The facts a refusal can carry beside its code (§3, §5). Plain JSON values only. */
 export interface ErrorFacts {
@@ -69,6 +69,7 @@ export type AttentionReason =
   | "gone-unsaved"
   | "idle-unsaved"
   | "asleep-unsaved"
+  | "done-unsaved"
   | "stuck"
   | "orphan"
   | "version"
@@ -83,6 +84,7 @@ export const ATTENTION_ORDER: readonly AttentionReason[] = [
   "gone-unsaved",
   "idle-unsaved",
   "asleep-unsaved",
+  "done-unsaved",
   "stuck",
   "orphan",
   "version",
@@ -141,6 +143,8 @@ export interface WorkBrief {
   readonly outcome: RunOutcome | null
   readonly saved: SavedState
   readonly lastActivityAt?: string
+  /** The guest's done report: it declared the whole task finished. */
+  readonly done?: DoneReport
   readonly cost?: WorkCost
   /** With `include: ["cost"]`: the machine-hours its ledger counted, no owner's sign-in needed. */
   readonly hours?: WorkHours
@@ -269,6 +273,12 @@ export interface JobResult extends WorkFields {
   readonly sessionId: string | null
   readonly outcome: RunOutcome | null
   readonly saved: SavedState
+  /** True when the guest declared the whole task finished; `summary` and `prs` say what it finished with. */
+  readonly done: boolean
+  /** With `done`: the guest's short summary, cut and redacted. */
+  readonly summary?: string
+  /** With `done`: the pull requests it named, `owner/repo#n` or a URL, at most 20. */
+  readonly prs?: readonly string[]
   readonly lastActivityAt?: string
   /** Cut to 300 characters, or with `full` the whole message up to 64,000 with its line breaks: untrusted data. */
   readonly lastText?: string

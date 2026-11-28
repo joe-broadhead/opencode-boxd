@@ -17,6 +17,7 @@ import { createCost } from "./cost/index.js"
 import { fleetStatus } from "./fleet/status.js"
 import { createHandlers } from "./handlers/index.js"
 import { createRuns } from "./handlers/runs.js"
+import { CHANGED_CAPABILITY } from "./handlers/run.js"
 import type { SourceDeps } from "./handlers/events.js"
 import type { StatusDeps } from "./handlers/status.js"
 import { checkHost } from "./host-version.js"
@@ -71,7 +72,9 @@ export function createBoxdPlugin(seam: BoxdSeam = {}) {
       }
       const provider = createProvider({ boxdBin: seam.boxdBin, opencodeBin: seam.opencodeBin, helperPath: seam.helperPath })
       const core: CoreServices = { ...hostServices, ...provider, ledger: createLedger({ ...hostServices, ...provider }) }
-      const watcher = createWatch(core)
+      // The watcher starts before the one registration exists, so its nudge is wired to the bus just after it.
+      let nudge: (() => Promise<void>) | undefined
+      const watcher = createWatch(core, { changed: () => nudge?.() })
       const fleet: FleetServices = { ...core, watch: watcher.watch, cost: createCost({ ...core, watch: watcher.watch }) }
       const source: SourceDeps = { ledger: core.ledger, identity: machineIdentity, now: () => hostServices.clock.now() }
       const { runs, selectors, actions } = createRuns(fleet)
@@ -96,6 +99,10 @@ export function createBoxdPlugin(seam: BoxdSeam = {}) {
         watcher.dispose,
       ]
       const registration = await register(ctx, manifest, createHandlers({ runs, selectors, source, status }))
+      // A work that becomes done appends its event; this tells every subscriber that the works source changed.
+      nudge = async () => {
+        await registration.bus.emit("changed", { capability: CHANGED_CAPABILITY, account: "default", reason: "done" })
+      }
       stops.push(registration.dispose)
       stops.push(
         ...(await registerStatusCommand(ctx, () =>

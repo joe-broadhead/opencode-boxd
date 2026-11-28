@@ -55,6 +55,31 @@ describe("the plugin on OpenCode 2.4.1", () => {
     }
   })
 
+  test("a guest that declares done reads it through job and the works list", async () => {
+    const host = await startHost()
+    try {
+      const sessionID = await session(host, "build")
+      const ready = await attempt(host, sessionID, "build", "boxd_ensure", "reject", { workId: "done-work" })
+      expect(ready.ok).toBe(true)
+      const sent = await attempt(host, sessionID, "build", "boxd_submit", "reject", { workId: "done-work", text: "Finish the task." })
+      expect(sent.ok).toBe(true)
+      const guestSession = (sent.output as { sessionId: string }).sessionId
+      const summary = "The task is finished and its tests pass."
+      const prs = ["https://github.com/example/repo/pull/7", "example/repo#8"]
+      // The guest's own boxd_done call, after its prompt, with the whole session tree idle: what #78 reads.
+      host.guest.tool(guestSession, "boxd_done", { summary, prs }, Date.now(), "completed")
+      host.guest.complete(guestSession)
+      const job = await attempt(host, sessionID, "build", "boxd_job", "reject", { workId: "done-work" })
+      expect(job.ok).toBe(true)
+      expect(job.output).toMatchObject({ state: "idle", done: true, summary, prs })
+      const rpc = host.client.rpc as unknown as { call: (request: object) => Promise<{ output: Record<string, unknown> }> }
+      const list = (await rpc.call({ rpcID: "boxd", method: "status", input: { sessionID, input: { list: "works" } }, location: host.location })).output
+      expect(list).toMatchObject({ data: { items: [expect.objectContaining({ id: "done-work", text: "idle, completed, done" })], editable: false } })
+    } finally {
+      await host.close()
+    }
+  })
+
   test("has parity with v0.1.4: every old tool, the renamed skill, the /boxd command, and the documented removals", async () => {
     const host = await startHost()
     try {

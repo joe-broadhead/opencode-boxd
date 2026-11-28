@@ -31,7 +31,7 @@ import {
 } from "../results.js"
 import type { FleetServices } from "../services.js"
 import { watchHandle, type WatchHandle } from "../watch.js"
-import { codeOf, notRead, observe, observeFailure, outcomeOf, phaseOf, readGuest, STATUS_TEXT_LIMIT, wantsRead, type Observed } from "./model.js"
+import { codeOf, doneOf, notRead, observe, observeFailure, outcomeOf, phaseOf, readGuest, STATUS_TEXT_LIMIT, wantsRead, type Observed } from "./model.js"
 import { classifyMachines, machineSummary } from "./orphans.js"
 
 export type StatusView = "attention" | "all" | "counts"
@@ -95,7 +95,7 @@ export function workList(works: readonly WorkBrief[], account?: string, asOf = n
   for (const work of newest) {
     if (items.length >= LIST_CAP) break
     const id = work.workId.replace(CONTROLS, "").slice(0, 128)
-    const full = `${work.phase}${work.outcome === null ? "" : `, ${work.outcome}`}`.replace(CONTROLS, " ").replace(/\s+/g, " ").trim()
+    const full = `${work.phase}${work.outcome === null ? "" : `, ${work.outcome}`}${work.done ? ", done" : ""}`.replace(CONTROLS, " ").replace(/\s+/g, " ").trim()
     if (id === "" || full === "" || seen.has(id) || secretKinds(id).length > 0 || secretKinds(full).length > 0) continue
     const note = work.saved.replace(CONTROLS, " ").slice(0, 200)
     seen.add(id)
@@ -159,6 +159,7 @@ export function attentionOf(row: Row, facts: { readonly now: number; readonly ho
   const id = record.workId
   const outcome = outcomeOf(record, observed)
   const code = codeOf(record, observed)
+  const done = doneOf(record, observed) !== undefined
   const prompted = record.lastSubmit !== undefined
   const unsaved = prompted && saved !== "fresh"
   const reasons: Array<{ why: AttentionReason; error?: Code; next: string }> = []
@@ -185,8 +186,10 @@ export function attentionOf(row: Row, facts: { readonly now: number; readonly ho
     reasons.push({ why: "unreachable", error, next })
   }
   if (phase === "gone" && unsaved) reasons.push({ why: "gone-unsaved", error: "MACHINE_GONE", next: `${one("boxd_resume", id)} rebuilds it from the saved transcript, or ${one("boxd_drop", id)} closes the work` })
-  if (phase === "idle" && unsaved) reasons.push({ why: "idle-unsaved", next: one("boxd_harvest", id) })
-  if (phase === "asleep" && unsaved) reasons.push({ why: "asleep-unsaved", next: `${one("boxd_resume", id)}, then ${one("boxd_harvest", id)}` })
+  if (phase === "idle" && unsaved) reasons.push(done ? { why: "done-unsaved", next: one("boxd_harvest", id) } : { why: "idle-unsaved", next: one("boxd_harvest", id) })
+  if (phase === "asleep" && unsaved) {
+    reasons.push({ why: done ? "done-unsaved" : "asleep-unsaved", next: `${one("boxd_resume", id)}, then ${one("boxd_harvest", id)}` })
+  }
   if (phase === "creating" || phase === "starting") {
     const since = Date.parse(observed?.since ?? record.pendingCreate?.at ?? record.createdAt)
     if (!Number.isNaN(since) && facts.now - since > STUCK_MS) reasons.push({ why: "stuck", next: one("boxd_ensure", id) })
@@ -219,6 +222,8 @@ function groupNext(why: AttentionReason, error: Code | undefined, ids: readonly 
         ? `Set or rotate the shared model credential (a sealed, host-bound boxd env secret), then boxd_submit({ works: [{ workId, text }, …] }) for ${named}`
         : `boxd_job({ works: [${named}] }) to read what happened, then boxd_submit again`
     case "idle-unsaved":
+      return 'boxd_harvest({ select: "unsaved-finished" })'
+    case "done-unsaved":
       return 'boxd_harvest({ select: "unsaved-finished" })'
     case "idle-running":
       return 'boxd_sleep({ select: "idle" })'
@@ -433,12 +438,14 @@ export async function fleetStatus(services: FleetServices, input: StatusInput, c
     const cost = workCost(row)
     const hours = withCost ? shownHours(hoursAt(row.record, new Date(at))) : undefined
     const lastActivityAt = row.observed?.lastActivityAt
+    const done = row.phase === "idle" || row.phase === "asleep" ? doneOf(row.record, row.observed) : undefined
     return {
       workId: row.record.workId,
       region: row.record.region,
       phase: row.phase,
       outcome: outcomeOf(row.record, row.observed),
       saved: row.saved,
+      ...(done ? { done } : {}),
       ...(lastActivityAt ? { lastActivityAt } : {}),
       ...(cost ? { cost } : {}),
       ...(hours ? { hours } : {}),

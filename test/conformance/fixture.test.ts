@@ -23,7 +23,15 @@ const events: readonly WorkEvent[] = [
 const ledger = { eventsSince: async (q: number) => ({ events: events.filter((event) => event.seq > q), cursor: 3, cursorExpired: false }) }
 const deps = { ledger, identity, now }
 const works: readonly WorkBrief[] = [
-  { workId: "review-api", region: "fra", phase: "idle", outcome: "completed", saved: "fresh", lastActivityAt: "2026-11-16T09:50:00.000Z" },
+  {
+    workId: "review-api",
+    region: "fra",
+    phase: "idle",
+    outcome: "completed",
+    saved: "fresh",
+    done: { at: "2026-11-16T09:50:00.000Z", summary: "The API is reviewed and its tests pass.", prs: ["https://github.com/example/api/pull/7"] },
+    lastActivityAt: "2026-11-16T09:50:00.000Z",
+  },
   { workId: "docs", region: "nyc", phase: "asleep", outcome: null, saved: "stale", lastActivityAt: "2026-11-15T18:00:00.000Z" },
 ]
 

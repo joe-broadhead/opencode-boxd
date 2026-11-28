@@ -335,6 +335,9 @@ function written(
   const out = [...(record.files?.out ?? []).filter((file) => !moved.some((item) => item.path === file.path)), ...moved]
   // The laptop's copy is replaced and verified only when a transcript was exported.
   const base = omit(record, "warnings")
+  // The export's report is the guest's latest word; a harvest without one keeps the record's (a partial export of a
+  // running tree reports the run before the current one).
+  const done = fetched.exported?.run.done ?? record.done
   const next: WorkRecord = {
     ...base,
     machineId,
@@ -342,6 +345,7 @@ function written(
     gitState,
     touchedAt: at,
     ...(fetched.outcome ? { run: { outcome: fetched.outcome, ...(fetched.error ? { error: fetched.error } : {}), at: record.run?.outcome === fetched.outcome && record.run.error === fetched.error ? record.run.at : at } } : {}),
+    ...(done ? { done } : {}),
     ...(warnings?.length ? { warnings } : {}),
     ...(moved.length ? { files: { in: record.files?.in ?? [], out } } : {}),
   }
