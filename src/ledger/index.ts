@@ -4,12 +4,15 @@
  *
  * Every write is copy-on-write (temp, verify, fsync, rename), except the append-only `events.jsonl`.
  */
-import type { EventPage, LedgerPort } from "../ports.js"
+import type { EventPage, LedgerPort, Rates } from "../ports.js"
 import type { HostServices, Provider } from "../services.js"
 import { Ledger, savedState } from "./store.js"
 
-export function createLedger(core: HostServices & Provider): LedgerPort {
-  const store = new Ledger(core.ledgerRoot, { now: () => core.clock.now() })
+/** The ledger's core, with the rates its phase changes price at when the plugin has a cost service. */
+export type LedgerCore = HostServices & Provider & { readonly rates?: () => Rates }
+
+export function createLedger(core: LedgerCore): LedgerPort {
+  const store = new Ledger(core.ledgerRoot, { now: () => core.clock.now(), ...(core.rates ? { rates: core.rates } : {}) })
   return ledgerPort(store)
 }
 
@@ -30,7 +33,7 @@ export function ledgerPort(store: Ledger): LedgerPort {
     },
     async update(workIds, change, context) {
       const ids = [...new Set(workIds)].sort()
-      return store.withWorks(
+      const { value, memberships } = await store.withWorks(
         ids,
         async () => {
           const current = new Map<string, import("./types.js").WorkRecord | undefined>()
@@ -39,17 +42,27 @@ export function ledgerPort(store: Ledger): LedgerPort {
           for (const record of write) {
             if (!ids.includes(record.workId)) throw new Error(`An update holding the locks of ${ids.join(", ")} tried to write work "${record.workId}".`)
           }
-          for (const record of write) await store.put(record)
-          return value
+          const movements = new Map<string, { readonly machine: import("./types.js").WorkRecord["machine"]; readonly region: import("./types.js").WorkRecord["region"] }>()
+          for (const record of write) {
+            const before = current.get(record.workId)
+            const wasSlot = before?.state === "open" && before.slot === true
+            const isSlot = record.state === "open" && record.slot === true
+            if (wasSlot !== isSlot) movements.set(`${record.machine}/${record.region ?? ""}`, { machine: record.machine, region: record.region })
+            await store.put(record)
+          }
+          return { value, memberships: [...movements.values()] }
         },
         context.signal,
       )
+      // A slot work joined or left: split every other open slot's interval here, so no past interval is repriced.
+      for (const membership of memberships) await store.checkpointSlots(membership.machine, membership.region)
+      return value
     },
     saved: (record) => savedState(record),
     async appendEvent(event, context) {
       // Count the interval before the event lands: if the append fails, the record is already counted to this phase,
       // so the next event counts from here and no second is counted twice.
-      await store.countPhase(event.workId, event.to, new Date(event.at), context.signal)
+      await store.countPhase(event.workId, event.to, new Date(event.at), event.reading, context.signal)
       const line = await store.events.append(event, context.signal)
       await store.setPhase(line.workId, line.to)
       return line

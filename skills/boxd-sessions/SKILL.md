@@ -78,8 +78,9 @@ A running machine costs money even when its session is idle; a hibernated one co
 nothing. Sleep what you are not using: hibernation keeps the disk, the memory and the session, and the next submit wakes
 it. Drop only finished, saved work. The plugin's automation harvests and hibernates finished works by itself after
 `autoSleepMinutes` when `access` is `all` or `automation` is `"on"`; nothing automatic ever drops. Read the figures with
-`tools.boxd.job({ cost: true })` or `/boxd`, never from a hook. Each answer also carries the work's machine-hours from the
-ledger, which need no owner's sign-in: `hours.existed` and `hours.running`.
+`tools.boxd.job({ cost: true })` or `/boxd`, never from a hook. Each answer also carries the work's machine-seconds and
+their estimate from the ledger, which need no owner's sign-in:
+`hours.seconds.{existed, running, asleep}` and `hours.estimate.{amount, currency, ratesSource}`.
 
 A `budget` may cap today's machine cost (`daily`) and today's running hours for this ledger's works (`machineHours`).
 With `action: "refuse"`, a call that would make a machine run answers `BUDGET_EXCEEDED` when either cap is reached;

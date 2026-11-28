@@ -13,7 +13,8 @@ import { assertHost, register } from "@we-the-rebel-alliance/plugin-contract/reg
 import { machineIdentity } from "./accounts.js"
 import { startAutomation } from "./automation.js"
 import { PLUGIN_ID } from "./constants.js"
-import { createCost } from "./cost/index.js"
+import { createCost, internalsOf } from "./cost/index.js"
+import { PUBLIC_RATES } from "./cost/rates.js"
 import { fleetStatus } from "./fleet/status.js"
 import { createHandlers } from "./handlers/index.js"
 import { createRuns } from "./handlers/runs.js"
@@ -71,11 +72,15 @@ export function createBoxdPlugin(seam: BoxdSeam = {}) {
         report,
       }
       const provider = createProvider({ boxdBin: seam.boxdBin, opencodeBin: seam.opencodeBin, helperPath: seam.helperPath })
-      const core: CoreServices = { ...hostServices, ...provider, ledger: createLedger({ ...hostServices, ...provider }) }
+      // Every phase change prices its interval at the rates current then: the cost service answers once it is built.
+      let currentRates = () => PUBLIC_RATES.EUR
+      const core: CoreServices = { ...hostServices, ...provider, ledger: createLedger({ ...hostServices, ...provider, rates: () => currentRates() }) }
       // The watcher starts before the one registration exists, so its nudge is wired to the bus just after it.
       let nudge: (() => Promise<void>) | undefined
       const watcher = createWatch(core, { changed: () => nudge?.() })
-      const fleet: FleetServices = { ...core, watch: watcher.watch, cost: createCost({ ...core, watch: watcher.watch }) }
+      const costService = createCost({ ...core, watch: watcher.watch })
+      currentRates = internalsOf(costService).rates
+      const fleet: FleetServices = { ...core, watch: watcher.watch, cost: costService }
       const source: SourceDeps = { ledger: core.ledger, identity: machineIdentity, now: () => hostServices.clock.now() }
       const { runs, selectors, actions } = createRuns(fleet)
       const cost: CostServices = { ...fleet, actions }

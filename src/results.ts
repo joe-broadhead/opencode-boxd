@@ -6,7 +6,7 @@
 import type { Code, ErrorState, WarningCode } from "./errors.js"
 import type { Phase, SavedState } from "./ledger/types.js"
 import type { RegionChoice } from "./options.js"
-import type { DoneReport, MachineId, MachineName, MachineStatus, Region, RunOutcome, SecretInfo, Size } from "./ports.js"
+import type { DoneReport, MachineId, MachineName, MachineStatus, Rates, Region, RunOutcome, SecretInfo, Size } from "./ports.js"
 
 /** The facts a refusal can carry beside its code (§3, §5). Plain JSON values only. */
 export interface ErrorFacts {
@@ -106,15 +106,30 @@ export interface WorkCost {
   readonly model: number | null
 }
 
-/** Machine-hours from the ledger alone: time the machine existed, and time it ran. */
-export interface WorkHours {
-  /** Every phase but gone and closed, in hours to two decimals. */
+/** Machine-seconds from the ledger alone: time the machine existed, ran and was asleep. */
+export interface WorkSeconds {
+  /** Every phase but gone and closed, in whole seconds. */
   readonly existed: number
-  /** The running phases of `cost/rates.ts`, in hours to two decimals. */
+  /** The running phases of `cost/rates.ts`, in whole seconds. */
   readonly running: number
+  /** `asleep`, in whole seconds. */
+  readonly asleep: number
 }
 
-/** The cost block's machine-hour sums, all from the ledger and needing no owner's sign-in. */
+/** What the machine-seconds are estimated to cost, at each interval's rates. */
+export interface WorkEstimate {
+  readonly amount: number
+  readonly currency: string
+  readonly ratesSource: Rates["source"]
+}
+
+/** One work's or sum's machine-seconds and their estimate, needing no owner's sign-in. */
+export interface WorkHours {
+  readonly seconds: WorkSeconds
+  readonly estimate: WorkEstimate
+}
+
+/** The cost block's machine-seconds and money, all from the ledger and needing no owner's sign-in. */
 export interface CostHours {
   /** Every work this ledger records. */
   readonly ledger: WorkHours
@@ -138,7 +153,7 @@ export interface AttentionItem extends Next {
   readonly lastText?: string
   readonly lastActivityAt?: string
   readonly cost?: WorkCost
-  /** With `include: ["cost"]`: the machine-hours its ledger counted, no owner's sign-in needed. */
+  /** With `include: ["cost"]`: the machine-seconds and estimate its ledger counted, no owner's sign-in needed. */
   readonly hours?: WorkHours
   /** The cached phase, because the read missed the call's budget. */
   readonly stale?: true
@@ -156,7 +171,7 @@ export interface WorkBrief {
   /** The guest's done report: it declared the whole task finished. */
   readonly done?: DoneReport
   readonly cost?: WorkCost
-  /** With `include: ["cost"]`: the machine-hours its ledger counted, no owner's sign-in needed. */
+  /** With `include: ["cost"]`: the machine-seconds and estimate its ledger counted, no owner's sign-in needed. */
   readonly hours?: WorkHours
   readonly stale?: true
 }
@@ -177,7 +192,7 @@ export interface CostBlock {
     readonly complete: boolean
     readonly unavailable?: string
   }
-  /** Machine-hours from the ledger alone: this ledger, today, and since the oldest open work. */
+  /** Machine-seconds and their estimate from the ledger alone: this ledger, today, and since the oldest open work. */
   readonly hours: CostHours
   /** With `include: ["cost"]`, at most `limit`. */
   readonly works?: ReadonlyArray<{ readonly workId: string; readonly machine: number | null; readonly model: number | null; readonly perHour: number }>
@@ -349,7 +364,7 @@ export interface JobResult extends WorkFields {
   readonly warning?: WarningCode
   readonly guestVersion: string | null
   readonly cost?: WorkCost
-  /** The machine-hours its ledger counted, always: no owner's sign-in is needed. */
+  /** The machine-seconds and estimate its ledger counted, always: no owner's sign-in is needed. */
   readonly hours: WorkHours
   readonly tail?: ReadonlyArray<{ readonly at?: string; readonly text: string }>
   readonly next: string
