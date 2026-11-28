@@ -58,6 +58,8 @@ export interface World {
   readonly sessions: FakeSessions
   readonly services: FleetServices
   readonly watcher: Watcher
+  /** Every problem the services reported, in order. */
+  readonly reports: ReadonlyArray<{ readonly area: string; readonly problem: string }>
   /** The clock every part reads; a test moves it. */
   readonly clock: { now: Date }
   /** A running work with the helper installed and one session, recorded in the ledger as `over` says. */
@@ -77,6 +79,8 @@ export async function startWorld(
     /** A fake cost port, or "real" for package E's own `createCost` over this world. */
     readonly cost?: CostPort | "real"
     readonly latencyMs?: readonly [number, number]
+    /** The watcher's changed nudge, for tests that count it. */
+    readonly changed?: () => void | Promise<void>
   } = {},
 ): Promise<World> {
   const root = tempRoot("boxd-fleet-")
@@ -85,6 +89,7 @@ export async function startWorld(
   const runtime = createProvider({ boxdBin: counter.boxdBin, opencodeBin: counter.opencodeBin })
   const sessions = new FakeSessions()
   const clock = { now: new Date("2026-11-16T10:00:00.000Z") }
+  const reports: Array<{ area: string; problem: string }> = []
   const host = {
     options: parseOptions(options.options ?? {}),
     hostVersion: "2.4.1",
@@ -92,11 +97,13 @@ export async function startWorld(
     ledgerRoot: root,
     clock: { now: () => clock.now },
     sessions: sessions.api,
-    report: () => {},
+    report: (area: string, problem: string | undefined) => {
+      if (problem !== undefined) reports.push({ area, problem })
+    },
   }
   const ledger = createLedger({ ...host, ...runtime })
   const core: CoreServices = { ...host, ...runtime, ledger }
-  const watcher = createWatch(core, { autoStart: false })
+  const watcher = createWatch(core, { autoStart: false, ...(options.changed ? { changed: options.changed } : {}) })
   const cost = options.cost === "real" ? createCost({ ...core, watch: watcher.watch }) : (options.cost ?? notBuilt<CostPort>("cost"))
   const services: FleetServices = { ...core, watch: watcher.watch, cost }
   const context = (callId: string, source: CallTag["source"] = "boxd_status"): OpContext => ({ call: { callId, source } })
@@ -190,6 +197,7 @@ export async function startWorld(
     sessions,
     services,
     watcher,
+    reports,
     clock,
     work,
     bulk,

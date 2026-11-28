@@ -219,6 +219,73 @@ describe("the sweep", () => {
   })
 })
 
+describe("the changed nudge", () => {
+  test("calls once for a sweep that appends ready -> busy", async () => {
+    let nudges = 0
+    world = await startWorld({ changed: () => { nudges += 1 } })
+    const w = world
+    const made = await w.work("phase", { busy: true })
+    const ready: WorkRecord = { ...made, lastSubmit: undefined }
+    await w.record("phase", () => ready)
+    await w.ledger.appendEvent({ at: w.clock.now.toISOString(), workId: "phase", from: null, to: "ready" }, w.context("seed", "boxd_ensure"))
+    // The first tick only seeds from the log: a restart replays no old event.
+    await w.watcher.tick()
+    expect(nudges).toBe(0)
+    later(w, 61_000)
+    await w.record("phase", (record) => ({ ...record, lastSubmit: { at: w.clock.now.toISOString(), delivery: "steer" } }))
+    await w.watcher.tick()
+    expect(nudges).toBe(1)
+    const page = await w.ledger.eventsSince(0, w.context("read"))
+    expect(page.events.map((event) => [event.workId, event.from, event.to])).toEqual([
+      ["phase", null, "ready"],
+      ["phase", "ready", "busy"],
+    ])
+  })
+
+  test("calls once for a tick that tails an event another writer appended", async () => {
+    let nudges = 0
+    world = await startWorld({ changed: () => { nudges += 1 } })
+    const w = world
+    await w.bulk([{ workId: "made", session: { rootId: "ses_made" } }])
+    await w.watcher.tick()
+    nudges = 0
+    await w.ledger.appendEvent({ at: w.clock.now.toISOString(), workId: "made", from: "starting", to: "ready" }, w.context("ensure", "boxd_ensure"))
+    await w.watcher.tick()
+    expect(nudges).toBe(1)
+  })
+
+  test("calls once for a sweep that appends several events, and not at all when nothing changed", async () => {
+    let nudges = 0
+    world = await startWorld({ changed: () => { nudges += 1 } })
+    const w = world
+    await w.work("one", { busy: true })
+    await w.work("two", { busy: true })
+    await w.watcher.tick()
+    expect(nudges).toBe(1)
+    nudges = 0
+    await w.watcher.tick()
+    expect(nudges).toBe(0)
+    w.guest.complete("ses_one")
+    w.guest.complete("ses_two")
+    later(w, 61_000)
+    await w.watcher.tick()
+    expect(nudges).toBe(1)
+  })
+
+  test("a failed call is reported and never loses the event", async () => {
+    let nudges = 0
+    world = await startWorld({ changed: () => { nudges += 1; throw new Error("the bus is down") } })
+    const w = world
+    await w.work("done", { busy: true })
+    await w.watcher.tick()
+    expect(nudges).toBe(1)
+    expect(w.reports.filter((report) => report.area === "watch")).toMatchObject([{ problem: expect.stringContaining("changed nudge") }])
+    const page = await w.ledger.eventsSince(0, w.context("read"))
+    expect(page.events.map((event) => [event.workId, event.to])).toEqual([["done", "busy"]])
+    expect(w.services.watch.snapshot().works.map((work) => [work.workId, work.phase])).toEqual([["done", "busy"]])
+  })
+})
+
 describe("notices", () => {
   /** Works that run and then go idle, each with its coordinator; made before the first sweep, as one fleet. */
   async function busyThenIdle(w: World, works: ReadonlyArray<readonly [string, string]>) {

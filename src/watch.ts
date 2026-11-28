@@ -13,6 +13,8 @@
  * - **A phase change is appended** to `events.jsonl` (`unreachable` after two failed reads in a row, `gone` after two
  *   listings in a row without the machine), handed to every subscriber in `seq` order, and queued as a notice; the
  *   queue's durable cursor per coordinator (`src/notice-cursors.ts`) keeps each change to one delivery.
+ * - **Every tick that appended or tailed an event** calls `changed` once, after all its events, so the works source's
+ *   subscribers can re-read. A tick with nothing new calls nothing, and a failed call never loses the event.
  * - **It stops** sweeping when nothing is busy, when the plugin is disposed, and after three failed sweeps in a row
  *   (`boxd_status`'s `health.watcher` says why; the next status call starts it again).
  */
@@ -60,8 +62,8 @@ export interface WatchOptions {
   /** Start the timer at once (the plugin) or not (tests, which call `tick`). */
   readonly autoStart?: boolean
   readonly intervalMs?: number
-  /** Called when a work becomes done: the plugin nudges the works source with the contract's `changed`. */
-  readonly changed?: (workId: string) => void | Promise<void>
+  /** Called once after a tick that appended or tailed at least one event: the plugin nudges the works source with the contract's `changed`. */
+  readonly changed?: () => void | Promise<void>
 }
 
 export interface Watcher {
@@ -178,19 +180,19 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
 
   /**
    * Seeds once from the ledger's cached phases (the `to` of each work's last event, with no replay of the log) and the
-   * log's newest cursor, then tails the log whenever the file changed.
+   * log's newest cursor, then tails the log whenever the file changed. Answers how many events it handed out.
    */
-  async function sync(op: OpContext): Promise<void> {
+  async function sync(op: OpContext): Promise<number> {
     // The events of one tail go out together: nothing is posted until the whole page is dispatched.
     notices.hold()
     try {
-      await tail(op)
+      return await tail(op)
     } finally {
       notices.release()
     }
   }
 
-  async function tail(op: OpContext): Promise<void> {
+  async function tail(op: OpContext): Promise<number> {
     if (!seeded) {
       const phases = await core.ledger.phases({}, op)
       const at = now()
@@ -203,21 +205,24 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
       cursor = (await core.ledger.eventsSince(0, op)).cursor
       seeded = true
       logStamp = stampOf()
-      return
+      return 0
     }
     const stamp = stampOf()
-    if (stamp === logStamp) return
+    if (stamp === logStamp) return 0
     const page = await core.ledger.eventsSince(cursor, op)
+    let tailed = 0
     for (const event of page.events) {
       if (event.seq <= cursor || dispatched.has(event.seq)) continue
       learn(event)
       // A work a change tool just closed has left the open list: its record still names its coordinator.
       const record = records.get(event.workId) ?? (await core.ledger.get(event.workId, op).catch(() => undefined))
       dispatch(event, true, record)
+      tailed += 1
     }
     cursor = Math.max(cursor, page.cursor)
     for (const seq of dispatched) if (seq <= cursor) dispatched.delete(seq)
     logStamp = stamp
+    return tailed
   }
 
   /** The event log's size and mtime: the tail reads the log only when this changed. */
@@ -270,14 +275,8 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
     logged.set(record.workId, { phase: line.to, at: line.at, seenAt: Date.now() })
     // A first sight of a work the log never named is a fact to record, not news for its coordinator.
     dispatch(line, line.from !== null)
-    if (!done) return
-    // The record keeps the report, so a restart, a sleep and a harvest keep it; then a subscriber hears the source changed.
-    await recordDone(record, done, op)
-    try {
-      await options.changed?.(record.workId)
-    } catch (error) {
-      core.report("watch", `The changed nudge for ${record.workId} failed: ${reasonOf(error)}.`)
-    }
+    // The record keeps the report, so a restart, a sleep and a harvest keep it; the tick then nudges the source changed.
+    if (done) await recordDone(record, done, op)
   }
 
   /** Keeps a done report the sweep saw in the record; a later prompt wins over it. Never throws. */
@@ -299,7 +298,7 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
     }
   }
 
-  async function sweep(open: readonly WorkRecord[], op: OpContext): Promise<void> {
+  async function sweep(open: readonly WorkRecord[], op: OpContext): Promise<number> {
     const started = Date.now()
     let listing: Listing
     try {
@@ -307,15 +306,16 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
       sweepFailures = 0
       problem = undefined
     } catch (error) {
-      if (abort.signal.aborted) return
+      if (abort.signal.aborted) return 0
       sweepFailures += 1
       problem = `The watcher's machine listing failed ${sweepFailures} ${sweepFailures === 1 ? "time" : "times"} in a row: ${reasonOf(error)}.`
       if (sweepFailures >= STOP_AFTER_FAILURES) {
         problem = `The watcher stopped after ${sweepFailures} failed sweeps in a row: ${reasonOf(error)}. boxd_status starts it again.`
         stopped = true
       }
-      return
+      return 0
     }
+    let appended = 0
     listingAt = new Date(listing.takenAt).toISOString()
     const at = now().getTime()
     const reads = open.filter((record) => wantsRead(record, listing, observed.get(record.workId), at, WATCH_READ_REUSE_MS))
@@ -335,7 +335,7 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
       }),
     )
     for (const record of open) {
-      if (abort.signal.aborted) return
+      if (abort.signal.aborted) return appended
       const previous = observed.get(record.workId)
       let phase = phaseOf(record, listing, previous)
       let absent = 0
@@ -359,13 +359,15 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
       if (last && last.seenAt > listing.takenAt && !readNow.has(record.workId)) continue
       try {
         await append(record, phase, observed.get(record.workId), op)
+        appended += 1
       } catch (error) {
-        if (abort.signal.aborted) return
+        if (abort.signal.aborted) return appended
         core.report("watch", `The watcher could not record a phase change: ${reasonOf(error)}.`)
       }
     }
     await checkTargets(open)
     lastSweepMs = Date.now() - started
+    return appended
   }
 
   /** The ground truth for orphans (§C.3): each notice target, read locally with no CLI call. */
@@ -386,9 +388,20 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
     }
   }
 
+  /** Tells the works source's subscribers, once per tick, that it appended or tailed an event. Never throws. */
+  async function notifyChanged(events: number): Promise<void> {
+    if (events === 0 || disposed) return
+    try {
+      await options.changed?.()
+    } catch (error) {
+      core.report("watch", `The changed nudge for the works source failed: ${reasonOf(error)}.`)
+    }
+  }
+
   async function tick(): Promise<void> {
     if (disposed) return
     if (current) return current
+    let events = 0
     const run = (async () => {
       const op = context()
       try {
@@ -396,18 +409,20 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
         for (const id of [...records.keys()]) if (!list.some((record) => record.workId === id)) records.delete(id)
         for (const record of list) records.set(record.workId, record)
         clearOrphans()
-        await sync(op)
+        events += await sync(op)
         const open = list.filter((record) => record.state === "open")
         if (!(auto && stopped) && wantsSweep(open)) {
           notices.hold()
           try {
-            await sweep(open, op)
+            events += await sweep(open, op)
           } finally {
             notices.release()
           }
         }
       } catch (error) {
         if (!abort.signal.aborted) core.report("watch", `The watcher's tick failed: ${reasonOf(error)}.`)
+      } finally {
+        await notifyChanged(events)
       }
     })()
     current = run
