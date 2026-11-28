@@ -17,11 +17,13 @@ import {
   type PromptAnswer,
   type ReadAnswer,
   type Reading,
+  type ReleaseAnswer,
   type RunOutcome,
   type ScrubAnswer,
   type ServeAnswer,
   type SessionMarks,
   type SetupAnswer,
+  type SlotAnswer,
   type WarmAnswer,
 } from "../../ports.js"
 import { excerpt, excerptBlock, shortReason } from "../../redact.js"
@@ -185,6 +187,17 @@ export function readRead(answer: Json, path: string): ReadAnswer {
   return { binary: false, path, bytes: answer.bytes, truncated: answer.truncated, text: answer.text }
 }
 
+export function readSlots(answer: Json): ReadonlyArray<SlotAnswer> {
+  if (!Array.isArray(answer.slots)) throw shape("slots")
+  return answer.slots.map((raw) => {
+    const item = raw as Json
+    if (!string(item?.workId) || !/^[a-z][a-z0-9-]{0,24}$/.test(item.workId) || !count(item.port) || item.port < 1 || item.port > 65535) throw shape("slots")
+    if (item.server !== "up" && item.server !== "starting" && item.server !== "down") throw shape("slots")
+    if (typeof item.busy !== "boolean") throw shape("slots")
+    return { workId: item.workId, port: item.port, server: item.server, busy: item.busy }
+  })
+}
+
 export function readHealth(answer: Json): HealthAnswer {
   const read = reading(answer.reading)
   const memory = (answer.memory ?? {}) as Json
@@ -341,9 +354,14 @@ export function readDescribe(answer: Json): DescribeAnswer {
 
 export function readScrub(answer: Json): ScrubAnswer {
   if (!Array.isArray(answer.removed) || !answer.removed.every(string)) throw shape("scrub")
-  const refused = answer.refused === "has-session" || answer.refused === "has-credential" ? answer.refused : undefined
+  const refused = answer.refused === "has-slot" || answer.refused === "has-session" || answer.refused === "has-credential" ? answer.refused : undefined
   if (answer.refused !== undefined && !refused) throw shape("scrub")
   return { removed: answer.removed, ...(refused ? { refused } : {}) }
+}
+
+export function readRelease(answer: Json): ReleaseAnswer {
+  if (!string(answer.slot) || !/^[a-z][a-z0-9-]{0,24}$/.test(answer.slot) || !Array.isArray(answer.removed) || !answer.removed.every(string)) throw shape("release")
+  return { slot: answer.slot, removed: answer.removed }
 }
 
 export function readUpgrade(answer: Json): { readonly opencode: string } {

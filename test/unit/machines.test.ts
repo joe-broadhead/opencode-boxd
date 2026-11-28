@@ -677,6 +677,19 @@ describe("boxd_golden (design §2.3, §3.11)", () => {
     expect(k.counter.fake.read().machines.filter((machine) => machine.status !== "destroyed")).toEqual([])
   })
 
+  test("a base holding work slots is refused GOLDEN_HAS_SLOT, and its builder is removed", async () => {
+    const k = await kit()
+    const disk = join(k.counter.fake.dir, "base-with-slot")
+    mkdirSync(join(disk, "home/boxd/.boxd-plugin/slots/one"), { recursive: true })
+    writeFileSync(join(disk, "home/boxd/.boxd-plugin/slots/one/port"), "4100")
+    k.counter.fake.snapshot({ region: "fra", name: "slot-base", disk })
+    const error = await errorOf(k.runs.boxd_golden({ region: "fra", from: "slot-base" }, k.call()))
+    expect(error.code).toBe("GOLDEN_HAS_SLOT")
+    expect(error.what).toContain("~/.boxd-plugin/slots")
+    expect(k.counter.fake.read().snapshots.some((snapshot) => snapshot.name === IMAGE)).toBe(false)
+    expect(k.counter.fake.read().machines.filter((machine) => machine.status !== "destroyed")).toEqual([])
+  })
+
   test("a base whose OpenCode holds a session fails GOLDEN_BUILD_FAILED; a base in another region too", async () => {
     const k = await kit()
     k.counter.fake.snapshot({ region: "fra", name: "used-machine" })

@@ -518,7 +518,7 @@ export interface HealthAnswer {
 
 export interface SetupInput {
   readonly directory: string
-  /** The work's slot on a shared machine: its work id. Absent when the work has a machine of its own. */
+  /** The work's slot on a shared machine; with none, the helper uses the machine's one home. */
   readonly slot?: string
   readonly repo?: { readonly url: string; readonly ref?: string }
   readonly git?: { readonly name: string; readonly email: string }
@@ -546,6 +546,8 @@ export interface WarmAnswer {
 
 export interface PromptInput {
   readonly directory: string
+  /** The work's slot on a shared machine; with none, the helper uses the machine's one home. */
+  readonly slot?: string
   readonly sessionId: string | null
   readonly title: string
   readonly text: string
@@ -637,35 +639,58 @@ export interface DescribeAnswer {
 /** `scrub`: what the golden build removed, step by step (design §2.3). */
 export interface ScrubAnswer {
   readonly removed: readonly string[]
-  /** A refusal: the base's OpenCode database holds a session, or it holds model or git credentials. */
-  readonly refused?: "has-session" | "has-credential"
+  /** A refusal: the base holds a work's slot, an OpenCode session, or model or git credentials. */
+  readonly refused?: "has-slot" | "has-session" | "has-credential"
+}
+
+/** One work's slot on a shared machine, as the guest helper lists it. */
+export interface SlotAnswer {
+  readonly workId: string
+  readonly port: number
+  readonly server: "up" | "starting" | "down"
+  /** Whether a session on the slot's own server is running. */
+  readonly busy: boolean
+}
+
+/** `release`: the slot's server was stopped, and its slot and work folders were removed. */
+export interface ReleaseAnswer {
+  readonly slot: string
+  readonly removed: readonly string[]
 }
 
 export interface GuestPort {
   // Reads: the read rule, the helper already on the machine, no upload, no ledger write.
   /** With `directory`, also the detached clone's progress for that work folder, so a wait needs no second `setup`. */
   serve(target: ReadTarget, input: { readonly directory?: string; readonly slot?: string }, context: OpContext): Promise<ServeAnswer>
-  phase(target: ReadTarget, input: { readonly sessionId: string; readonly tail?: number; readonly full?: boolean }, context: OpContext): Promise<PhaseAnswer>
+  phase(target: ReadTarget, input: { readonly sessionId: string; readonly slot?: string; readonly tail?: number; readonly full?: boolean }, context: OpContext): Promise<PhaseAnswer>
   read(
     target: ReadTarget,
-    input: { readonly directory: string; readonly path?: string; readonly log?: "server"; readonly tail?: number; readonly maxBytes: number },
+    input: { readonly directory: string; readonly slot?: string; readonly path?: string; readonly log?: "server"; readonly tail?: number; readonly maxBytes: number },
     context: OpContext,
   ): Promise<ReadAnswer>
   health(target: ReadTarget, context: OpContext): Promise<HealthAnswer>
   /** A machine with no record: its work checkouts, root sessions and installed OpenCode, read without a setup. */
   describe(target: ReadTarget, context: OpContext): Promise<DescribeAnswer>
+  /** The slots on the machine, each with its own port, server state and busy flag. */
+  slots(target: ReadTarget, context: OpContext): Promise<ReadonlyArray<SlotAnswer>>
 
   // Changes: under the machine lock, after the by-id check. A change uploads the v1 helper when it is missing or older.
   setup(target: ChangeTarget, input: SetupInput, context: OpContext): Promise<SetupAnswer>
   /** Keeps a repository's checkout under the helper's folder, for a golden image (#72). */
   warm(target: ChangeTarget, input: { readonly repo: { readonly url: string; readonly ref?: string } }, context: OpContext): Promise<WarmAnswer>
   prompt(target: ChangeTarget, input: PromptInput, context: OpContext): Promise<PromptAnswer>
-  interrupt(target: ChangeTarget, input: { readonly sessionId: string }, context: OpContext): Promise<void>
-  upgrade(target: ChangeTarget, input: { readonly version: string }, context: OpContext): Promise<{ readonly opencode: string }>
-  export(target: ChangeTarget, input: { readonly rootId: string; readonly partial?: boolean }, context: OpContext): Promise<ExportAnswer>
+  interrupt(target: ChangeTarget, input: { readonly sessionId: string; readonly slot?: string }, context: OpContext): Promise<void>
+  upgrade(target: ChangeTarget, input: { readonly version: string; readonly slot?: string }, context: OpContext): Promise<{ readonly opencode: string }>
+  export(target: ChangeTarget, input: { readonly rootId: string; readonly slot?: string; readonly partial?: boolean }, context: OpContext): Promise<ExportAnswer>
   /** Imports stored exports copied up with `machine cp`, parents first (`boxd_resume`). */
-  import(target: ChangeTarget, input: { readonly directory: string; readonly files: readonly string[] }, context: OpContext): Promise<{ readonly rootId: string }>
-  git(target: ChangeTarget, input: { readonly directory: string; readonly rootId?: string }, context: OpContext): Promise<GitAnswer>
+  import(
+    target: ChangeTarget,
+    input: { readonly directory: string; readonly slot?: string; readonly files: readonly string[] },
+    context: OpContext,
+  ): Promise<{ readonly rootId: string }>
+  git(target: ChangeTarget, input: { readonly directory: string; readonly slot?: string; readonly rootId?: string }, context: OpContext): Promise<GitAnswer>
+  /** Stops one slot's server and removes its slot folder and work folder, touching nothing else on the machine. */
+  release(target: ChangeTarget, input: { readonly slot: string }, context: OpContext): Promise<ReleaseAnswer>
   /** The golden build's last step on the builder (design §2.3). */
   scrub(target: ChangeTarget, context: OpContext): Promise<ScrubAnswer>
 }

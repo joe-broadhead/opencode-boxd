@@ -439,6 +439,8 @@ function exec() {
       // The helper action this exec asked for, logged beside its spawn, so a test can tell a prompt from a read.
       if (parsed && typeof parsed === "object" && typeof parsed.action === "string") logLine({ phase: "action", id: spawnId, action: parsed.action })
       if (parsed && typeof parsed === "object" && parsed.action && state.port) {
+        const slot = typeof parsed.slot === "string" ? parsed.slot : undefined
+        const port = slot ? (state.guestPorts?.[slot] ?? state.port) : state.port
         // A guest action that talks to OpenCode counts as one look at the waking server; `health` reads /proc only.
         const down =
           parsed.action !== "health" &&
@@ -448,10 +450,14 @@ function exec() {
             target.downPolls -= 1
             return true
           })
-        request = JSON.stringify({ ...parsed, base: `http://127.0.0.1:${down ? 1 : state.port}` })
+        // A slot records this setup's port and then reaches its own server by it: a base on every later action would
+        // make a helper that forgot the slot still read the right server, which is what the slot tests must catch.
+        if (parsed.action !== "slots" && (slot === undefined || parsed.action === "setup")) {
+          request = JSON.stringify({ ...parsed, base: `http://127.0.0.1:${down ? 1 : port}` })
+        }
         // The loopback server stands for one this helper already started with no declared variables.
         if (parsed.action === "setup" && !down) {
-          const names = join(root, HOME, ".boxd-plugin", "env.json")
+          const names = slot ? join(root, HOME, ".boxd-plugin", "slots", slot, "env.json") : join(root, HOME, ".boxd-plugin", "env.json")
           if (!existsSync(names)) {
             mkdirSync(dirname(names), { recursive: true, mode: 0o700 })
             writeFileSync(names, "[]")
