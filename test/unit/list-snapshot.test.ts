@@ -33,6 +33,16 @@ describe("workList", () => {
     expect(workList([work("dup"), work("dup")]).data.items).toHaveLength(1)
   })
 
+  test("shows two slot works on one shared machine as their own rows, each phase, naming the machine", () => {
+    const works = [
+      work("docs-fix", { machine: "oc-shared-team", phase: "busy", lastActivityAt: at(1) }),
+      work("review-api", { machine: "oc-shared-team", phase: "idle", lastActivityAt: at(0) }),
+    ]
+    const items = workList(works).data.items
+    expect(items.map((item) => item.id)).toEqual(["docs-fix", "review-api"])
+    expect(items.map((item) => item.text)).toEqual(["busy on oc-shared-team", "idle on oc-shared-team"])
+  })
+
   test("keeps the whole answer inside the declared maxBytes", () => {
     const maximal = Array.from({ length: 50 }, (_, index) => work(`w${index}`.padEnd(25, "z"), { lastActivityAt: at(index) }))
     const answer = workList(maximal, "studio-mac", at(0))

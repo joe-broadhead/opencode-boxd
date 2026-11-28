@@ -57,6 +57,9 @@ export function assertWorkIdInput(value: unknown, field = "workId"): string {
   return value
 }
 
+/** The guest helper's slot input for a work: its id on a shared machine, and nothing on a machine of its own. */
+export const slotOf = (record: WorkRecord): { readonly slot?: string } => (record.slot === true ? { slot: record.workId } : {})
+
 /** The open record for a work id, or `NOT_OURS`: the ledger has no open work by that id. */
 export function openRecord(record: WorkRecord | undefined, workId: string): WorkRecord {
   if (!record || record.state !== "open") {

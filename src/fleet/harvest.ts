@@ -34,6 +34,7 @@ import {
   openRecord,
   optionalBoolean,
   optionalString,
+  slotOf,
   untilRunning,
   withoutWarning,
   withTarget,
@@ -179,7 +180,7 @@ async function fetch(
   let exported: Exported | undefined
   const exports: Array<{ staged: StagedFile; bytes: number; sha256: string }> = []
   if (rootId) {
-    const answer = await services.guest.export(target, { rootId, ...(item.partial ? { partial: true } : {}) }, op)
+    const answer = await services.guest.export(target, { rootId, ...slotOf(record), ...(item.partial ? { partial: true } : {}) }, op)
     if (answer.outcome === "busy") throw boxdError("SESSION_BUSY", `The session on ${record.machine} is still running (${answer.reason}).`)
     exported = answer
     if (services.hostVersion !== null && exported.guestVersion !== services.hostVersion) {
@@ -242,7 +243,7 @@ const NO_GIT: GitAnswer = { known: false, remote: null, branch: null, sha: null,
  */
 async function gitFacts(services: Services, target: ChangeTarget, record: WorkRecord, op: OpContext): Promise<GitAnswer> {
   try {
-    return await services.guest.git(target, { directory: record.guestDirectory }, op)
+    return await services.guest.git(target, { directory: record.guestDirectory, ...slotOf(record) }, op)
   } catch (error) {
     if (error instanceof BoxdError && error.code === "GIT_UNKNOWN") return NO_GIT
     throw error

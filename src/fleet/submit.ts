@@ -30,6 +30,7 @@ import {
   openRecord,
   optionalString,
   pause,
+  slotOf,
   untilRunning,
   withTarget,
   type WorkContext,
@@ -39,6 +40,8 @@ import {
 const SESSION = /^ses_[A-Za-z0-9_-]{1,80}$/
 /** Where a file waits on the guest until the `prompt` exec moves it into the work tree. */
 const STAGING = "/home/boxd/.boxd-plugin/staging"
+/** Where a slot work's files wait on the guest: its own slot folder, never the machine's shared one. */
+const stagingOf = (record: WorkRecord) => (record.slot === true ? `/home/boxd/.boxd-plugin/slots/${record.workId}/staging` : STAGING)
 /** The most `parentID` steps the root walk takes (design §3.5). */
 const ROOT_WALK = 16
 /** How often a woken machine's guest is read while its OpenCode starts: the second `untilRunning` polls at. */
@@ -131,8 +134,9 @@ export async function submitWork(services: Services, item: SubmitItem, context: 
         // A woken machine shows running before its guest's OpenCode answers; the prompt waits for it in this call.
         if (woke) await untilServing(services, record, target, op, deadline)
         const staged = []
+        const staging = stagingOf(record)
         for (const [index, file] of files.entries()) {
-          const guestPath = `${STAGING}/${randomBytes(6).toString("hex")}-${index}`
+          const guestPath = `${staging}/${randomBytes(6).toString("hex")}-${index}`
           await services.boxd.copyTo(target, file.path, guestPath, op)
           staged.push({ staged: guestPath, to: file.to })
         }
@@ -143,6 +147,7 @@ export async function submitWork(services: Services, item: SubmitItem, context: 
           target,
           {
             directory: record.guestDirectory,
+            ...slotOf(record),
             sessionId: record.session?.rootId ?? null,
             title: item.title ?? record.title ?? record.workId,
             text: item.text,
@@ -227,7 +232,7 @@ async function untilServing(services: Services, record: WorkRecord, target: Chan
     try {
       const { listing, row } = await listed(services, target.region, target.name, op)
       if (row?.status === "running") {
-        const served = await services.guest.serve({ region: target.region, name: target.name, listing, machineId: target.machineId }, { directory: record.guestDirectory }, op)
+        const served = await services.guest.serve({ region: target.region, name: target.name, listing, machineId: target.machineId }, { directory: record.guestDirectory, ...slotOf(record) }, op)
         if (served.server === "up") return
         last = served.server === "down" ? "down" : "starting"
       }

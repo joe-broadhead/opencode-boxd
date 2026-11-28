@@ -140,7 +140,7 @@ export function readGuest(
 ): Promise<PhaseAnswer> {
   const sessionId = record.session!.rootId!
   const target = readTarget(record, listing)
-  return services.guest.phase(target, { sessionId, ...(input.tail ? { tail: input.tail } : {}), ...(input.full ? { full: true } : {}) }, context)
+  return services.guest.phase(target, { sessionId, ...(record.slot === true ? { slot: record.workId } : {}), ...(input.tail ? { tail: input.tail } : {}), ...(input.full ? { full: true } : {}) }, context)
 }
 
 /** A guest answer as what the plugin knows: the phase, the run, a §5 code for a failure, and the cut guest text. */

@@ -372,7 +372,7 @@ export async function sessionState(machines: Machines, record: WorkRecord, targe
   try {
     const answer = await readOnce(async () => {
       const read = await readTarget(machines, target.region, target.name, target.machineId, op)
-      return machines.services.guest.phase(read, { sessionId }, op)
+      return machines.services.guest.phase(read, { sessionId, ...(record.slot === true ? { slot: record.workId } : {}) }, op)
     })
     return answer === undefined ? "unknown" : answer.phase
   } catch (error) {
@@ -1061,7 +1061,7 @@ export async function ensureOne(machines: Machines, item: EnsureItem, context: I
       if (behind && !noTime) {
         const session = await sessionState(machines, current, target, op)
         if (session === "none" || session === "idle") {
-          const answer = await guestStep(machines, target, item, op, () => guest.upgrade(target, { version: hostVersion! }, op))
+          const answer = await guestStep(machines, target, item, op, () => guest.upgrade(target, { version: hostVersion!, ...(current.slot === true ? { slot: current.workId } : {}) }, op))
           rebooted ||= answer.rebooted
           guestVersion = answer.value.opencode
           upgraded = true

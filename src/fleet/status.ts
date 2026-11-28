@@ -97,7 +97,7 @@ export function workList(works: readonly WorkBrief[], account?: string, asOf = n
   for (const work of newest) {
     if (items.length >= LIST_CAP) break
     const id = work.workId.replace(CONTROLS, "").slice(0, 128)
-    const full = `${work.phase}${work.outcome === null ? "" : `, ${work.outcome}`}${work.done ? ", done" : ""}`.replace(CONTROLS, " ").replace(/\s+/g, " ").trim()
+    const full = `${work.phase}${work.outcome === null ? "" : `, ${work.outcome}`}${work.done ? ", done" : ""}${work.machine === undefined ? "" : ` on ${work.machine}`}`.replace(CONTROLS, " ").replace(/\s+/g, " ").trim()
     if (id === "" || full === "" || seen.has(id) || secretKinds(id).length > 0 || secretKinds(full).length > 0) continue
     const note = work.saved.replace(CONTROLS, " ").slice(0, 200)
     seen.add(id)
@@ -493,6 +493,7 @@ export async function fleetStatus(services: FleetServices, input: StatusInput, c
     const done = row.phase === "idle" || row.phase === "asleep" ? doneOf(row.record, row.observed) : undefined
     return {
       workId: row.record.workId,
+      ...(row.record.slot === true ? { machine: row.record.machine } : {}),
       region: row.record.region,
       phase: row.phase,
       outcome: outcomeOf(row.record, row.observed),
