@@ -168,6 +168,8 @@ export interface WorkRecord {
   readonly pendingCreate?: { readonly at: string; readonly image: string }
   /** Set by `boxd_reassign` before the rename; the next `ensure` for either id finishes it. */
   readonly pendingRename?: { readonly from: string; readonly machineId: MachineId; readonly at: string }
+  /** Set when `boxd_ensure({ select: "orphans" })` adopted a machine that no record owned. */
+  readonly adopted?: { readonly at: string; readonly from: "orphan" }
   readonly reboots?: ReadonlyArray<{ readonly at: string; readonly why: "agent-silent" | "repair" }>
   /** The machine-hours the watcher has counted for this work; absent until its first phase change. */
   readonly hours?: MeteredHours

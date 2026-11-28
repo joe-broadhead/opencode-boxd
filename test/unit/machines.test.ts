@@ -3,10 +3,11 @@
 // id, regions and MACHINE_LIMIT, the budget, the creation flags, golden builds and their scrub, reassign, resume, and
 // the §4.4 spawn budgets of ensure.
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test"
+import { Database } from "bun:sqlite"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import type { WorkRecord } from "../../src/ledger/types.js"
-import type { EnsureResult, ListResult, Refusal, ResumeResult, GoldenResult } from "../../src/results.js"
+import type { EnsureResult, ListResult, OrphanResult, Refusal, ResumeResult, GoldenResult } from "../../src/results.js"
 import { budgetProblems, SPAWN_BUDGETS } from "../support/spawn-count.js"
 import { startKit, VERSION, workRecord, type Kit } from "../support/machines-kit.js"
 
@@ -274,6 +275,106 @@ describe("boxd_ensure: adoption (L-b)", () => {
     const result = (await k.runs.boxd_ensure({ workId: "landed" }, k.call())) as EnsureResult
     expect(result).toMatchObject({ state: "ready", machineId: machine.id, created: false })
     expect((await k.record("landed"))?.pendingCreate).toBeUndefined()
+  })
+})
+
+describe("boxd_ensure select orphans", () => {
+  /** An orphan machine with the helper installed and a checkout in its work folder, as an operator's own session leaves it. */
+  async function seeded(k: Kit, workId: string, labels: Record<string, string>, options: { status?: string; remote?: string; session?: { busy: boolean; needsInput?: boolean } } = {}) {
+    const machine = k.counter.fake.machine({ name: `oc-${workId}`, region: "fra", labels })
+    await k.install(machine.region, machine.name, machine.id)
+    if (options.status) k.counter.fake.update((state) => { state.machines.find((entry) => entry.id === machine.id)!.status = options.status! })
+    const directory = join(k.counter.fake.disk(machine), "home/boxd/work", workId)
+    Bun.spawnSync(["git", "-C", directory, "init", "--quiet"])
+    writeFileSync(join(directory, "README.md"), `# ${workId}\n`)
+    Bun.spawnSync(["git", "-C", directory, "add", "."])
+    Bun.spawnSync(["git", "-C", directory, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "--quiet", "-m", "init"])
+    if (options.remote) Bun.spawnSync(["git", "-C", directory, "remote", "add", "origin", options.remote])
+    if (options.session) {
+      k.guest.sessions.set(`ses_${workId}`, { id: `ses_${workId}`, busy: options.session.busy, directory: `/home/boxd/work/${workId}`, messages: [], inbox: [], updated: Date.now() })
+      if (options.session.needsInput) k.guest.pending.set(`ses_${workId}`, "permission")
+      // The guest's describe reads root sessions from the OpenCode store; the fake server only answers the live state.
+      const store = join(k.counter.fake.disk(machine), "home/boxd/.local/share/opencode")
+      mkdirSync(store, { recursive: true })
+      const db = new Database(join(store, "opencode.db"))
+      db.run("create table session_v2 (id text, parent_id text, directory text, time_busy integer, time_idle integer)")
+      db.run("insert into session_v2 values (?, ?, ?, ?, ?)", [`ses_${workId}`, null, `/home/boxd/work/${workId}`, options.session.busy ? 2 : null, options.session.busy ? null : 2])
+      db.close()
+    }
+    return machine
+  }
+
+  test("adopts the busy and idle orphans only, with their records and labels, and touches neither tree nor server", async () => {
+    const k = await kit({ options: { keep: ["team=lead"] } })
+    const busy = await seeded(k, "busy", { owner: "boxd", role: "session", work: "busy" }, { remote: "https://github.com/o/busy", session: { busy: true } })
+    const idle = await seeded(k, "idle", { owner: "boxd", role: "session", work: "idle" }, { remote: "https://github.com/o/idle", session: { busy: false } })
+    k.counter.fake.machine({ name: "oc-theirs", region: "fra", labels: { owner: "boxd", role: "session", work: "theirs", ledger: "ffffffffff" } })
+    k.counter.fake.machine({ name: "lead-boxd", region: "fra", labels: { team: "lead" } })
+    k.counter.fake.machine({ name: "oc-not-a-session", region: "fra", labels: {} })
+    const before = new Map([busy, idle].map((machine) => [machine.id, readFileSync(join(k.counter.fake.disk(machine), ".opencode-version"), "utf8")]))
+    k.reset()
+    const started = Date.now()
+    const result = (await k.runs.boxd_ensure({ select: "orphans" }, k.call())) as ListResult<OrphanResult>
+    expect(result.select).toBe("orphans")
+    expect(result.results.filter((item) => item.state === "adopted").map((item) => [(item as OrphanResult).workId, (item as OrphanResult).why])).toEqual([
+      ["busy", "busy; adopted and left running"],
+      ["idle", "idle; adopted and left running"],
+    ])
+    const ledger = await k.services.ledger.id({ call: { callId: "id", source: "boxd_ensure" } })
+    const records = await Promise.all([k.record("busy"), k.record("idle")])
+    expect(records[0]).toMatchObject({
+      state: "open",
+      region: "fra",
+      machineId: busy.id,
+      guestDirectory: "/home/boxd/work/busy",
+      repo: { url: "https://github.com/o/busy" },
+      session: { rootId: "ses_busy" },
+      adopted: { from: "orphan" },
+    })
+    expect(records[1]).toMatchObject({ machineId: idle.id, guestDirectory: "/home/boxd/work/idle", session: { rootId: "ses_idle" } })
+    const labels = new Map(k.counter.fake.read().machines.map((machine) => [machine.id, machine.labels]))
+    for (const [machine, workId] of [[busy, "busy"], [idle, "idle"]] as const) {
+      expect(labels.get(machine.id)).toMatchObject({ owner: "boxd", role: "session", work: workId, ledger })
+    }
+    expect(labels.get("vm_0003")).toEqual({ owner: "boxd", role: "session", work: "theirs", ledger: "ffffffffff" })
+    expect(labels.get("vm_0004")).toEqual({ team: "lead" })
+    expect(labels.get("vm_0005")).toEqual({})
+    // No setup, clone, upgrade, resize or wake ran: the only guest action is describe.
+    expect(k.counter.fake.spawns().filter((spawn) => spawn.startedAt >= started && spawn.action).map((spawn) => spawn.action)).toEqual(["describe", "describe"])
+    expect(k.calls().some((call) => /^machine (new|cp|resize|reboot|wake|hibernate)/.test(call))).toBe(false)
+    for (const machine of [busy, idle]) expect(readFileSync(join(k.counter.fake.disk(machine), ".opencode-version"), "utf8")).toBe(before.get(machine.id) ?? "")
+    // The machines stay running, as adopted.
+    expect(k.counter.fake.read().machines.filter((machine) => [busy.id, idle.id].includes(machine.id)).every((machine) => machine.status === "running")).toBe(true)
+
+    k.reset()
+    const againStarted = Date.now()
+    const again = (await k.runs.boxd_ensure({ select: "orphans" }, k.call())) as ListResult<OrphanResult>
+    expect(again.results.filter((item) => item.state === "adopted")).toEqual([])
+    expect(k.calls().some((call) => call.startsWith("machine label"))).toBe(false)
+    expect(k.counter.fake.spawns().filter((spawn) => spawn.startedAt >= againStarted && spawn.action)).toEqual([])
+  })
+
+  test("a describe that fails is skipped with its error, and no record is written", async () => {
+    const k = await kit()
+    k.counter.fake.machine({ name: "oc-unready", region: "fra", labels: { owner: "boxd", role: "session", work: "unready" } })
+    const result = (await k.runs.boxd_ensure({ select: "orphans" }, k.call())) as ListResult<OrphanResult>
+    expect(result.results).toHaveLength(1)
+    expect(result.results[0]).toMatchObject({ state: "skipped", machine: "oc-unready", workId: "unready", error: "GUEST_FAILED" })
+    expect((result.results[0] as OrphanResult).why).toContain("describe failed")
+    expect(await k.record("unready")).toBeUndefined()
+    expect(k.calls().some((call) => call.startsWith("machine label"))).toBe(false)
+  })
+
+  test("a hibernated orphan is woken to be read, then adopted with nothing else changed", async () => {
+    const k = await kit()
+    const machine = await seeded(k, "sleepy", { owner: "boxd", role: "session", work: "sleepy" }, { status: "hibernated" })
+    k.reset()
+    const started = Date.now()
+    const result = (await k.runs.boxd_ensure({ select: "orphans" }, k.call())) as ListResult<OrphanResult>
+    expect(result.results[0]).toMatchObject({ state: "adopted", machine: "oc-sleepy", workId: "sleepy" })
+    expect(k.calls()).toContain(`machine wake ${machine.id} --region fra --json`)
+    expect(k.counter.fake.read().machines.find((entry) => entry.id === machine.id)?.status).toBe("running")
+    expect(k.counter.fake.spawns().filter((spawn) => spawn.startedAt >= started && spawn.action).map((spawn) => spawn.action)).toEqual(["describe"])
   })
 })
 

@@ -2,7 +2,7 @@
 // contract's status and probe answers validate, the access rules are generated for each level, a read runs at every
 // level, a change asks at ask-changes and is denied at read-only, and the one RPC id carries every method.
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test"
-import { readFileSync } from "node:fs"
+import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { agentRules, attempt, cleanup, effect, HOST_VERSION, session, startHost, statusThroughRpc, until } from "./harness.js"
 
@@ -146,6 +146,63 @@ describe("the plugin on OpenCode 2.4.1", () => {
       expect(posted).toContain("boxd status")
       expect(posted).toContain("- Next step:")
       expect(posted).toContain("- Access:")
+    } finally {
+      await host.close()
+    }
+  })
+
+  test("boxd_ensure select orphans adopts the busy and idle orphans, and changes neither tree nor server", async () => {
+    const host = await startHost({ options: { keep: ["team=lead"] } })
+    try {
+      const sessionID = await session(host, "build")
+      const seed = await attempt(host, sessionID, "build", "boxd_ensure", "reject", { workId: "seed" })
+      expect(seed.ok).toBe(true)
+      const seedMachine = host.boxd.machines().find((machine) => machine.name === "oc-seed")!
+      const helper = join(host.boxd.fake.disk(seedMachine), "home/boxd/.boxd-plugin")
+      const orphan = (name: string, labels: Record<string, string>) => {
+        const machine = host.boxd.seed(name, { region: "fra", status: "running", labels })
+        cpSync(helper, join(host.boxd.fake.disk(machine), "home/boxd/.boxd-plugin"), { recursive: true })
+        return machine
+      }
+      const busy = orphan("oc-busy", { owner: "boxd", role: "session", work: "busy" })
+      const idle = orphan("oc-idle", { owner: "boxd", role: "session", work: "idle" })
+      host.boxd.seed("oc-theirs", { region: "fra", status: "running", labels: { owner: "boxd", role: "session", work: "theirs", ledger: "ffffffffff" } })
+      host.boxd.seed("lead-boxd", { region: "fra", status: "running", labels: { team: "lead" } })
+      host.boxd.seed("oc-operator", { region: "fra", status: "running", labels: {} })
+      for (const [machine, workId, busySession] of [[busy, "busy", true], [idle, "idle", false]] as const) {
+        const directory = join(host.boxd.fake.disk(machine), "home/boxd/work", workId)
+        mkdirSync(directory, { recursive: true })
+        Bun.spawnSync(["git", "-C", directory, "init", "--quiet"])
+        writeFileSync(join(directory, "README.md"), `# ${workId}\n`)
+        Bun.spawnSync(["git", "-C", directory, "add", "."])
+        Bun.spawnSync(["git", "-C", directory, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "--quiet", "-m", "init"])
+        host.guest.sessions.set(`ses_${workId}`, { id: `ses_${workId}`, busy: busySession, directory: `/home/boxd/work/${workId}`, messages: [], inbox: [], updated: Date.now() })
+      }
+      host.boxd.fake.update((state) => { state.log = [] })
+      const started = Date.now()
+      const result = await attempt(host, sessionID, "build", "boxd_ensure", "reject", { select: "orphans" })
+      expect(result.ok).toBe(true)
+      const output = result.output as { select?: string; results: Array<{ state: string; workId?: string; why: string }> }
+      expect(output.select).toBe("orphans")
+      expect(output.results.filter((item) => item.state === "adopted").map((item) => item.workId)).toEqual(["busy", "idle"])
+      const labels = new Map(host.boxd.machines().map((machine) => [machine.name, machine.labels]))
+      const ledgerId = labels.get("oc-busy")!.ledger
+      expect(ledgerId).toMatch(/^[0-9a-f]{10}$/)
+      expect(labels.get("oc-busy")).toMatchObject({ owner: "boxd", role: "session", work: "busy", ledger: ledgerId })
+      expect(labels.get("oc-idle")).toMatchObject({ owner: "boxd", role: "session", work: "idle", ledger: ledgerId })
+      expect(labels.get("oc-theirs")).toEqual({ owner: "boxd", role: "session", work: "theirs", ledger: "ffffffffff" })
+      expect(labels.get("lead-boxd")).toEqual({ team: "lead" })
+      expect(labels.get("oc-operator")).toEqual({})
+      expect(host.boxd.calls().some((call) => /^machine (new|cp|resize|reboot|wake|hibernate)/.test(call))).toBe(false)
+      expect(host.boxd.fake.spawns().filter((spawn) => spawn.startedAt >= started && spawn.action).map((spawn) => spawn.action)).toEqual(["describe", "describe"])
+      // A second call adopts nothing, and touches no machine.
+      host.boxd.fake.update((state) => { state.log = [] })
+      const againStarted = Date.now()
+      const again = await attempt(host, sessionID, "build", "boxd_ensure", "reject", { select: "orphans" })
+      expect(again.ok).toBe(true)
+      expect((again.output as { results: Array<{ state: string }> }).results.filter((item) => item.state === "adopted")).toEqual([])
+      expect(host.boxd.calls().some((call) => call.startsWith("machine label"))).toBe(false)
+      expect(host.boxd.fake.spawns().filter((spawn) => spawn.startedAt >= againStarted && spawn.action)).toEqual([])
     } finally {
       await host.close()
     }

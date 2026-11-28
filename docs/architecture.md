@@ -39,6 +39,20 @@ another ledger's label is left alone. `boxd_ensure` refuses to adopt such a mach
 label. The label lets one operator tell another operator's live work from a machine that no work
 owns, because a ledger lives on its operator's machine.
 
+## Machine classes and orphans
+
+The fleet status classifies every machine in the organisation: a work in this ledger, a work in another ledger (its
+`ledger=` label is not this ledger's id), a kept machine (it matches a selector in the `keep` option), a golden builder,
+or an orphan. An orphan also says why it has no owner: no ledger label, this ledger's label without a record, or only the
+plugin's legacy labels. Only a session machine is actionable: `role=session`, or an `oc-<id>` name with the legacy
+labels. Any other orphan is listed with the next step "label it, or add a selector to keep", and no rule ever acts on it.
+
+`boxd_ensure({ select: "orphans" })` adopts every actionable orphan: it reads the guest's `describe`, writes a record
+from the machine's own folder, repository and root session, and sets this ledger's labels. It changes nothing on the
+machine's tree, OpenCode or sessions: no setup, clone, upgrade or resize. A busy orphan, or one waiting on a person, is
+adopted and left running. An orphan whose `describe` fails is skipped with its error, and no record is written from a
+guess.
+
 ## What is cached
 
 - One machine listing is shared by every caller that accepts an age; a read that needs a fresh one (the "gone" rule)

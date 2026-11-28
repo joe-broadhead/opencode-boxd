@@ -57,6 +57,11 @@ None.
 - **Changes.** `ensure` makes a work exist and converges it; `submit` admits a prompt; `harvest` exports the session
   tree and copies the files back; `sleep` hibernates; `resume` wakes or rebuilds; `reassign` moves an unstarted work's
   machine to a new id; `golden` builds, lists or prunes golden images. Every one of them emits `changed`.
+- **Orphans.** The fleet status classifies every machine as a work here, another ledger's work, kept by a `keep` selector,
+  a golden builder, or an orphan with its reason and whether the plugin may act on it. `ensure` with
+  `{ select: "orphans" }` adopts every actionable orphan: it reads the guest's `describe`, writes a record and sets this
+  ledger's labels, without setup, clone, upgrade or resize. A busy or waiting orphan is adopted and left running; one
+  whose `describe` fails is skipped with its error.
 - **`exec`** is class `admin` with `effect: "ask"`: it asks even at `access: "all"`. It runs one command on the guest and
   can print a secret that is not host-bound.
 - **`drop`** is class `delete`. It refuses unless the work is saved, its git tree is known, every untracked or ignored

@@ -39,9 +39,10 @@ The plugin's methods, their classes and their operations are in the capabilities
 ## Options
 
 Set options under the plugin entry in `opencode.json`: `access` (`all`, `ask-changes` or `read-only`), `regions` (where a
-new machine and a new golden image may be placed), `region`, `size`, `automation` (the plugin's own harvest and
-hibernation of finished works), `autoSleepMinutes`, `budget`, `git` and `allowUntestedHost`. Every option and its default
-is in [docs/configuration.md](docs/configuration.md).
+new machine and a new golden image may be placed), `region`, `size`, `keep` (label selectors for machines owned
+elsewhere, such as leads and runners), `automation` (the plugin's own harvest and hibernation of finished works),
+`autoSleepMinutes`, `budget`, `git` and `allowUntestedHost`. Every option and its default is in
+[docs/configuration.md](docs/configuration.md).
 
 ## Capabilities
 

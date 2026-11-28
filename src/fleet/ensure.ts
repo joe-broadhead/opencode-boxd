@@ -44,6 +44,7 @@ import {
   LEDGER_LABEL,
   WORK_LABELS,
   type ChangeTarget,
+  type DescribeAnswer,
   type FetchedMachine,
   type MachineId,
   type MachineInfo,
@@ -57,11 +58,12 @@ import {
 } from "../ports.js"
 import type { Phase, WorkRecord } from "../ledger/types.js"
 import { LEDGER_FORMAT } from "../ledger/types.js"
-import type { EnsureResult, ListResult } from "../results.js"
+import type { EnsureResult, ListResult, OrphanResult } from "../results.js"
 import type { FleetServices } from "../services.js"
 import type { CallContext } from "../call.js"
 import { imageName, STILL_BUILDING, type Golden } from "./golden.js"
 import { runList, runOne, type ItemContext } from "./list.js"
+import { classReason, classifyMachines, type Classified } from "./orphans.js"
 import { pause } from "./sessions-common.js"
 import { inUseOf, limitAtCreate, pickRegion, regionsText, type InFlight, type InUse } from "./regions.js"
 
@@ -899,10 +901,171 @@ function itemText(raw: unknown): string {
   return Object.keys(value).length === 1 ? `{ workId: "${String(value.workId)}" }` : JSON.stringify(value)
 }
 
-/** `boxd_ensure`: the single form or the list form. */
-export async function runEnsure(machines: Machines, input: Record<string, unknown>, call: CallContext, finishRename: (record: WorkRecord, op: OpContext) => Promise<WorkRecord>): Promise<EnsureResult | ListResult<EnsureResult>> {
+/** A skipped orphan: the machine, why it was left alone, and the one call that adopts it later. */
+function skippedOrphan(item: Classified, why: string, next: string | undefined, error?: OrphanResult["error"]): OrphanResult {
+  return {
+    state: "skipped",
+    machine: item.row.name,
+    region: item.row.region,
+    machineId: item.row.id,
+    ...(item.workId ? { workId: item.workId } : {}),
+    why,
+    ...(error ? { error } : {}),
+    ...(next ? { next } : {}),
+  }
+}
+
+/** The checkout a work's id names, else the first one the guest described. */
+function checkoutFor(described: DescribeAnswer, workId: string) {
+  const canonical = workDirectory(workId)
+  return described.works.find((checkout) => checkout.directory === canonical) ?? described.works[0]
+}
+
+/** The root session in that checkout, else the first root the guest described. */
+function sessionFor(described: DescribeAnswer, directory: string | undefined) {
+  return described.sessions.find((session) => directory !== undefined && session.directory === directory) ?? described.sessions[0]
+}
+
+/** What an adopted machine's record says it was: no setup ran, so the machine's own facts are the record's. */
+function adoptedRecord(machines: Machines, item: Classified, id: NonNullable<Classified["row"]["id"]>, workId: string, described: DescribeAnswer, checkout: ReturnType<typeof checkoutFor>, session: ReturnType<typeof sessionFor>): WorkRecord {
+  const at = new Date(machines.now()).toISOString()
+  const size = item.row.size ?? machines.services.options.size
+  const version = described.opencode ?? machines.services.hostVersion
+  return {
+    format: LEDGER_FORMAT,
+    workId,
+    state: "open",
+    region: item.row.region,
+    machine: item.row.name as MachineName,
+    machineId: id,
+    size,
+    image: { name: imageName(machines.services.options.goldenPrefix, version ?? "unknown", size), opencode: version },
+    laptopDirectory: machines.services.projectDirectory,
+    guestDirectory: checkout?.directory ?? workDirectory(workId),
+    ...(checkout?.remote ? { repo: { url: checkout.remote } } : {}),
+    ...(session ? { session: { rootId: session.id } } : {}),
+    createdAt: at,
+    touchedAt: at,
+    adopted: { at, from: "orphan" },
+  }
+}
+
+/**
+ * One orphan: read its guest's describe, set this ledger's labels and write a record. It changes nothing on the
+ * machine's tree, OpenCode or sessions: no setup, clone, upgrade or resize runs. A busy or waiting orphan is adopted
+ * and left running; a describe that fails is skipped with its error, so nothing is recorded from a guess.
+ */
+async function adoptOrphan(machines: Machines, item: Classified, context: ItemContext, op: OpContext, records: readonly WorkRecord[], ledgerId: string): Promise<OrphanResult> {
+  const { boxd, guest, ledger, runner } = machines.services
+  const row = item.row
+  if (item.machineClass !== "orphan") {
+    return skippedOrphan(item, classReason(item), item.machineClass === "work" && item.workId ? `boxd_ensure({ workId: ${JSON.stringify(item.workId)} }) converges it` : "leave it: an owner names it")
+  }
+  if (!item.actionable) return skippedOrphan(item, "it is not a session machine", "label it, or add a selector to keep")
+  const workId = item.workId
+  if (!workId) return skippedOrphan(item, "its name is not oc-<id>, so no work id can be recorded", 'rename it to oc-<id> with boxd machine rename, then boxd_ensure({ select: "orphans" })')
+  if (records.some((record) => record.workId === workId)) {
+    return skippedOrphan(item, `the work ${workId} is already in this ledger`, `boxd_ensure({ workId: ${JSON.stringify(workId)} }) converges it`)
+  }
+  if (row.sharing === "shared") return skippedOrphan(item, "it is shared with the organisation", "leave it: a shared machine loses its guest sign-in when shared")
+  if (row.isolated) return skippedOrphan(item, "it is isolated", "leave it: an isolated machine has no git integration or in-VM CLI")
+  const id = row.id ?? (await boxd.get(row.region, row.name, op)).id
+  const holder = records.find((record) => record.machineId === id)
+  if (holder) return skippedOrphan(item, `machine ${id} is what the open work ${holder.workId} records`, `boxd_ensure({ workId: ${JSON.stringify(holder.workId)} }) converges it`)
+
+  if (sleeping(row.status)) {
+    await checkBudget(machines, op)
+    if (!context.room(TIMEOUTS.helperChange)) return skippedOrphan(item, "there is not enough time left in this call to wake the machine", 'boxd_ensure({ select: "orphans" }) tries again', "MACHINE_STARTING")
+    await runner.withMachineLock({ id }, op, async () => {
+      const owned = await boxd.checkOwned(row.region, row.name as MachineName, id, op)
+      await boxd.wake(owned.target, op)
+    })
+  } else if (row.status !== "running") {
+    return skippedOrphan(item, `the machine is ${row.status}`, `boxd machine wake ${row.name} --region ${row.region}, then boxd_ensure({ select: "orphans" })`)
+  }
+
+  let described: DescribeAnswer | undefined
+  try {
+    const read = await readTarget(machines, row.region, row.name as MachineName, id, op)
+    described = await readOnce(() => guest.describe(read, op))
+  } catch (error) {
+    const code = error instanceof BoxdError ? error.code : "GUEST_FAILED"
+    const why = error instanceof BoxdError ? error.what : String(error)
+    return skippedOrphan(item, `the guest's describe failed: ${why}`, 'boxd_ensure({ select: "orphans" }) tries again', code)
+  }
+  if (!described) return skippedOrphan(item, "the guest's describe was not made: the machine did not become readable", 'boxd_ensure({ select: "orphans" }) tries again', "MACHINE_STARTING")
+
+  // Labels first: a record that failed after them is found again as this ledger's orphan, and adopted next call.
+  try {
+    await runner.withMachineLock({ id }, op, async () => {
+      const owned = await boxd.checkOwned(row.region, row.name as MachineName, id, op)
+      const labels = missingLabels(row.labels, workId, ledgerId, true)
+      if (Object.keys(labels).length > 0) await boxd.setLabels(owned.target, labels, op)
+    })
+  } catch (error) {
+    const code = error instanceof BoxdError ? error.code : "BOXD_FAILED"
+    const why = error instanceof BoxdError ? error.what : String(error)
+    return skippedOrphan(item, `its labels were not set: ${why}`, 'boxd_ensure({ select: "orphans" }) tries again', code)
+  }
+
+  const checkout = checkoutFor(described, workId)
+  const session = sessionFor(described, checkout?.directory)
+  const record = adoptedRecord(machines, item, id, workId, described, checkout, session)
+  try {
+    await ledger.update([workId], async (current) => {
+      if (current.get(workId)?.state === "open") throw boxdError("NOT_OURS", `The work ${workId} was adopted by another call while this one read its machine; nothing was recorded.`)
+      return { write: [record], value: undefined }
+    }, op)
+  } catch (error) {
+    const code = error instanceof BoxdError ? error.code : "LEDGER_FAILED"
+    const why = error instanceof BoxdError ? error.what : String(error)
+    return skippedOrphan(item, `its record was not written: ${why}`, 'boxd_ensure({ select: "orphans" }) tries again', code)
+  }
+  const why = session?.needsInput ? "waiting on a person; adopted and left running" : session?.busy ? "busy; adopted and left running" : session ? "idle; adopted and left running" : "adopted with no root session"
+  return {
+    state: "adopted",
+    machine: row.name,
+    region: row.region,
+    machineId: id,
+    workId,
+    why,
+    next: session && !session.busy && !session.needsInput ? `boxd_submit({ workId: ${JSON.stringify(workId)}, text: "<the task>" })` : `boxd_job({ workId: ${JSON.stringify(workId)} }) reads it`,
+  }
+}
+
+/** `boxd_ensure({ select: "orphans" })`: every actionable orphan adopted, every other machine skipped with why. */
+async function adoptOrphans(machines: Machines, input: Record<string, unknown>, call: CallContext): Promise<ListResult<OrphanResult>> {
+  const op = opOf(call, "boxd_ensure")
+  const { boxd, ledger, options } = machines.services
+  const [listing, records, ledgerId] = await Promise.all([boxd.list({ maxAgeMs: 0 }, op), ledger.list({}, op), ledger.id(op)])
+  const orphans = classifyMachines(listing.machines, records, ledgerId, options.keep).filter((item) => item.machineClass === "orphan")
+  const dryRun = input.dryRun === true
+  if (dryRun) {
+    const results = orphans.map((item) => skippedOrphan(item, item.actionable && item.workId ? "an actionable orphan; it would be adopted" : classReason(item), item.actionable ? undefined : "label it, or add a selector to keep"))
+    const counts: Record<string, number> = {}
+    for (const result of results) counts[result.state] = (counts[result.state] ?? 0) + 1
+    return { state: "done", counts, results, select: "orphans", dryRun: true }
+  }
+  return runList(
+    orphans,
+    {
+      signal: call.signal,
+      ...listSettings(machines),
+      workId: (item) => item.workId ?? item.row.name,
+      again: () => 'boxd_ensure({ select: "orphans" })',
+    },
+    (item, context) => adoptOrphan(machines, item, context, op, records, ledgerId),
+  ).then((result) => ({ ...result, select: "orphans" as const }))
+}
+
+/** `boxd_ensure`: the single form, the list form, or the orphan select. */
+export async function runEnsure(machines: Machines, input: Record<string, unknown>, call: CallContext, finishRename: (record: WorkRecord, op: OpContext) => Promise<WorkRecord>): Promise<EnsureResult | ListResult<EnsureResult | OrphanResult>> {
   const services = machines.services
   const settings = listSettings(machines)
+  if (input.select !== undefined) {
+    if (input.select !== "orphans") throw invalid("select", 'select must be "orphans".')
+    return adoptOrphans(machines, input, call)
+  }
   if (input.works === undefined) {
     const item = await parseItem(input, services, "ready")
     return runOne({ signal: call.signal, ...settings }, (context) => ensureOne(machines, item, context, call, finishRename))

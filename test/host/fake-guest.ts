@@ -131,6 +131,7 @@ export function startFakeGuest(options: { readonly version?: string } = {}): Fak
           data: {
             id: session.id,
             ...(session.outcome ? { outcome: session.outcome } : {}),
+            ...(session.directory ? { location: { directory: session.directory } } : {}),
             time: times(session),
           },
         })
