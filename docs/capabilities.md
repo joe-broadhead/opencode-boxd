@@ -54,6 +54,14 @@ None.
   The cost block sums them for this ledger, for today from local midnight, and since the oldest open work was created.
   The hours are computed from the ledger alone, so they show without an owner's sign-in; the money figures stay `null`
   without one.
+- **Machines against the limit.** The `/boxd` report counts the organisation's machines against boxd's limit from the
+  all-region listing and the machine limit the fleet read already takes, with no usage read and no owner's sign-in. Its
+  `Machines:` line reads, for example, `1,180 of 1,250 in use (40 running, 12 standby, 1,128 hibernated); 31 are this
+  ledger's works`. The fleet read's `machines` block holds, beside the classes and orphans below, `limit`, `inUse`
+  (every machine boxd counts: any state but `destroyed`, so hibernated and stopped machines included), `free`,
+  `byState` (`running`, `starting`, `standby`, `hibernated`, `stopped`, `other`), `works` (the machines this ledger's
+  open works name) and each region's own row in `perRegion`. When the limit cannot be read the counts still show and
+  `limit` and `free` are null; when the listing cannot be read the report says so instead of showing a zero.
 - **Changes.** `ensure` makes a work exist and converges it; with `repo` it starts from the repository's warm image when
   one exists, and its answer says `warm` and, for a work this version made, once ready, `readySeconds`. `submit` admits a
   prompt; `harvest` exports the session tree and copies the files back; `sleep` hibernates; `resume` wakes or rebuilds;

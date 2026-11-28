@@ -15,7 +15,7 @@ import { secretKinds } from "@we-the-rebel-alliance/plugin-contract/events"
 import { BoxdError, boxdError, type Code, type WarningCode } from "../errors.js"
 import { hoursAt, shownHours } from "../ledger/hours.js"
 import type { Phase, WorkRecord } from "../ledger/types.js"
-import { LIST_MAX_ITEMS, REGIONS, SIZES, TIMEOUTS, type CallTag, type Listing, type OpContext, type Region, type Size } from "../ports.js"
+import { LIST_MAX_ITEMS, REGIONS, SIZES, TIMEOUTS, type CallTag, type Listing, type MachineLimit, type MachineRow, type OpContext, type Region, type Size } from "../ports.js"
 import { excerpt, reasonOf } from "../redact.js"
 import {
   ATTENTION_ORDER,
@@ -25,6 +25,8 @@ import {
   type BudgetState,
   type CleanupAction,
   type CostBlock,
+  type MachineCounts,
+  type MachineSummary,
   type StatusResult,
   type WorkBrief,
   type WorkCost,
@@ -32,7 +34,7 @@ import {
 import type { FleetServices } from "../services.js"
 import { watchHandle, type WatchHandle } from "../watch.js"
 import { codeOf, doneOf, notRead, observe, observeFailure, outcomeOf, phaseOf, readGuest, STATUS_TEXT_LIMIT, wantsRead, type Observed } from "./model.js"
-import { classifyMachines, machineSummary } from "./orphans.js"
+import { classifyMachines, machineSummary, type Classified } from "./orphans.js"
 
 export type StatusView = "attention" | "all" | "counts"
 export type StatusInclude = "credentials" | "cost" | "images" | "closed"
@@ -284,6 +286,56 @@ function automationFallback(services: FleetServices): AutomationState {
   return access === "all" ? "on" : "off (access)"
 }
 
+/** One set of machines by state; a destroyed machine is not counted at all, and no state is missing at zero. */
+function countsOf(machines: readonly MachineRow[]): MachineCounts {
+  const counts: Record<keyof MachineCounts, number> = { running: 0, starting: 0, standby: 0, hibernated: 0, stopped: 0, other: 0 }
+  for (const machine of machines) {
+    if (machine.status === "destroyed") continue
+    counts[machine.status] += 1
+  }
+  return counts
+}
+
+/**
+ * The organisation's machines against boxd's limit, by state, from the all-region listing and the limit the status
+ * read already takes: every machine boxd counts (any state but `destroyed`, hibernated and stopped included), the
+ * split by state, each region's own count and limit, and how many machines this ledger's open works name. A limit that
+ * could not be read is null, and every count still shows. The figures are for the whole organisation, whatever
+ * `region` the call uses to filter its works.
+ */
+export function machinesAgainstLimit(
+  classified: readonly Classified[],
+  limit: MachineLimit | undefined,
+): Pick<MachineSummary, "limit" | "inUse" | "free" | "byState" | "works" | "perRegion"> {
+  // The classification is the one truth for a work: a record names it, label or no label.
+  const counted = classified.filter((item) => item.row.status !== "destroyed")
+  const rows = (items: readonly Classified[]) => items.map((item) => item.row)
+  const works = (items: readonly Classified[]) => items.filter((item) => item.machineClass === "work").length
+  const perRegion = REGIONS.map((region) => {
+    const items = counted.filter((item) => item.row.region === region)
+    const regionLimit = limit?.regions.find((row) => row.region === region)?.limit ?? null
+    const inUse = items.length
+    return {
+      region,
+      limit: regionLimit,
+      inUse,
+      free: regionLimit === null ? null : Math.max(0, regionLimit - inUse),
+      byState: countsOf(rows(items)),
+      works: works(items),
+    }
+  })
+  const inUse = counted.length
+  const orgLimit = limit?.org ?? null
+  return {
+    limit: orgLimit,
+    inUse,
+    free: orgLimit === null ? null : Math.max(0, orgLimit - inUse),
+    byState: countsOf(rows(counted)),
+    works: works(counted),
+    perRegion,
+  }
+}
+
 /** Image names this plugin builds: `<prefix>-<opencode version>-<size>`. */
 function imageOf(name: string, prefix: string): { opencode: string; size: Size } | undefined {
   if (!name.startsWith(`${prefix}-`)) return undefined
@@ -484,8 +536,17 @@ export async function fleetStatus(services: FleetServices, input: StatusInput, c
 
   // Every machine, classified by what owns it: a record here, another ledger's label, a `keep` selector, a golden
   // builder, or an orphan. Only a session machine is ever actionable (design §C.3, #83).
-  const classified = classifyMachines(listing?.machines ?? [], open, await services.ledger.currentId(op()), services.options.keep, input.region)
-  const machines = machineSummary(classified, input.limit)
+  // The listing the call already took is the count: no usage read and no owner's sign-in. The figures are across
+  // every region, even when the call filters its works to one.
+  const ledgerId = await services.ledger.currentId(op())
+  // One classification serves the classes, the orphans and this ledger's share. The limit figures are org-wide, so the
+  // call's region filter applies to the summary only.
+  const classified = classifyMachines(listing?.machines ?? [], open, ledgerId, services.options.keep)
+  const shownMachines = input.region === undefined ? classified : classified.filter((item) => item.row.region === input.region)
+  const machines: MachineSummary = {
+    ...machineSummary(shownMachines, input.limit),
+    ...machinesAgainstLimit(classified, limits),
+  }
 
   // One shared cause across many works: #1's case, 15 works stopped on one expired token.
   const authFailed = rows.filter((row) => row.record.state === "open" && codeOf(row.record, row.observed) === "GUEST_AUTH_FAILED")
@@ -522,7 +583,7 @@ export async function fleetStatus(services: FleetServices, input: StatusInput, c
     counts,
     region: services.options.region,
     allowedRegions: services.options.regions,
-    regions: (limits ?? [])
+    regions: (limits?.regions ?? [])
       .filter((limit) => !input.region || limit.region === input.region)
       .map((limit) => ({ ...limit, keepFree: services.options.keepFree[limit.region] ?? 0, works: open.filter((record) => record.region === limit.region).length })),
     groups,

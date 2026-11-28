@@ -230,11 +230,49 @@ export interface OrphanMachine {
   readonly next: string
 }
 
-/** Every machine's class counted, with the orphans listed and capped. */
+/** Every machine state boxd counts, with the states no machine is in at zero; `other` is any state not named. */
+export interface MachineCounts {
+  readonly running: number
+  readonly starting: number
+  readonly standby: number
+  readonly hibernated: number
+  readonly stopped: number
+  readonly other: number
+}
+
+/** One region's machines against its own limit. */
+export interface RegionMachines {
+  readonly region: Region
+  /** The region's own limit, or null when boxd did not state one for it. */
+  readonly limit: number | null
+  /** Every machine boxd counts, in any state but `destroyed`. */
+  readonly inUse: number
+  /** The room left against the limit, or null when the limit is unknown. */
+  readonly free: number | null
+  readonly byState: MachineCounts
+  /** How many of the region's machines this ledger's open works name. */
+  readonly works: number
+}
+
+/**
+ * Every machine's class counted, with the orphans listed and capped, and the organisation's machines against boxd's
+ * limit, by state: hibernated and stopped machines still count.
+ */
 export interface MachineSummary {
   readonly counts: Readonly<Record<MachineClass, number>>
   readonly orphans: readonly OrphanMachine[]
   readonly more: number
+  /** The organisation's limit, or null when it could not be read. */
+  readonly limit: number | null
+  /** Every machine boxd counts, in any state but `destroyed`, across every region. */
+  readonly inUse: number
+  /** The room left against the limit, or null when the limit is unknown. */
+  readonly free: number | null
+  readonly byState: MachineCounts
+  /** How many of the machines this ledger's open works name. */
+  readonly works: number
+  /** The same figures for each region. */
+  readonly perRegion: readonly RegionMachines[]
 }
 
 export interface StatusResult {
@@ -253,7 +291,7 @@ export interface StatusResult {
   readonly works?: readonly WorkBrief[]
   readonly more: number
   readonly cursorExpired: boolean
-  /** Every machine in the organisation, classified, with the orphans listed and capped. */
+  /** Every machine in the organisation: classified, with the orphans listed and capped, and against boxd's limit. */
   readonly machines: MachineSummary
   readonly fleet: { readonly authFailures?: { readonly count: number; readonly since: string; readonly note: string } }
   readonly credentials?: { readonly secrets: readonly SecretInfo[]; readonly setAt: null; readonly missing: string }

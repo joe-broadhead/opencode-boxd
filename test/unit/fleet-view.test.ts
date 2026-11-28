@@ -114,6 +114,28 @@ describe("boxd_status", () => {
     expect(capped.machines.more).toBe(2)
   })
 
+  test("machines counts the all-region listing it already took, and a work by its record even without the label", async () => {
+    // A machine made before the ledger label existed: an open record names it, so it is this ledger's work.
+    await world.bulk([{ workId: "ours", status: "hibernated" }])
+    world.counter.fake.machine({ name: "oc-other", region: "nyc", status: "running", labels: { owner: "boxd", role: "session", work: "other" } })
+    world.counter.fake.machine({ name: "oc-gone", region: "nyc", status: "destroyed" })
+    world.counter.fake.fault("manage machine-limit", { stderr: "error: the machine limit is not available", code: 1 })
+    const answer = await status()
+    expect(answer.machines).toMatchObject({
+      limit: null,
+      inUse: 2,
+      free: null,
+      byState: { running: 1, starting: 0, standby: 0, hibernated: 1, stopped: 0, other: 0 },
+      works: 1,
+    })
+    expect(answer.machines.perRegion.map(({ region, inUse, works }) => ({ region, inUse, works }))).toEqual([
+      { region: "fra", inUse: 1, works: 1 },
+      { region: "nyc", inUse: 1, works: 0 },
+    ])
+    // The listing and the limit are the only boxd calls the figures need: no usage read, no owner's sign-in.
+    expect(world.counter.count("call_status")["manage usage"]).toBeUndefined()
+  })
+
   test("the cost service is E's: until it answers, status still answers, and says so", async () => {
     const answer: StatusResult = await status()
     expect(answer.cost.today.unavailable).toContain("cost service is not available")

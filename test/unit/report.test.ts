@@ -68,12 +68,62 @@ describe("the /boxd report", () => {
               counts: { work: 1, "other-ledger": 1, kept: 0, golden: 0, orphan: 1 },
               orphans: [{ machine: "oc-stray", region: "nyc", status: "hibernated", why: "legacy-labels", actionable: true, next: 'boxd_ensure({ workId: "stray" }) adopts it' }],
               more: 0,
+              limit: 600,
+              inUse: 3,
+              free: 597,
+              byState: { running: 2, starting: 0, standby: 0, hibernated: 1, stopped: 0, other: 0 },
+              works: 1,
+              perRegion: [],
             },
           }),
       }),
     )
     expect(model.report).toContain("- Machine classes: 1 work, 1 work in another ledger, 0 kept machines, 0 golden builders, 1 orphan")
     expect(model.report).toContain("- Orphans: oc-stray (nyc, hibernated, legacy labels only, actionable)")
+  })
+
+  test("the Machines line shows the organisation against its limit, by state, and this ledger's share", async () => {
+    const model = await readReport(
+      sources({
+        fleet: async () =>
+          fleet({
+            machines: {
+              counts: { work: 31, "other-ledger": 0, kept: 0, golden: 0, orphan: 0 },
+              orphans: [],
+              more: 0,
+              limit: 1250,
+              inUse: 1180,
+              free: 70,
+              byState: { running: 40, starting: 0, standby: 12, hibernated: 1128, stopped: 0, other: 0 },
+              works: 31,
+              perRegion: [],
+            },
+          }),
+      }),
+    )
+    expect(model.report).toContain("- Machines: 1,180 of 1,250 in use (40 running, 12 standby, 1,128 hibernated); 31 are this ledger's works")
+  })
+
+  test("a limit that could not be read still shows the counts, and says the limit is unknown", async () => {
+    const model = await readReport(
+      sources({
+        fleet: async () =>
+          fleet({
+            machines: {
+              counts: { work: 2, "other-ledger": 0, kept: 0, golden: 0, orphan: 0 },
+              orphans: [],
+              more: 0,
+              limit: null,
+              inUse: 2,
+              free: null,
+              byState: { running: 1, starting: 0, standby: 0, hibernated: 1, stopped: 0, other: 0 },
+              works: 0,
+              perRegion: [],
+            },
+          }),
+      }),
+    )
+    expect(model.report).toContain("- Machines: 2 in use (1 running, 1 hibernated); the machine limit could not be read; none are this ledger's works")
   })
 })
 

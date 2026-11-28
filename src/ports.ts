@@ -112,6 +112,16 @@ export interface RegionLimit {
   readonly free: number
 }
 
+/**
+ * What `manage machine-limit --json` says: the organisation's limit and each region's headroom. boxd answers either
+ * one limit for the organisation or one per region, so `org` is the one limit it stated or the sum of the regions'
+ * own. In the org-wide shape a region's use is counted from a listing, never taken from the org's total.
+ */
+export interface MachineLimit {
+  readonly org: number
+  readonly regions: readonly RegionLimit[]
+}
+
 export interface SnapshotRow {
   readonly region: Region
   readonly name: string
@@ -405,7 +415,7 @@ export interface BoxdPort {
   copyTo(target: ChangeTarget, localPath: string, guestPath: string, context: OpContext): Promise<void>
   /** `machine cp` from the guest straight to a laptop file, so the bytes never pass through the server. */
   copyFrom(target: ReadTarget | ChangeTarget, guestPath: string, localPath: string, context: OpContext): Promise<void>
-  machineLimit(context: OpContext): Promise<readonly RegionLimit[]>
+  machineLimit(context: OpContext): Promise<MachineLimit>
   usage(since: string, context: OpContext): Promise<Usage>
   /** `snapshots list --region all --json`, cached for 5 minutes. */
   snapshots(context: OpContext): Promise<readonly SnapshotRow[]>
