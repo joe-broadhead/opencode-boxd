@@ -125,7 +125,7 @@ export default Plugin.define({
           }
           const count = prs.length
           return {
-            content: count === 0 ? "Done recorded." : "Done recorded: " + count + (count === 1 ? " pull request." : " pull requests."),
+            content: count === 0 ? "Done noted." : "Done noted: " + count + (count === 1 ? " pull request." : " pull requests."),
           }
         },
       })

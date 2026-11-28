@@ -25,7 +25,8 @@ through one runner with a pool and a cap, an explicit timeout, the call's signal
 parses `--json` answers and maps stderr through one error table. The guest port runs `python3 ~/.boxd-plugin/guest.py`
 over `boxd machine exec`, uploads the helper with `machine cp` when it is missing or older, and never uploads on a read.
 `guest/guest.py` is the helper itself; it talks to the guest's OpenCode server, imports and exports sessions, and
-writes one plugin into the guest's global plugins folder: `boxd_done`, the work's completion tool.
+writes one plugin into the guest's global plugins folder: `boxd_done`, the work's completion tool. An operator can
+turn it off with `"-boxd.done"` in a work's `opencode.json` plugins list.
 
 ## The ledger label
 

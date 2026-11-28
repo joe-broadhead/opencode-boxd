@@ -67,8 +67,10 @@ export interface HostInput {
   readonly config?: Record<string, unknown>
   /** A guest version other than the host's, for the mismatch test. */
   readonly guestVersion?: string
-  /** Extra plugins to load beside the boxd plugin, such as the completion tool the guest helper writes. */
-  readonly plugins?: readonly Plugin.Plugin[]
+  /** The host's config directory, whose `plugins` folder OpenCode discovers; the default is a fresh folder under the host. */
+  readonly configDir?: string
+  /** Whether the host watches the file system, which reloads a changed plugin; off by default. */
+  readonly filewatcher?: boolean
   /** A loopback model, so a Code Mode program can be driven by a turn. */
   readonly model?: boolean
   /** Wraps the context the boxd plugin gets, so a test can watch what it registers. */
@@ -94,6 +96,8 @@ let hosts = 0
 export async function startHost(input: HostInput = {}) {
   const base = join(root, `host-${++hosts}`)
   mkdirSync(base, { recursive: true })
+  const configDir = input.configDir ?? join(base, "config")
+  mkdirSync(configDir, { recursive: true })
   const guest = startFakeGuest()
   const work = workDirectory(`host-${hosts}`)
   const boxd = startFakeBoxd(guest, input.guestVersion ?? HOST_VERSION)
@@ -125,13 +129,13 @@ export async function startHost(input: HostInput = {}) {
   }
   const { OpenCode } = (await import(pathToFileURL(join(SDK, "dist", "index.js")).href)) as typeof import("@opencode/sdk")
   const client: Client = await OpenCode.create({
-    plugins: [withOptions, probe, ...(input.plugins ?? [])],
+    plugins: [withOptions, probe],
     // An embedded host reports "unknown" unless told, and the plugin's host guard refuses that.
     app: { version: HOST_VERSION },
-    config: { content: JSON.stringify(config), directory: join(base, "config"), project: false, claude: false },
+    config: { content: JSON.stringify(config), directory: configDir, project: false, claude: false },
     database: { path: join(base, "opencode.db") },
     models: { fetch: false },
-    fs: { filewatcher: false },
+    fs: { filewatcher: input.filewatcher ?? false },
     log: { level: "error" },
   })
   const location = { directory: work }
