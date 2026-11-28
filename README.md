@@ -16,10 +16,10 @@ the child sessions its subagents start; the machine is a cache with more CPU, an
 Install from a release tag:
 
 ```sh
-opencode plugin add github:we-the-rebel-alliance/boxd-plugin#v0.0.0
+opencode plugin add github:we-the-rebel-alliance/boxd-plugin#v0.1.0
 ```
 
-The tag is `v0.0.0`. A Git install does not update by itself: remove the exact tag you installed and add the new one.
+The tag is `v0.1.0`. A Git install does not update by itself: remove the exact tag you installed and add the new one.
 
 Then run `opencode reload`, or restart OpenCode, and run `/boxd`.
 
@@ -131,6 +131,7 @@ status.
 
 - [Capabilities](docs/capabilities.md): every method, source, action and bus event, with notes.
 - [Configuration](docs/configuration.md): every option and examples.
+- [Upgrading](docs/upgrading.md): moving a host to this release, from 0.0.0 or from a build before the rebuild.
 - [Accounts](docs/accounts.md): no plugin-held accounts, and the local identity probe reports.
 - [Automations](docs/automations.md): the timer and event recipes for the works source.
 - [Architecture](docs/architecture.md): layers, the provider client, caches and host APIs.

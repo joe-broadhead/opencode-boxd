@@ -1,6 +1,71 @@
 # Changelog
 
-## Unreleased
+## 0.1.0 (2026-11-28)
+
+Warm images, slots on shared machines, the done signal, labelled work events, machine-hours and cost in the ledger, a
+durable copy of the ledger on a registry machine, caps by label, and per-work secrets. Still on OpenCode 2.4.1 and
+plugin-contract v0.
+
+### Upgrading
+
+Moving from 0.0.0 needs no option change: every 0.0.0 option keeps its name and meaning, and the ledger at
+`~/.local/share/boxd-plugin/v1` is read as it is, with no migration. Change the plugin entry's tag to `v0.1.0`
+and reload. These are the changes an operator must know before that:
+
+- **A work refuses to act as its operator.** `boxd_ensure` and `boxd_submit` now answer `ACTS_AS_OPERATOR` when the
+  work's machine holds a real GitHub, model or cloud credential instead of a `bxds_` placeholder bound to its host,
+  including the real github.com git login that boxd's git integration gives a private machine. Give each work a
+  sealed secret (`boxd env set <KEY> <value> --secret --domains <hosts>`) or a `workSecrets` entry, run
+  `boxd manage integrations disconnect git`, and unset any real token on the machine. A running work is refused at its
+  next `boxd_submit` until its machine passes.
+- **A work's OpenCode server starts with only the variables it declares.** It gets the machine's basics and the names
+  given to `boxd_ensure` as `env`, not the operator's other variables. A work that relied on another variable needs it
+  named in `env`. A server that is already running keeps its environment until it restarts.
+- **A registry machine appears.** The watcher's sweep creates `oc-reg-<ledger id>` in the first work's region on first
+  need, labelled `owner=boxd`, `role=registry` and `ledger=<id>`, with daily disk backups, and copies the ledger there.
+  It is never an orphan and does not count against `budget.machines`; do not remove it.
+- **Machines get new labels.** Every work's machine carries `ledger=<id>`; the automation pass adds it once to an open
+  work's machine that lacks it. A machine carrying another ledger's label is that ledger's work, and is never adopted
+  without `adopt: true`.
+- **New guest helper.** The helper on a work's machine is replaced by the next `boxd_ensure` or `boxd_submit` on that
+  work, which answers the old copy's `HELPER_OUTDATED` by uploading this one. Until then reads use the copy already
+  there.
+- **Events carry a `change:` label.** An automation can key on `change:started`, `change:waiting`,
+  `change:finished`, `change:failed` or `change:idle`; the `phase:`, `outcome:` and `needs:` labels stay. On the first
+  sweep, every work already closed gets one cost event for its whole life, dated at its close, so an events page may
+  show an older close date beside new ones.
+- **A slot work is not rebuilt.** `boxd_resume` answers `SLOT_UNSUPPORTED` for a slot work whose shared machine is
+  gone, as `boxd_drop` and `boxd_sleep` already did.
+
+Moving from a build before the 0.0.0 rebuild, such as `github:joe-broadhead/opencode-boxd#v0.1.2`, is a new install
+with its own ledger: see [docs/upgrading.md](docs/upgrading.md).
+
+### Changes
+
+- Every work's machine runs one work in its own slot, or several works share one machine: `boxd_ensure` with
+  `machine: "<name>"` puts a work in a slot on `oc-shared-<name>`, up to `slotsPerMachine` (4 by default). Each slot has
+  its own password, port, OpenCode server, logs and files, and every read, submit and harvest reaches the work's own
+  slot.
+- `boxd_golden` with `repo` builds a repository's warm image from the version's golden image, with the checkout, the
+  toolchain and the dependencies the `warm` option's `setup` script installs.
+- `boxd_ensure` takes `product`, `role`, `feature` and `task` labels, records them, and sets them as `work.*` labels on
+  a machine of the work's own; an adopted orphan reads them back, a rebuild keeps them, and `boxd_job` and the works
+  list return them.
+- `workSecrets` mints a work's own secrets here with the command you name, copies each value straight to the work's
+  machine and gives it to the work's OpenCode under its name, and revokes it at drop. Only the name is recorded.
+- The ledger keeps a durable copy on its registry machine, through staged files, so a failed copy leaves the last good
+  one whole. `/boxd` and the fleet status name the machine, the last complete copy, the works it holds, and warn when the
+  copy failed or is more than one sweep behind.
+- The guest's OpenCode gains a `boxd_done({ summary, prs })` tool. Its report rides into the ledger record,
+  `boxd_job`, `boxd_status`, the works list and the idle event; a new submit clears it, and the skill teaches
+  coordinators to read it rather than treat `outcome: completed` as the task's end.
+- Each work event carries at most one `change:` label, the works source appends an event when a work starts or stops
+  waiting for input, and the watcher nudges `changed` for every tick that appends or tails an event.
+- The fleet status shows the organisation's machines against boxd's limit, by state and by region, beside the machine
+  classes and orphans.
+- `budget.machineHours` caps the running hours of this ledger's works per local day, counted from the ledger, so it
+  needs no owner's sign-in.
+- CI runs every job on the `boxd-public` runner.
 
 - Each work's ledger record counts its machine's existed, running and asleep seconds, and prices every interval at
   boxd's rates as it is counted, in the rates' currency. `boxd_job` and `boxd_status` with `include: ["cost"]` show

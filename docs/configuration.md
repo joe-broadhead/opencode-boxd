@@ -87,7 +87,7 @@ A small project that may place machines only in Frankfurt, at 2 vCPU and 8 GiB:
 {
   "plugins": [
     {
-      "package": "github:we-the-rebel-alliance/boxd-plugin#v0.0.0",
+      "package": "github:we-the-rebel-alliance/boxd-plugin#v0.1.0",
       "options": {
         "access": "ask-changes",
         "regions": ["fra"],
