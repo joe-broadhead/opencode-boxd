@@ -524,7 +524,7 @@ export async function checkCreateBudget(
   op: OpContext,
   listing: Listing,
   inFlight: number,
-  extra: { readonly labels?: WorkLabels; readonly createsMachine?: boolean; readonly machine?: string; readonly region?: Region } = {},
+  extra: { readonly labels?: WorkLabels; readonly createsMachine?: boolean } = {},
 ): Promise<void> {
   if (machines.services.options.budget) await machines.services.cost.assertCreateBudget(op.call, { listing, inFlight, ...extra })
 }
@@ -946,8 +946,6 @@ async function createOrAdopt(machines: Machines, item: EnsureItem, context: Item
       await checkCreateBudget(machines, op, listing, createsInFlight(machines, used.since) - 1, {
         ...(labels ? { labels } : {}),
         createsMachine: true,
-        machine: name,
-        region: picked,
       })
       return { claim: await claimRegion(machines, item.workId, picked, (region) => fresh(region, imageAt(region), imageAt(region) === warmImage), imageAt(picked), op), want: picked }
     })

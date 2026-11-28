@@ -7,7 +7,7 @@
  */
 import type { WorkRecord } from "../ledger/types.js"
 import type { BudgetLabelMatch } from "../options.js"
-import { LEDGER_LABEL, type Listing, type Region, type WorkLabels } from "../ports.js"
+import { LEDGER_LABEL, type Listing, type WorkLabels } from "../ports.js"
 
 export interface MachineCounts {
   /** The machines this ledger holds: its labelled machines and its creates not in the listing yet. */
@@ -54,18 +54,11 @@ export function machineCounts(listing: Listing, ledgerId: string, pending: reado
 export const matchesLabel = (labels: WorkLabels | undefined, match: BudgetLabelMatch): boolean => labels?.[match.key] === match.value
 
 /**
- * The machines this ledger's works with one label hold, from its open records and a listed machine that carries both
- * this ledger's `ledger` label and the work label. A machine several slot works share is counted once, and another
- * ledger's matching machine is not counted. `add` is a create this call is about to make: it adds one only when that
- * create would make a new machine, so a slot work joining a shared machine adds none.
+ * The machines this ledger's works with one label hold now, from its open records and a listed machine that carries
+ * both this ledger's `ledger` label and the work label. A machine several slot works share is counted once, and another
+ * ledger's matching machine is not counted.
  */
-export function labelMachineCount(
-  listing: Listing,
-  records: readonly WorkRecord[],
-  ledgerId: string,
-  match: BudgetLabelMatch,
-  add?: { readonly region: Region; readonly machine: string; readonly creates: boolean },
-): number {
+export function labelMachineCount(listing: Listing, records: readonly WorkRecord[], ledgerId: string, match: BudgetLabelMatch): number {
   const keys = new Set<string>()
   for (const record of records) {
     if (record.state !== "open" || record.region === null || !matchesLabel(record.labels, match)) continue
@@ -76,6 +69,5 @@ export function labelMachineCount(
     if (machine.status === "destroyed" || machine.labels[LEDGER_LABEL] !== ledgerId || machine.labels[label] !== match.value) continue
     keys.add(`${machine.region}/${machine.name}`)
   }
-  if (add?.creates) keys.add(`${add.region}/${add.machine}`)
   return keys.size
 }

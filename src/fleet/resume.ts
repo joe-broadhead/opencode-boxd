@@ -189,8 +189,6 @@ async function rebuild(
       await checkCreateBudget(machines, op, gone.listing, createsInFlight(machines, gone.asked) - 1, {
         ...(record.labels ? { labels: record.labels } : {}),
         createsMachine: true,
-        machine: record.machine,
-        region: want,
       })
       return claimRegion(machines, record.workId, want, (where) => ({ ...record, region: where }), image, op)
     })

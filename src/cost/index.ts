@@ -13,7 +13,7 @@ import { boxdError } from "../errors.js"
 import { hoursAt, localDay } from "../ledger/hours.js"
 import type { WorkRecord } from "../ledger/types.js"
 import { budgetLabelMatch, type Budget, type BudgetLabel } from "../options.js"
-import { TIMEOUTS, type CallTag, type FleetWatch, type Listing, type OpContext, type Rates, type Region, type Usage, type WorkSnapshot } from "../ports.js"
+import { TIMEOUTS, type CallTag, type FleetWatch, type Listing, type OpContext, type Rates, type Usage, type WorkSnapshot } from "../ports.js"
 import type { BudgetLabelState, BudgetState, CleanupAction, CostBlock, CostHours } from "../results.js"
 import type { CoreServices, CostPort } from "../services.js"
 import { figures, suggestions, workPerHour } from "./fleet.js"
@@ -163,16 +163,10 @@ export function createCost(core: CostCore): CostInternals {
     return works.reduce((sum, work) => (matchesLabel(work.labels, parsed) ? sum + workPerHour(work, rate) : sum), 0) * 24
   }
 
-  /** One label cap with its figures; `add` is a create this call is about to make. */
-  function labelState(
-    entry: BudgetLabel,
-    records: readonly WorkRecord[],
-    ledgerId: string,
-    listing: Listing | undefined,
-    add?: { readonly region: Region; readonly machine: string; readonly creates: boolean },
-  ): BudgetLabelState {
+  /** One label cap with its figures. */
+  function labelState(entry: BudgetLabel, records: readonly WorkRecord[], ledgerId: string, listing: Listing | undefined): BudgetLabelState {
     const match = budgetLabelMatch(entry.match)!
-    const machines = entry.machines === undefined || listing === undefined ? undefined : labelMachineCount(listing, records, ledgerId, match, add)
+    const machines = entry.machines === undefined || listing === undefined ? undefined : labelMachineCount(listing, records, ledgerId, match)
     const hours = entry.machineHours === undefined ? undefined : hoursTodayOf(records, now(), match)
     const perDay = entry.daily === undefined ? undefined : perDayOf(core.watch.snapshot().works, entry.match)
     const states = [
@@ -198,10 +192,7 @@ export function createCost(core: CostCore): CostInternals {
     readonly records: readonly WorkRecord[]
   }
 
-  async function currentBudget(
-    call: CallTag,
-    facts?: { readonly listing?: Listing; readonly inFlight?: number; readonly add?: { readonly region: Region; readonly machine: string; readonly creates: boolean } },
-  ): Promise<BudgetFacts> {
+  async function currentBudget(call: CallTag, facts?: { readonly listing?: Listing; readonly inFlight?: number }): Promise<BudgetFacts> {
     const option = core.options.budget
     const labelCaps = option?.labels
     const needsRecords = option !== undefined && (option.machineHours !== undefined || option.machines !== undefined || option.orgMachines !== undefined || labelCaps !== undefined)
@@ -216,7 +207,7 @@ export function createCost(core: CostCore): CostInternals {
         : undefined
     const hours = option?.machineHours === undefined ? 0 : hoursTodayOf(records, now())
     const day = option?.daily === undefined ? noUsage : await today(call)
-    const labels = labelCaps?.map((entry) => labelState(entry, records, ledgerId!, listing, facts?.add))
+    const labels = labelCaps?.map((entry) => labelState(entry, records, ledgerId!, listing))
     return { day, hours, counts, labels, records }
   }
 
@@ -383,7 +374,6 @@ export function createCost(core: CostCore): CostInternals {
       const current = await currentBudget(call, {
         ...(facts?.listing ? { listing: facts.listing } : {}),
         ...(facts?.inFlight !== undefined ? { inFlight: facts.inFlight } : {}),
-        ...(facts?.machine && facts.region ? { add: { region: facts.region, machine: facts.machine, creates: facts.createsMachine !== false } } : {}),
       })
       if (option.action !== "refuse") return
       const ledger = option.machines !== undefined && current.counts !== undefined && current.counts.ledger >= option.machines

@@ -18,7 +18,7 @@
 import type { Plugin } from "@opencode/plugin"
 import type { Phase, SavedState } from "./ledger/types.js"
 import type { Options } from "./options.js"
-import type { BoxdPort, CallTag, FleetWatch, GuestPort, LaptopPort, LedgerPort, Listing, Region, Runner, WorkLabels } from "./ports.js"
+import type { BoxdPort, CallTag, FleetWatch, GuestPort, LaptopPort, LedgerPort, Listing, Runner, WorkLabels } from "./ports.js"
 import type { AutomationState, BudgetState, CleanupAction, CostBlock, HarvestResult, ListResult, Refusal, SleepResult, ToolResults } from "./results.js"
 import type { CallContext } from "./call.js"
 
@@ -166,8 +166,6 @@ export interface CostPort {
       readonly labels?: WorkLabels
       /** Whether this create makes a new machine; a slot work joining a shared one does not. */
       readonly createsMachine?: boolean
-      readonly machine?: string
-      readonly region?: Region
     },
   ): Promise<void>
 }

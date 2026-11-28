@@ -131,26 +131,33 @@ describe("a label cap in the budget state", () => {
     }
   })
 
-  test("refuses a matching create at its machines cap, and lets an unlabelled one pass", async () => {
-    const f = make({
+  test("allows a matching create under its machines cap, refuses one at it, and lets an unlabelled one pass", async () => {
+    const under = make({
+      options: { budget: { labels: [{ match: "product=alpha", machines: 2 }], action: "refuse" } },
+      records: [workRecord("a", { labels: { product: "alpha" } })],
+      works: [work("a", { labels: { product: "alpha" } })],
+    })
+    await under.services.cost.assertCreateBudget(tag, { labels: { product: "alpha" }, createsMachine: true })
+
+    const at = make({
       options: { budget: { labels: [{ match: "product=alpha", machines: 2 }], action: "refuse" } },
       records: [workRecord("a", { labels: { product: "alpha" } }), workRecord("b", { labels: { product: "alpha" } })],
       works: [work("a", { labels: { product: "alpha" } }), work("b", { labels: { product: "alpha" } })],
     })
-    const error = (await f.services.cost
-      .assertCreateBudget(tag, { labels: { product: "alpha" }, createsMachine: true, machine: "oc-new", region: "fra" })
+    const error = (await at.services.cost
+      .assertCreateBudget(tag, { labels: { product: "alpha" }, createsMachine: true })
       .catch((caught: unknown) => caught)) as { code?: string; what?: string; details?: Record<string, unknown> }
     expect(error.code).toBe("BUDGET_REACHED")
     expect(error.what).toContain("product=alpha")
-    expect(error.what).toContain("3 machines")
-    expect(error.details).toMatchObject({ scope: "labels", match: "product=alpha", inUse: 3, cap: 2 })
-    await f.services.cost.assertCreateBudget(tag, { createsMachine: true, machine: "oc-plain", region: "fra" })
+    expect(error.what).toContain("2 machines")
+    expect(error.details).toMatchObject({ scope: "labels", match: "product=alpha", inUse: 2, cap: 2 })
+    await at.services.cost.assertCreateBudget(tag, { createsMachine: true })
     const warn = make({
       options: { budget: { labels: [{ match: "product=alpha", machines: 2 }], action: "warn" } },
       records: [workRecord("a", { labels: { product: "alpha" } }), workRecord("b", { labels: { product: "alpha" } })],
       works: [work("a", { labels: { product: "alpha" } }), work("b", { labels: { product: "alpha" } })],
     })
-    await warn.services.cost.assertCreateBudget(tag, { labels: { product: "alpha" }, createsMachine: true, machine: "oc-new", region: "fra" })
+    await warn.services.cost.assertCreateBudget(tag, { labels: { product: "alpha" }, createsMachine: true })
     expect((await warn.services.cost.budget(tag))?.labels?.[0]?.state).toBe("reached")
   })
 
@@ -161,7 +168,7 @@ describe("a label cap in the budget state", () => {
       works: [work("a", { labels: { product: "alpha" } })],
     })
     const hoursError = (await hours.services.cost
-      .assertCreateBudget(tag, { labels: { product: "alpha" }, createsMachine: true, machine: "oc-new", region: "fra" })
+      .assertCreateBudget(tag, { labels: { product: "alpha" }, createsMachine: true })
       .catch((caught: unknown) => caught)) as { code?: string; what?: string }
     expect(hoursError.code).toBe("BUDGET_REACHED")
     expect(hoursError.what).toContain("product=alpha")
@@ -172,7 +179,7 @@ describe("a label cap in the budget state", () => {
       works: [work("a", { labels: { product: "alpha" } })],
     })
     const dailyError = (await daily.services.cost
-      .assertCreateBudget(tag, { labels: { product: "alpha" }, createsMachine: true, machine: "oc-new", region: "fra" })
+      .assertCreateBudget(tag, { labels: { product: "alpha" }, createsMachine: true })
       .catch((caught: unknown) => caught)) as { code?: string; what?: string }
     expect(dailyError.code).toBe("BUDGET_REACHED")
     expect(dailyError.what).toContain("product=alpha")
