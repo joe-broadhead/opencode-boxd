@@ -91,10 +91,12 @@ their estimate from the ledger, which need no owner's sign-in:
 `hours.seconds.{existed, running, asleep}` and `hours.estimate.{amount, currency, ratesSource}`.
 
 A `budget` may cap today's machine cost (`daily`) and today's running hours for this ledger's works (`machineHours`).
-With `action: "refuse"`, a call that would make a machine run answers `BUDGET_EXCEEDED` when either cap is reached;
-with `"warn"`, the call runs and `tools.boxd.status` carries `BUDGET_WARN`. The hours come from the ledger, so they work
-without an owner's sign-in. Both caps reset at local midnight: sleep what is idle and drop what is finished and saved to
-make room, or the owner raises the cap.
+`budget.labels` adds caps for the works that carry one label, such as `{ match: "product=alpha", machines: 6 }`, with
+`machines`, `machineHours` and `daily` measured for that label alone. With `action: "refuse"`, a call that would make a
+machine run answers `BUDGET_EXCEEDED` when a cap is reached; with `"warn"`, the call runs and `tools.boxd.status` carries
+`BUDGET_WARN`. The hours come from the ledger, so they work without an owner's sign-in; a label's daily figure is its
+current cost per hour times 24. The time caps reset at local midnight: sleep what is idle and drop what is finished and
+saved to make room, or the owner raises the cap.
 
 ## Report the truth
 
@@ -109,9 +111,9 @@ make room, or the owner raises the cap.
 A failed call is `CODE: What happened. Next step: What to do.` Read the next step and make that call. `INPUT_INVALID`
 means the input or the work id is not what the method describes; `UNAVAILABLE` means the machine, the CLI or the guest
 could not answer now, and the sentence says which; `NEEDS_SIGN_IN` means the boxd CLI needs `boxd auth login`;
-`BUDGET_EXCEEDED` means a budget cap (`daily`, `machineHours`, this ledger's `machines`, or `orgMachines`), or a shared
-machine's slot cap, refused the call; sleep or drop unused works, use another machine name, or ask the owner to raise the
-cap. `PERMISSION_DENIED` means the access level or a rule refused it.
+`BUDGET_EXCEEDED` means a budget cap (`daily`, `machineHours`, this ledger's `machines`, `orgMachines`, or a
+`budget.labels` entry), or a shared machine's slot cap, refused the call; sleep or drop unused works, use another machine
+name, or ask the owner to raise the cap. `PERMISSION_DENIED` means the access level or a rule refused it.
 A drop refused for commits on no remote is `UNAVAILABLE` with a push-first next step: push, then drop again.
 
 ## Do not

@@ -23,7 +23,9 @@
   or sudo.
 - The `budget` option takes `machines`, the most machines this ledger may hold, and `orgMachines`, the organisation's
   count at which this plugin stops creating. `boxd_ensure`, and `boxd_resume` when it rebuilds, check both before a
-  create; `daily` is now optional, and a wake never counts as a new machine.
+  create; `daily` is now optional, and a wake never counts as a new machine. `budget.labels` caps the machines,
+  machine-hours and cost per day of the works that match one label, and `boxd_status` and `/boxd` show each cap with
+  its use.
 
 ## 0.0.0 (2026-11-25)
 

@@ -105,6 +105,23 @@ describe("the /boxd report", () => {
     expect(model.report).toContain("- Machines: 1,180 of 1,250 in use (40 running, 12 standby, 1,128 hibernated); 31 are this ledger's works")
   })
 
+  test("the Budget line shows each label cap with its use", async () => {
+    const model = await readReport(
+      sources({
+        fleet: async () =>
+          fleet({
+            budget: {
+              today: null,
+              action: "refuse",
+              state: "reached",
+              labels: [{ match: "product=alpha", machines: { inUse: 2, limit: 6 }, machineHours: { today: 1.5, cap: 4 }, daily: { perDay: 12, cap: 20 }, state: "reached" }],
+            },
+          }),
+      }),
+    )
+    expect(model.report).toContain("- Budget: product=alpha: 2 of 6 machines, 1.50 of 4.00 h today, €12.00 of €20.00 per day (reached)")
+  })
+
   test("a limit that could not be read still shows the counts, and says the limit is unknown", async () => {
     const model = await readReport(
       sources({

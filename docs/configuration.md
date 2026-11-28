@@ -26,7 +26,7 @@ Every option is optional. Set them under the plugin entry in `opencode.json`.
 | `autoSleepMinutes` | integer | `10` | Idle minutes before automation harvests and hibernates a finished work; 0 turns that step off. |
 | `orphanHours` | integer | `12` | A running, not-busy work no plugin call touched for this long is harvested and hibernated. |
 | `leaseDays` | integer | `0` | A delete-after lease renewed on activity, in days; 0 is off. |
-| `budget` | object | — | Machine cost per day, machine-hours and machine caps, warned about or refused at: daily in the organisation's billing currency, machine-hours this ledger's works may run per local day, machines this ledger may hold, and the organisation's machine count. |
+| `budget` | object | — | Machine cost per day, machine-hours and machine caps, warned about or refused at: daily in the organisation's billing currency, machine-hours this ledger's works may run per local day, machines this ledger may hold, the organisation's machine count, and caps by work label. |
 <!-- /generated:configuration -->
 
 ## Machine classes
@@ -102,3 +102,14 @@ A project with a git identity and a machine budget that refuses rather than warn
   work, or `boxd_exec` with `wake: true`) answers `BUDGET_REACHED` at the daily or machine-hours cap, and a create in
   `boxd_ensure` or a resume rebuild also checks `machines` and `orgMachines`; with `"warn"` it runs and `boxd_status`
   carries `BUDGET_WARN`. Waking an existing machine never counts as a new one.
+- `budget.labels` caps this ledger's works that carry one label, such as one product's lanes. Each entry is
+  `{ match, machines?, machineHours?, daily? }`, where `match` is one `key=value` with a key of `product`, `role`,
+  `feature` or `task`, and at least one cap. For example, `{ match: "product=alpha", machines: 6, machineHours: 40,
+  daily: 20 }` holds this ledger's works labelled `product=alpha` to those caps beside its own. All three figures have
+  the same scope: `machines` counts the machines its open records name, plus a listed machine only when it carries this
+  ledger's `ledger` label; `machineHours` and `daily` count its records and watched works. Another ledger's machine is
+  not counted, even when it carries the same work label. A new labelled work is refused before any create at a reached
+  cap under `"refuse"`, and runs under `"warn"`; an unlabelled work is not held to it. A slot work joining a shared
+  machine does not count as a new machine. `boxd_status` carries each label cap with its machines, today's
+  machine-hours and estimated cost per day. The `daily` figure is the matching works' current cost per hour times 24, at
+  the same rates as the fleet's estimate.

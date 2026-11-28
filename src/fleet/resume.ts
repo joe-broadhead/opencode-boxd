@@ -186,7 +186,12 @@ async function rebuild(
     const claim = await machines.starting.hold(async () => {
       reserved = machines.inFlight.reserve(want)
       // The reservation is this rebuild's own; every other create the listing cannot show counts against the cap.
-      await checkCreateBudget(machines, op, gone.listing, createsInFlight(machines, gone.asked) - 1)
+      await checkCreateBudget(machines, op, gone.listing, createsInFlight(machines, gone.asked) - 1, {
+        ...(record.labels ? { labels: record.labels } : {}),
+        createsMachine: true,
+        machine: record.machine,
+        region: want,
+      })
       return claimRegion(machines, record.workId, want, (where) => ({ ...record, region: where }), image, op)
     })
     region = claim.region

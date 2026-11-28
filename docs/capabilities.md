@@ -107,7 +107,12 @@ None.
 - **The budget.** `budget.daily` caps today's machine cost; `budget.machines` caps this ledger's machines and
   `budget.orgMachines` caps the organisation's count, both from the all-region listing and without an owner's sign-in.
   `ensure`, and `resume` when it rebuilds, refuse before a create at a reached cap under `action: "refuse"`, and warn
-  `BUDGET_WARN` under `"warn"`. A wake never counts as a new machine.
+  `BUDGET_WARN` under `"warn"`. A wake never counts as a new machine. `budget.labels` holds one entry per label,
+  `{ match, machines?, machineHours?, daily? }`, where `match` is one `product`, `role`, `feature` or `task` label. A
+  new work whose labels match is checked against that entry beside the ledger's caps, and `boxd_status` carries each
+  entry's machines, today's machine-hours and estimated cost per day. All three figures count this ledger's works; a
+  machine another ledger registered is not counted, even when it carries the same work label. A slot work joining a
+  shared machine adds none.
 - **No plans or actions.** Every method is one call. The contract permits a method without `plans`/`commits`, and boxd's
   destructive guard is part of the call it protects.
 

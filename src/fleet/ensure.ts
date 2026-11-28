@@ -518,9 +518,15 @@ export function createsInFlight(machines: Machines, since: number): number {
   return REGIONS.reduce((sum, region) => sum + machines.inFlight.of(region, since), 0)
 }
 
-/** The machine caps before a create (§C.5); a wake is never checked here, because it makes no new machine. */
-export async function checkCreateBudget(machines: Machines, op: OpContext, listing: Listing, inFlight: number): Promise<void> {
-  if (machines.services.options.budget) await machines.services.cost.assertCreateBudget(op.call, { listing, inFlight })
+/** The machine and label caps before a create (§C.5); a wake is never checked here, because it makes no new machine. */
+export async function checkCreateBudget(
+  machines: Machines,
+  op: OpContext,
+  listing: Listing,
+  inFlight: number,
+  extra: { readonly labels?: WorkLabels; readonly createsMachine?: boolean; readonly machine?: string; readonly region?: Region } = {},
+): Promise<void> {
+  if (machines.services.options.budget) await machines.services.cost.assertCreateBudget(op.call, { listing, inFlight, ...extra })
 }
 
 /** A new record for a work, before its create or its adoption. */
@@ -847,6 +853,7 @@ async function createOrAdopt(machines: Machines, item: EnsureItem, context: Item
   if (previous?.slot === true && shared === undefined) throw boxdError("NOT_OURS", `${previous.machine} is recorded as a shared machine, but its name is not oc-shared-<name>; nothing was changed.`)
   const name = shared !== undefined ? sharedMachineName(shared) : (`oc-${item.workId}` as MachineName)
   const size = item.size ?? (shared !== undefined && previous?.slot === true ? previous.size : options.size)
+  const labels = item.labels ?? previous?.labels
   const laptopDirectory = item.directory ?? previous?.laptopDirectory ?? machines.services.projectDirectory
   const imageFor = (at: Size) => imageName(options.goldenPrefix, hostVersion, at)
   const versionImage = imageFor(size)
@@ -936,7 +943,12 @@ async function createOrAdopt(machines: Machines, item: EnsureItem, context: Item
       const picked = where ?? pickRegion({ choice: item.region ?? options.region, limits, keepFree: options.keepFree, inFlight: machines.inFlight, used, withImage: imageRegions, allowed })
       reserved = machines.inFlight.reserve(picked)
       // The reservation is this create's own; every other create the listing cannot show counts against the cap.
-      await checkCreateBudget(machines, op, listing, createsInFlight(machines, used.since) - 1)
+      await checkCreateBudget(machines, op, listing, createsInFlight(machines, used.since) - 1, {
+        ...(labels ? { labels } : {}),
+        createsMachine: true,
+        machine: name,
+        region: picked,
+      })
       return { claim: await claimRegion(machines, item.workId, picked, (region) => fresh(region, imageAt(region), imageAt(region) === warmImage), imageAt(picked), op), want: picked }
     })
     const region = claim.region
