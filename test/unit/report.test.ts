@@ -22,6 +22,7 @@ const sources = (over: Partial<Parameters<typeof readReport>[0]> = {}) => ({
     keepFree: { fra: 0, nyc: 0 },
     keep: [],
     size: "2x8" as const,
+    slotsPerMachine: 4,
     goldenPrefix: "oc-golden",
     goldenBase: "stock",
     warm: [] as const,

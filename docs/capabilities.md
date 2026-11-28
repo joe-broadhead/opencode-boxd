@@ -69,7 +69,8 @@ None.
   done, unsaved work appears in `attention`. `outcome: completed` without `done` means the turn ended, not the task; a
   new `submit` clears the report.
 - **Changes.** `ensure` makes a work exist and converges it; with `repo` it starts from the repository's warm image when
-  one exists, and its answer says `warm` and, for a work this version made, once ready, `readySeconds`. `submit` admits a
+  one exists, and its answer says `warm` and, for a work this version made, once ready, `readySeconds`. With `machine`
+  it puts the work in a slot on the shared machine `oc-shared-<name>` instead of a machine of its own. `submit` admits a
   prompt; `harvest` exports the session tree and copies the files back; `sleep` hibernates; `resume` wakes or rebuilds;
   `reassign` moves an unstarted work's machine to a new id; `golden` builds, lists or prunes golden images, and with
   `repo`, one of the plugin option `warm` repositories, it builds that repository's warm image from its version's image,

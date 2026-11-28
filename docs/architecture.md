@@ -36,8 +36,9 @@ the ledger that registered the machine. It is ten lowercase hex digits, made onc
 when it creates a machine and when it adopts one, and `boxd_reassign` sets it with the other labels. The automation pass,
 held by one process, sets it once per process on every open work's machine that has none; a machine that already carries
 another ledger's label is left alone. `boxd_ensure` refuses to adopt such a machine, and only `adopt: true` replaces the
-label. The label lets one operator tell another operator's live work from a machine that no work
-owns, because a ledger lives on its operator's machine.
+label. A shared machine carries `shared=<name>` instead of `work=<id>`, and every work in a slot records the same machine
+id; the ledger label is still its operator's. The label lets one operator tell another operator's live work from a
+machine that no work owns, because a ledger lives on its operator's machine.
 
 ## Machine classes and orphans
 

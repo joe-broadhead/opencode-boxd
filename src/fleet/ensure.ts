@@ -30,10 +30,14 @@
  *   progress) every 3 s in the call's shared poll loop, holding no item slot, for at most 90 s and never past `B`. A
  *   read the read rule did not make (the machine not running yet, a listing that aged in the queue) is "not ready
  *   yet", never a failure; a work still coming up answers `starting`, which the next call probes fresh.
+ * - **A shared machine:** with `machine: "<name>"` the work takes a slot on `oc-shared-<name>`. The first work that
+ *   names it creates it at that work's region and size; later works join it under the machine lock, and
+ *   `slotsPerMachine` caps its open works. Its works send their slot to `setup` and `serve`, and a work never moves
+ *   between its own machine and a shared one.
  */
 import { BoxdError, boxdError, inField } from "../errors.js"
 import type { RegionChoice } from "../options.js"
-import { assertModel, assertRepo, workDirectory } from "../names.js"
+import { assertModel, assertRepo, assertSharedMachine, sharedAliasOf, sharedMachineName, workDirectory } from "../names.js"
 import { resolveLaptopPath, rootsOf } from "../paths.js"
 import {
   LIST_MAX_ITEMS,
@@ -42,6 +46,7 @@ import {
   SIZES,
   TIMEOUTS,
   LEDGER_LABEL,
+  SHARED_LABEL,
   WORK_LABELS,
   type ChangeTarget,
   type DescribeAnswer,
@@ -81,7 +86,7 @@ const REF = /^[A-Za-z0-9._/-]{1,120}$/
 const ENV_NAME = /^[A-Z_][A-Z0-9_]{0,63}$/
 const ENV_LIMIT = 64
 const EMAIL = /^[^\s@<>]+@[^\s@<>]+$/
-const ITEM_KEYS = new Set(["workId", "region", "size", "model", "git", "repo", "ref", "directory", "title", "env", "wait", "repair", "adopt"])
+const ITEM_KEYS = new Set(["workId", "machine", "region", "size", "model", "git", "repo", "ref", "directory", "title", "env", "wait", "repair", "adopt"])
 
 /** What every C1 run shares: the services, this process's creates in flight, the golden builds, the recent changes. */
 export interface Machines {
@@ -106,6 +111,8 @@ export type Wait = "ready" | "created" | "none"
 /** One `ensure` item, checked. */
 export interface EnsureItem {
   readonly workId: string
+  /** The short name of a shared machine: the work takes a slot on `oc-shared-<machine>`. */
+  readonly machine?: string
   readonly region?: RegionChoice
   readonly size?: Size
   readonly model?: string
@@ -131,6 +138,12 @@ export async function parseItem(raw: unknown, services: FleetServices, defaultWa
   for (const key of Object.keys(raw)) if (!ITEM_KEYS.has(key)) throw invalid(field(key), `${field(key)} is not an input of boxd_ensure.`)
   const { workId } = raw
   if (typeof workId !== "string" || !WORK_ID.test(workId)) throw invalid(field("workId"), `${field("workId")} must be a short lowercase work id: a letter, then up to 24 lowercase letters, digits or hyphens.`)
+  let machine: string | undefined
+  if (raw.machine !== undefined) {
+    const value = raw.machine
+    if (typeof value !== "string") throw invalid(field("machine"), `${field("machine")} must be a shared machine name.`)
+    machine = await inField(field("machine"), () => assertSharedMachine(value))
+  }
   const choice = (name: string, values: readonly string[]) => {
     const value = raw[name]
     if (value !== undefined && (typeof value !== "string" || !values.includes(value))) throw invalid(field(name), `${field(name)} must be one of ${values.map((entry) => `"${entry}"`).join(", ")}.`)
@@ -180,6 +193,7 @@ export async function parseItem(raw: unknown, services: FleetServices, defaultWa
   }
   return {
     workId,
+    ...(machine ? { machine } : {}),
     ...(region ? { region } : {}),
     ...(size ? { size } : {}),
     ...(model ? { model } : {}),
@@ -235,6 +249,32 @@ export function missingLabels(labels: Readonly<Record<string, string>>, workId: 
   const wanted: Record<string, string> = { ...WORK_LABELS, work: workId }
   if (adopt || labels[LEDGER_LABEL] === undefined) wanted[LEDGER_LABEL] = ledgerId
   return Object.fromEntries(Object.entries(wanted).filter(([key, value]) => labels[key] !== value))
+}
+
+/** A shared machine carries the plugin's owner, its short shared name and the ledger, and no other ledger's label. */
+function carriesSharedLabels(labels: Readonly<Record<string, string>>, shared: string, ledgerId: string): boolean {
+  return labels.owner === WORK_LABELS.owner && labels[SHARED_LABEL] === shared && (labels[LEDGER_LABEL] === undefined || labels[LEDGER_LABEL] === ledgerId)
+}
+
+/** The labels a shared machine still needs: owner, role, shared and the ledger that registers its works. */
+function missingSharedLabels(labels: Readonly<Record<string, string>>, shared: string, ledgerId: string, adopt = false): Record<string, string> {
+  const wanted: Record<string, string> = { ...WORK_LABELS, [SHARED_LABEL]: shared }
+  if (adopt || labels[LEDGER_LABEL] === undefined) wanted[LEDGER_LABEL] = ledgerId
+  return Object.fromEntries(Object.entries(wanted).filter(([key, value]) => labels[key] !== value))
+}
+
+/** Refuses a slot when the shared machine already holds `slotsPerMachine` open works, other than this one. */
+async function assertSlotRoom(machines: Machines, shared: string, workId: string, op: OpContext): Promise<void> {
+  const name = sharedMachineName(shared)
+  const open = (await machines.services.ledger.list({}, op)).filter((record) => record.state === "open" && record.slot === true && record.machine === name && record.workId !== workId)
+  const cap = machines.services.options.slotsPerMachine
+  if (open.length >= cap) {
+    throw boxdError("SLOTS_FULL", `The shared machine ${name} already holds ${open.length} open works, and the plugin option "slotsPerMachine" is ${cap}; nothing was changed.`, {
+      machine: name,
+      works: open.length,
+      cap,
+    })
+  }
 }
 
 const sleeping = (status: string) => status === "hibernated" || status === "standby" || status === "stopped"
@@ -345,7 +385,18 @@ export async function sessionState(machines: Machines, record: WorkRecord, targe
 export async function runSetup(machines: Machines, target: ChangeTarget, record: WorkRecord, input: { readonly workId: string; readonly repair: boolean }, op: OpContext) {
   const { guest, hostVersion } = machines.services
   return guestStep(machines, target, input, op, () =>
-    guest.setup(target, { directory: record.guestDirectory, ...(record.repo ? { repo: record.repo } : {}), ...(record.git ? { git: record.git } : {}), env: record.env ?? [], opencode: hostVersion ?? "" }, op),
+    guest.setup(
+      target,
+      {
+        directory: record.guestDirectory,
+        ...(record.slot === true ? { slot: record.workId } : {}),
+        ...(record.repo ? { repo: record.repo } : {}),
+        ...(record.git ? { git: record.git } : {}),
+        env: record.env ?? [],
+        opencode: hostVersion ?? "",
+      },
+      op,
+    ),
   )
 }
 
@@ -362,7 +413,11 @@ export async function waitReady(machines: Machines, context: ItemContext, target
   const until = Math.min(machines.now() + machines.readyMs, context.deadline)
   const serveOnce = async (): Promise<boolean> => {
     try {
-      const served = await machines.services.guest.serve(await readTarget(machines, target.region, target.name, target.machineId, op), { directory: record.guestDirectory }, op)
+      const served = await machines.services.guest.serve(
+        await readTarget(machines, target.region, target.name, target.machineId, op),
+        { directory: record.guestDirectory, ...(record.slot === true ? { slot: record.workId } : {}) },
+        op,
+      )
       if (served.opencode) opencode = served.opencode
       if (served.clone === "failed") await runSetup(machines, target, record, input, op)
       return served.server === "up" && served.clone !== "running"
@@ -416,15 +471,28 @@ export async function checkBudget(machines: Machines, op: OpContext): Promise<vo
 }
 
 /** A new record for a work, before its create or its adoption. */
-export function newRecord(machines: Machines, input: { readonly workId: string; readonly region: Region; readonly size: Size; readonly image: string; readonly laptopDirectory: string; readonly warm?: boolean } & Partial<Pick<WorkRecord, "repo" | "git" | "env" | "model" | "title">>): WorkRecord {
+export function newRecord(
+  machines: Machines,
+  input: {
+    readonly workId: string
+    readonly region: Region
+    readonly size: Size
+    readonly image: string
+    readonly laptopDirectory: string
+    readonly machine?: MachineName
+    readonly slot?: boolean
+    readonly warm?: boolean
+  } & Partial<Pick<WorkRecord, "repo" | "git" | "env" | "model" | "title">>,
+): WorkRecord {
   const at = new Date(machines.now()).toISOString()
   return {
     format: LEDGER_FORMAT,
     workId: input.workId,
     state: "open",
     region: input.region,
-    machine: `oc-${input.workId}`,
+    machine: input.machine ?? (`oc-${input.workId}` as MachineName),
     machineId: null,
+    ...(input.slot ? { slot: true as const } : {}),
     size: input.size,
     image: { name: input.image, opencode: machines.services.hostVersion },
     laptopDirectory: input.laptopDirectory,
@@ -485,28 +553,55 @@ async function fetchIfThere(machines: Machines, region: Region, name: MachineNam
 
 /**
  * Takes a machine that is there as this work's: only with the plugin's labels or `adopt: true`, never shared or
- * isolated. Only for a work with **no recorded machine id**: a `get`'s `owned` rests on labels, which are not proof of
- * ownership, so a work with a recorded id is only ever resolved by `checkOwned` against that id.
+ * isolated. A shared machine is taken when it carries its own labels and has room for one more work. Only for a work
+ * with **no recorded machine id**: a `get`'s `owned` rests on labels, which are not proof of ownership, so a work with a
+ * recorded id is only ever resolved by `checkOwned` against that id.
  */
-async function land(machines: Machines, found: FetchedMachine, input: { readonly workId: string; readonly adopt: boolean }, op: OpContext): Promise<Landed> {
-  if (!carriesLabels(found.labels, input.workId, await machines.services.ledger.id(op)) && !input.adopt) {
+async function land(
+  machines: Machines,
+  found: FetchedMachine,
+  input: { readonly workId: string; readonly adopt: boolean; readonly shared?: string; readonly size?: Size },
+  op: OpContext,
+): Promise<Landed> {
+  const ledgerId = await machines.services.ledger.id(op)
+  if (input.shared !== undefined) {
+    if (!carriesSharedLabels(found.labels, input.shared, ledgerId) && !input.adopt) {
+      throw boxdError("NOT_OURS", `${found.name} in ${found.region} does not carry this plugin's labels for the shared machine ${input.shared} (owner=boxd and shared=${input.shared}), or carries another ledger's label, so it is not joined.`, {
+        region: found.region,
+      })
+    }
+    if (input.size !== undefined && found.size !== null && input.size !== found.size) {
+      throw boxdError("NAME_INVALID", `The shared machine ${found.name} is ${found.size}, and this call asked for ${input.size}; a work never resizes a shared machine. Omit size, or pass ${found.size}.`, {
+        field: "size",
+      })
+    }
+  } else if (!carriesLabels(found.labels, input.workId, ledgerId) && !input.adopt) {
     throw boxdError("NOT_OURS", `${found.name} in ${found.region} does not carry this plugin's labels (owner=boxd and work=${input.workId}), or carries another ledger's label, so it is not adopted. Pass adopt: true to take it over.`, { region: found.region })
   }
   if (found.sharing === "shared") throw boxdError("MACHINE_SHARED", `${found.name} in ${found.region} is shared with the organisation.`)
   if (found.isolated) throw boxdError("MACHINE_ISOLATED", `${found.name} in ${found.region} is isolated.`)
-  // A machine another open work records is that work's, whatever its name or labels say, even with adopt: true.
-  const holder = (await machines.services.ledger.list({}, op)).find((other) => other.workId !== input.workId && other.machineId === found.id)
-  if (holder) {
-    throw boxdError("NOT_OURS", `${found.name} in ${found.region} is machine ${found.id}, which the open work ${holder.workId} records, so it is not adopted, even with adopt: true. Rename it back to ${holder.machine}, or boxd_reassign.`, { region: found.region })
+  if (input.shared !== undefined) {
+    // Many open works record a shared machine, so it is never "another work's": only its free slot matters.
+    await assertSlotRoom(machines, input.shared, input.workId, op)
+  } else {
+    // A machine another open work records is that work's, whatever its name or labels say, even with adopt: true.
+    const holder = (await machines.services.ledger.list({}, op)).find((other) => other.workId !== input.workId && other.machineId === found.id)
+    if (holder) {
+      throw boxdError("NOT_OURS", `${found.name} in ${found.region} is machine ${found.id}, which the open work ${holder.workId} records, so it is not adopted, even with adopt: true. Rename it back to ${holder.machine}, or boxd_reassign.`, { region: found.region })
+    }
   }
   // The port withholds `owned` for a machine without the labels; with adopt: true it is resolved to the id this get read.
   const owned = found.owned ?? (await machines.services.boxd.checkOwned(found.region, found.name as MachineName, found.id, op))
   return { info: found, owned, created: false }
 }
 
-/** Adopts `oc-<id>` in `region` if it is there: one `get` under the name's machine lock. */
-export async function adoptAt(machines: Machines, input: { readonly workId: string; readonly region: Region; readonly adopt: boolean }, op: OpContext): Promise<Landed | undefined> {
-  const name = `oc-${input.workId}` as MachineName
+/** Adopts `oc-<id>` in `region`, or a shared machine by its name, if it is there: one `get` under the name's machine lock. */
+export async function adoptAt(
+  machines: Machines,
+  input: { readonly workId: string; readonly region: Region; readonly adopt: boolean; readonly shared?: string; readonly size?: Size },
+  op: OpContext,
+): Promise<Landed | undefined> {
+  const name = input.shared !== undefined ? sharedMachineName(input.shared) : (`oc-${input.workId}` as MachineName)
   return machines.services.runner.withMachineLock({ create: { region: input.region, name } }, op, async () => {
     const found = await fetchIfThere(machines, input.region, name, op)
     return found ? land(machines, found, input, op) : undefined
@@ -514,8 +609,9 @@ export async function adoptAt(machines: Machines, input: { readonly workId: stri
 }
 
 /**
- * Creates `oc-<id>` in `region` from `image`, with the §C.2 bounds, under the name's machine lock. A create boxd refuses
- * because the name is taken there adopts the machine that holds it; a limit refusal answers every region's numbers.
+ * Creates `oc-<id>` in `region` from `image`, or a shared machine, with the §C.2 bounds, under the name's machine lock. A
+ * create boxd refuses because the name is taken there adopts the machine that holds it; a limit refusal answers every
+ * region's numbers.
  */
 export async function createAt(
   machines: Machines,
@@ -525,6 +621,10 @@ export async function createAt(
     readonly image: string
     readonly adopt: boolean
     readonly used: InUse
+    /** A shared machine's short name: the create makes `oc-shared-<name>` and the work takes a slot on it. */
+    readonly shared?: string
+    /** The size the work asked for, checked against a shared machine that a concurrent create already made. */
+    readonly size?: Size
     readonly reserved?: (landed: boolean) => void
     /** The work has a recorded machine id (a rebuild): a machine that holds the name is not adopted, it is `NOT_OURS`. */
     readonly recordedId?: MachineId | null
@@ -533,9 +633,10 @@ export async function createAt(
   op: OpContext,
 ): Promise<Landed> {
   const { boxd, runner, options } = machines.services
-  const name = `oc-${input.workId}` as MachineName
+  const name = input.shared !== undefined ? sharedMachineName(input.shared) : (`oc-${input.workId}` as MachineName)
   return runner.withMachineLock({ create: { region: input.region, name } }, op, async () => {
     roomFor(context, TIMEOUTS.create, "creating", `there is not enough time left in this call for a create (${TIMEOUTS.create / 1000} s)`)
+    if (input.shared !== undefined) await assertSlotRoom(machines, input.shared, input.workId, op)
     // The reservation the region pick made, so creates picked at once count each other; else one of its own.
     const end = input.reserved ?? machines.inFlight.reserve(input.region)
     let landed = false
@@ -543,7 +644,18 @@ export async function createAt(
       const lease = options.leaseDays > 0 ? options.leaseDays : undefined
       const ledgerId = await machines.services.ledger.id(op)
       const made = await boxd.create(
-        { kind: "work", region: input.region, name, workId: input.workId, ledger: ledgerId, image: input.image, autoSuspendSeconds: 0, autoHibernateSeconds: options.autoHibernateMinutes * 60, ...(lease ? { leaseDays: lease } : {}) },
+        {
+          kind: "work",
+          region: input.region,
+          name,
+          workId: input.workId,
+          ...(input.shared !== undefined ? { shared: input.shared } : {}),
+          ledger: ledgerId,
+          image: input.image,
+          autoSuspendSeconds: 0,
+          autoHibernateSeconds: options.autoHibernateMinutes * 60,
+          ...(lease ? { leaseDays: lease } : {}),
+        },
         op,
       )
       landed = true
@@ -624,11 +736,12 @@ async function settleAdopted(machines: Machines, landed: Landed, record: WorkRec
   const { boxd, runner, ledger } = machines.services
   const target = landed.owned.target
   const ledgerId = await ledger.id(op)
+  const shared = record.slot === true ? sharedAliasOf(record.machine) : undefined
   const asleep = sleeping(landed.owned.status)
   if (asleep) await checkBudget(machines, op)
-  const resizeTo = item.size && landed.info.size && item.size !== landed.info.size ? item.size : undefined
+  const resizeTo = shared === undefined && item.size && landed.info.size && item.size !== landed.info.size ? item.size : undefined
   await runner.withMachineLock({ id: target.machineId }, op, async () => {
-    const labels = missingLabels(landed.info.labels, item.workId, ledgerId, item.adopt)
+    const labels = shared !== undefined ? missingSharedLabels(landed.info.labels, shared, ledgerId, item.adopt) : missingLabels(landed.info.labels, item.workId, ledgerId, item.adopt)
     if (Object.keys(labels).length > 0) await boxd.setLabels(target, labels, op)
     if (asleep) {
       roomFor(context, TIMEOUTS.helperChange, "starting", "there is not enough time left in this call to wake the machine")
@@ -666,22 +779,26 @@ async function recordLanded(machines: Machines, item: EnsureItem, landed: Landed
 /** Creates or adopts the machine of a work that has no machine id yet; `building` while its image builds. */
 async function createOrAdopt(machines: Machines, item: EnsureItem, context: ItemContext, op: OpContext, previous: WorkRecord | undefined): Promise<Converged | { readonly building: { readonly region: Region; readonly size: Size; readonly image: string } }> {
   const { boxd, options, hostVersion } = machines.services
-  const name = `oc-${item.workId}` as MachineName
-  const size = item.size ?? options.size
+  const shared = item.machine ?? (previous?.slot === true ? sharedAliasOf(previous.machine) : undefined)
+  if (previous?.slot === true && shared === undefined) throw boxdError("NOT_OURS", `${previous.machine} is recorded as a shared machine, but its name is not oc-shared-<name>; nothing was changed.`)
+  const name = shared !== undefined ? sharedMachineName(shared) : (`oc-${item.workId}` as MachineName)
+  const size = item.size ?? (shared !== undefined && previous?.slot === true ? previous.size : options.size)
   const laptopDirectory = item.directory ?? previous?.laptopDirectory ?? machines.services.projectDirectory
-  const versionImage = imageName(options.goldenPrefix, hostVersion, size)
+  const imageFor = (at: Size) => imageName(options.goldenPrefix, hostVersion, at)
+  const versionImage = imageFor(size)
   const repo = item.repo ?? previous?.repo
   // A repository's warm image exists only for this laptop's OpenCode and the work's size; without a repository the
   // version's golden image is the only image a work can come from.
   const warmImage = repo && hostVersion !== null ? warmImageName(options.goldenPrefix, repo.url, hostVersion, size) : undefined
-  const fresh = (region: Region, image: string, warm: boolean) =>
+  const fresh = (region: Region, image: string = versionImage, warm = false, actual: Size = size) =>
     newRecord(machines, {
       workId: item.workId,
       region,
-      size,
+      size: actual,
       image,
       warm,
       laptopDirectory,
+      ...(shared !== undefined ? { machine: name, slot: true } : {}),
       ...(repo ? { repo } : {}),
       ...((item.git ?? options.git) ? { git: item.git ?? options.git } : {}),
       ...(item.env ? { env: item.env } : {}),
@@ -693,21 +810,45 @@ async function createOrAdopt(machines: Machines, item: EnsureItem, context: Item
   const listing = await boxd.list({ maxAgeMs: 0 }, op)
   const found = listing.machines.filter((row) => row.name === name)
   if (found.length > 1) {
-    throw boxdError("NOT_OURS", `${name} exists in ${found.map((row) => row.region).join(" and ")}; a work has one machine, so nothing was changed. Remove or rename one of them with boxd machine.`, { regions: found.map((row) => row.region) })
+    throw boxdError("NOT_OURS", `${name} exists in ${found.map((row) => row.region).join(" and ")}; ${shared !== undefined ? "a shared machine" : "a work"} has one machine, so nothing was changed. Remove or rename one of them with boxd machine.`, {
+      regions: found.map((row) => row.region),
+    })
   }
   const shown = found[0]
-  if (shown && !carriesLabels(shown.labels, item.workId, await machines.services.ledger.id(op)) && !item.adopt) {
-    throw boxdError("NOT_OURS", `${name} in ${shown.region} does not carry this plugin's labels (owner=boxd and work=${item.workId}), or carries another ledger's label, so it is not adopted. Pass adopt: true to take it over.`, { region: shown.region })
+  if (shown) {
+    if (shared !== undefined && item.region !== undefined && item.region !== "auto" && item.region !== shown.region) {
+      throw boxdError("NAME_INVALID", `The shared machine ${name} is in ${shown.region}, and this call asked for ${item.region}; a work never moves a shared machine between regions. Omit region, or pass ${shown.region}.`, {
+        field: "region",
+      })
+    }
+    if (shared !== undefined && item.size !== undefined && shown.size !== null && item.size !== shown.size) {
+      throw boxdError("NAME_INVALID", `The shared machine ${name} is ${shown.size}, and this call asked for ${item.size}; a work never resizes a shared machine. Omit size, or pass ${shown.size}.`, {
+        field: "size",
+      })
+    }
+    const ledgerId = await machines.services.ledger.id(op)
+    const labels = shared !== undefined ? carriesSharedLabels(shown.labels, shared, ledgerId) : carriesLabels(shown.labels, item.workId, ledgerId)
+    if (!labels && !item.adopt) {
+      throw boxdError(
+        "NOT_OURS",
+        shared !== undefined
+          ? `${name} in ${shown.region} does not carry this plugin's labels (owner=boxd and shared=${shared}), or carries another ledger's label, so it is not joined. Pass adopt: true to take it over.`
+          : `${name} in ${shown.region} does not carry this plugin's labels (owner=boxd and work=${item.workId}), or carries another ledger's label, so it is not adopted. Pass adopt: true to take it over.`,
+        { region: shown.region },
+      )
+    }
   }
   const adopted = async (landed: Landed) => {
     // An adopted machine's image is unknown: the record keeps its own, or the version's, never a warm claim.
-    const record = await recordLanded(machines, item, landed, previous?.state === "open" ? previous : fresh(landed.info.region, versionImage, false), size, op)
+    const actual = shared !== undefined ? (landed.info.size ?? size) : size
+    const base = shared !== undefined ? fresh(landed.info.region, imageFor(actual), false, actual) : fresh(landed.info.region, versionImage, false)
+    const record = await recordLanded(machines, item, landed, previous?.state === "open" ? previous : base, size, op)
     return settleAdopted(machines, landed, record, item, context, op)
   }
   // Where the machine is, or was being made: there first, and adopted if it is there.
   const where = shown?.region ?? previous?.region ?? undefined
   if (where) {
-    const there = await adoptAt(machines, { workId: item.workId, region: where, adopt: item.adopt }, op)
+    const there = await adoptAt(machines, { workId: item.workId, region: where, adopt: item.adopt, ...(shared !== undefined ? { shared, ...(item.size !== undefined ? { size: item.size } : {}) } : {}) }, op)
     if (there) return adopted(there)
   }
 
@@ -735,7 +876,7 @@ async function createOrAdopt(machines: Machines, item: EnsureItem, context: Item
     }
     if (claim.held && region !== where) {
       // Another call claimed a region first: its machine may have landed there.
-      const there = await adoptAt(machines, { workId: item.workId, region, adopt: item.adopt }, op)
+      const there = await adoptAt(machines, { workId: item.workId, region, adopt: item.adopt, ...(shared !== undefined ? { shared, ...(item.size !== undefined ? { size: item.size } : {}) } : {}) }, op)
       if (there) return await adopted(there)
     }
     if (!allowed.includes(region)) {
@@ -760,7 +901,12 @@ async function createOrAdopt(machines: Machines, item: EnsureItem, context: Item
         if (built === STILL_BUILDING) return { building: { region, size, image } }
       }
     }
-    const landed = await createAt(machines, { workId: item.workId, region, image, adopt: item.adopt, used, ...(reserved ? { reserved } : {}) }, context, op)
+    const landed = await createAt(
+      machines,
+      { workId: item.workId, region, image, adopt: item.adopt, used, ...(shared !== undefined ? { shared, ...(item.size !== undefined ? { size: item.size } : {}) } : {}), ...(reserved ? { reserved } : {}) },
+      context,
+      op,
+    )
     if (!landed.created) return await adopted(landed)
     const record = await recordLanded(machines, item, landed, claim.record, size, op, { image, warm })
     await recordPhase(machines, item.workId, null, "creating", op)
@@ -846,6 +992,30 @@ export async function ensureOne(machines: Machines, item: EnsureItem, context: I
   const open = record?.state === "open" ? record : undefined
   const notify = call.via === "model" ? await rootSession(machines, call.sessionID) : undefined
   if (open && open.region === null) throw boxdError("MACHINE_GONE", `${open.machine} was found in no region.`)
+  if (open) {
+    if (item.machine !== undefined) {
+      const wanted = sharedMachineName(item.machine)
+      if (open.slot !== true || open.machine !== wanted) {
+        throw boxdError(
+          "NAME_INVALID",
+          open.slot === true
+            ? `Work "${item.workId}" is already on the shared machine ${open.machine}; a work never moves to another shared machine. Omit machine, or pass "${sharedAliasOf(open.machine) ?? ""}".`
+            : `Work "${item.workId}" already has its own machine ${open.machine}; a work never moves between its own machine and a shared one. Omit machine, or use a new work id.`,
+          { field: "machine" },
+        )
+      }
+    }
+    if (open.slot === true) {
+      if (item.size !== undefined && item.size !== open.size) {
+        throw boxdError("NAME_INVALID", `The shared machine ${open.machine} is ${open.size}, and this call asked for ${item.size}; a work never resizes a shared machine. Omit size, or pass ${open.size}.`, { field: "size" })
+      }
+      if (item.region !== undefined && item.region !== "auto" && item.region !== open.region) {
+        throw boxdError("NAME_INVALID", `The shared machine ${open.machine} is in ${open.region}, and this call asked for ${item.region}; a work never moves a shared machine between regions. Omit region, or pass ${open.region}.`, {
+          field: "region",
+        })
+      }
+    }
+  }
 
   let converged: Converged | undefined
   try {
