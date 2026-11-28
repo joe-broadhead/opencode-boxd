@@ -74,6 +74,11 @@ TAIL_LIMIT = 20
 LIST_LIMIT = 1000
 # The server pages /api/session (50 a page by default). A work's whole tree is every page; this is the sane cap.
 SESSION_PAGES = 100
+# The guest's completion declaration (#77) and the report it carries: the newest completed call after the root's latest
+# prompt, with at most this many pull request references.
+DONE_TOOL = "boxd_done"
+DONE_PR_LIMIT = 20
+DONE_MESSAGES = 200
 
 # The completion tool, written into the guest OpenCode's global plugins folder by setup. Its arguments are the work's
 # claim of completion and the pull requests it opened; they stay in the transcript, which is where the laptop reads
@@ -157,6 +162,9 @@ SAFE_PATH = re.compile(r"/[A-Za-z0-9_./-]+")
 SESSION = re.compile(r"ses_[A-Za-z0-9_-]{1,80}")
 MODEL = re.compile(r"([A-Za-z0-9][A-Za-z0-9._-]{0,63})/([A-Za-z0-9][A-Za-z0-9._:/@-]{0,127})(?:#([A-Za-z0-9][A-Za-z0-9._-]{0,31}))?")
 VERSION = re.compile(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?")
+# What a done report may name as a pull request: a GitHub URL, or the same as owner/repo#number.
+PR_URL = re.compile(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/[1-9][0-9]*")
+PR_REF = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]*")
 
 
 def work_directory(value):
@@ -542,6 +550,59 @@ def iso(ms):
     return datetime.datetime.fromtimestamp(ms / 1000, tz=datetime.timezone.utc).isoformat().replace("+00:00", "Z") if ms else None
 
 
+def done_prs(value):
+    """The pull request references a done call named, well formed and without repeats, at most DONE_PR_LIMIT."""
+    if not isinstance(value, list):
+        return []
+    found = []
+    for item in value[:200]:
+        if not isinstance(item, str) or not (PR_URL.fullmatch(item) or PR_REF.fullmatch(item)):
+            continue
+        if item not in found:
+            found.append(item)
+        if len(found) == DONE_PR_LIMIT:
+            break
+    return found
+
+
+def done_report(request, sid, limit=TEXT_LIMIT):
+    """The guest's own completion declaration: the newest completed `boxd_done` call in the root session after its
+    latest user prompt, or None. Its words stay data: cut here, and redacted on the laptop before a result."""
+    try:
+        prompts = newest(request, sid, "user")
+    except GuestError:
+        return None
+    if not prompts:
+        return None
+    times = prompts[0].get("time") if isinstance(prompts[0].get("time"), dict) else {}
+    asked = stamp(times.get("created"))
+    if asked is None:
+        return None
+    try:
+        messages = newest(request, sid, "assistant", DONE_MESSAGES)
+    except GuestError:
+        return None
+    # Newest first, and every part of a message in its newest-first order, so the first match is the newest call.
+    for message in messages:
+        content = message.get("content") if isinstance(message.get("content"), list) else []
+        for part in reversed(content):
+            if not isinstance(part, dict) or part.get("type") != "tool" or part.get("name") != DONE_TOOL:
+                continue
+            state = part.get("state") if isinstance(part.get("state"), dict) else {}
+            if state.get("status") != "completed":
+                continue
+            payload = state.get("input") if isinstance(state.get("input"), dict) else {}
+            summary = payload.get("summary")
+            if not isinstance(summary, str) or not summary.strip():
+                continue
+            part_times = part.get("time") if isinstance(part.get("time"), dict) else {}
+            completed = stamp(part_times.get("completed"))
+            if completed is None or completed <= asked:
+                continue
+            return {"at": iso(completed), "summary": summary.strip()[:limit], "prs": done_prs(payload.get("prs"))}
+    return None
+
+
 OUTCOMES = {"succeeded": "completed", "completed": "completed", "ok": "completed", "failed": "failed", "interrupted": "aborted", "aborted": "aborted"}
 
 
@@ -672,6 +733,11 @@ def action_phase(request):
                 failure = last[0].get("error")
                 if answer["outcome"] == "failed" and isinstance(failure, dict):
                     answer["error"] = {"type": str(failure.get("type") or "error")[:60], "message": str(failure.get("message") or "")[:400]}
+    # Only an idle tree whose last run did not fail or abort can hold a done report, and only after its latest prompt.
+    if answer["phase"] == "idle" and answer.get("outcome") not in ("failed", "aborted"):
+        report = done_report(request, sid, FULL_TEXT_LIMIT if full else TEXT_LIMIT)
+        if report:
+            answer["done"] = report
     # The coordinator's own report stays the root's: lastText, tail, waiting and needsInput are not widened to children.
     try:
         recent = newest(request, sid, "assistant", max(1, tail))
@@ -1255,7 +1321,14 @@ def action_export(request):
     # A run that started while the tree was written (a person on boxd connect, a queued item) makes this copy partial.
     after = http(request, "GET", "/api/session/active") or {}
     running = running or [sid for sid, _parent in sessions_tree if sid in after]
-    emit({"outcome": "exported", "busy": bool(running), "run": export_run(request, root, after), "sessions": sessions, "guestVersion": version})
+    run = export_run(request, root, after)
+    # The harvest keeps the guest's own completion declaration, under the same rule as phase: an idle tree, no failed
+    # or aborted last run, and a completed call after the root's latest prompt.
+    if not running and run.get("outcome") not in ("failed", "aborted"):
+        report = done_report(request, root)
+        if report:
+            run["done"] = report
+    emit({"outcome": "exported", "busy": bool(running), "run": run, "sessions": sessions, "guestVersion": version})
 
 
 def action_import(request):

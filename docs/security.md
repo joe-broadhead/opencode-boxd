@@ -39,9 +39,9 @@ reads a guest.
 
 ## Redaction
 
-The guest's words (`lastText`, `tail`, a file's text) are cut, redacted and marked untrusted data. The plugin's own
-sentences never echo a provider's text into status. An event's title and labels are the plugin's own words; a title that
-looks like a secret is refused for good.
+The guest's words (`lastText`, `tail`, a done report's `summary`, a file's text) are cut, redacted and marked untrusted
+data. The plugin's own sentences never echo a provider's text into status. An event's title and labels are the plugin's
+own words; a title that looks like a secret is refused for good.
 
 ## No plan/commit flow
 
