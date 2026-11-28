@@ -84,6 +84,10 @@ None.
   can print a secret that is not host-bound.
 - **`drop`** is class `delete`. It refuses unless the work is saved, its git tree is known, every untracked or ignored
   path was harvested, and every commit on a local branch, tag, stash or detached HEAD is on a remote ref.
+- **The budget.** `budget.daily` caps today's machine cost; `budget.machines` caps this ledger's machines and
+  `budget.orgMachines` caps the organisation's count, both from the all-region listing and without an owner's sign-in.
+  `ensure`, and `resume` when it rebuilds, refuse before a create at a reached cap under `action: "refuse"`, and warn
+  `BUDGET_WARN` under `"warn"`. A wake never counts as a new machine.
 - **No plans or actions.** Every method is one call. The contract permits a method without `plans`/`commits`, and boxd's
   destructive guard is part of the call it protects.
 

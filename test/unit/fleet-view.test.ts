@@ -169,6 +169,7 @@ describe("boxd_status", () => {
       automation: () => "on",
       budget: async () => budget,
       assertBudget: async () => {},
+      assertCreateBudget: async () => {},
     })
     const answer = async (budget: BudgetState) => {
       await world.dispose()
@@ -178,6 +179,8 @@ describe("boxd_status", () => {
     const warn = await answer({ daily: 5, today: 6, action: "warn", state: "reached" })
     expect(warn.warnings).toEqual(["BUDGET_WARN"])
     expect(warn.budget).toEqual({ daily: 5, today: 6, action: "warn", state: "reached" })
+    const machines = await answer({ today: null, machines: { inUse: 2, limit: 2 }, action: "warn", state: "reached" })
+    expect(machines.warnings).toEqual(["BUDGET_WARN"])
     // BUDGET_REACHED is the refusal of a call that would make a machine run (ensure, resume…), never a status warning.
     const refuse = await answer({ daily: 5, today: 6, action: "refuse", state: "reached" })
     expect(refuse.warnings).toBeUndefined()
@@ -199,6 +202,7 @@ describe("boxd_status", () => {
       automation: () => "on",
       budget: async () => budget,
       assertBudget: async () => {},
+      assertCreateBudget: async () => {},
     })
     await world.dispose()
     const hours = { today: 3, cap: 2 }

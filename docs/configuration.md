@@ -26,7 +26,7 @@ Every option is optional. Set them under the plugin entry in `opencode.json`.
 | `autoSleepMinutes` | integer | `10` | Idle minutes before automation harvests and hibernates a finished work; 0 turns that step off. |
 | `orphanHours` | integer | `12` | A running, not-busy work no plugin call touched for this long is harvested and hibernated. |
 | `leaseDays` | integer | `0` | A delete-after lease renewed on activity, in days; 0 is off. |
-| `budget` | object | — | Machine cost per day in the organisation's billing currency, or machine-hours this ledger's works may run per local day, warned about or refused at. |
+| `budget` | object | — | Machine cost per day, machine-hours and machine caps, warned about or refused at: daily in the organisation's billing currency, machine-hours this ledger's works may run per local day, machines this ledger may hold, and the organisation's machine count. |
 <!-- /generated:configuration -->
 
 ## Machine classes
@@ -96,6 +96,9 @@ A project with a git identity and a machine budget that refuses rather than warn
 - `leaseDays` sets a delete-after timer that boxd enforces. It is off by default because boxd deletes unsaved work too.
 - `budget` takes at least one cap and an action. `daily` is today's machine cost in the organisation's billing currency;
   `machineHours` is the running hours of this ledger's works today, summed from its own records, so it needs no owner's
-  sign-in. Both reset at local midnight. With `action: "refuse"`, a call that would make a machine run (`boxd_ensure`,
-  `boxd_resume`, `boxd_submit` to a sleeping work, or `boxd_exec` with `wake: true`) answers `BUDGET_REACHED` at the cap,
-  naming the figure, the cap and the cleanup call; with `"warn"` it runs and `boxd_status` carries `BUDGET_WARN`.
+  sign-in; `machines` is the most machines this ledger may hold at once, in any state but `destroyed`; and `orgMachines`
+  is the organisation's machine count at which this plugin stops creating. The time caps reset at local midnight. With
+  `action: "refuse"`, a call that would make a machine run (`boxd_ensure`, `boxd_resume`, `boxd_submit` to a sleeping
+  work, or `boxd_exec` with `wake: true`) answers `BUDGET_REACHED` at the daily or machine-hours cap, and a create in
+  `boxd_ensure` or a resume rebuild also checks `machines` and `orgMachines`; with `"warn"` it runs and `boxd_status`
+  carries `BUDGET_WARN`. Waking an existing machine never counts as a new one.

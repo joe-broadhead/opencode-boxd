@@ -4,13 +4,14 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { localMidnight } from "../../src/cost/index.js"
 import { matches, suggestions } from "../../src/cost/fleet.js"
+import { machineCounts } from "../../src/cost/machines.js"
 import { perHour, PUBLIC_RATES } from "../../src/cost/rates.js"
 import { automationState, consent } from "../../src/cost/shared.js"
 import { BoxdError } from "../../src/errors.js"
 import { asHours, localDay } from "../../src/ledger/hours.js"
 import type { Phase } from "../../src/ledger/types.js"
 import type { Usage } from "../../src/ports.js"
-import { fakes, minutesAgo, record, T0, work, type Fakes } from "../support/cost-fakes.js"
+import { fakes, LEDGER_ID, minutesAgo, record, T0, work, type Fakes } from "../support/cost-fakes.js"
 
 const EUR = PUBLIC_RATES.EUR
 const USD = PUBLIC_RATES.USD
@@ -243,6 +244,7 @@ describe("the budget (§C.5)", () => {
     const f = make()
     expect(await f.services.cost.budget(tag)).toBeUndefined()
     await f.services.cost.assertBudget(tag)
+    await f.services.cost.assertCreateBudget(tag)
     expect(f.calls).toEqual([])
   })
 
@@ -325,6 +327,106 @@ describe("the budget (§C.5)", () => {
     f.clock.now = new Date(2026, 10, 17, 1, 30)
     expect(await f.services.cost.budget(tag)).toMatchObject({ machineHours: { today: 1.5, cap: 0.75 }, state: "reached" })
     await expect(f.services.cost.assertBudget(tag)).rejects.toMatchObject({ code: "BUDGET_REACHED" })
+  })
+
+  test("budget.machines: below the cap passes, at and above it are reached, warn never refuses, refuse always does", async () => {
+    const state = async (cap: number, action: "warn" | "refuse") => {
+      const f = make({ options: { budget: { machines: cap, action } }, works: [work("a"), work("b")] })
+      const listing = await f.services.boxd.list({ maxAgeMs: 0 }, { call: tag })
+      return { f, listing, budget: await f.services.cost.budget(tag, { listing }) }
+    }
+    const below = await state(3, "refuse")
+    expect(below.budget).toEqual({ today: null, machines: { inUse: 2, limit: 3 }, action: "refuse", state: "ok" })
+    await below.f.services.cost.assertCreateBudget(tag, { listing: below.listing })
+    for (const action of ["warn", "refuse"] as const) {
+      const at = await state(2, action)
+      expect(at.budget).toEqual({ today: null, machines: { inUse: 2, limit: 2 }, action, state: "reached" })
+      const above = await state(1, action)
+      expect(above.budget).toEqual({ today: null, machines: { inUse: 2, limit: 1 }, action, state: "reached" })
+      if (action === "warn") {
+        await at.f.services.cost.assertCreateBudget(tag, { listing: at.listing })
+        await above.f.services.cost.assertCreateBudget(tag, { listing: above.listing })
+      } else {
+        expect((await at.f.services.cost.assertCreateBudget(tag, { listing: at.listing }).catch((error: unknown) => error)) as BoxdError).toMatchObject({
+          code: "BUDGET_REACHED",
+          details: { scope: "machines", inUse: 2, cap: 2 },
+        })
+        expect((await above.f.services.cost.assertCreateBudget(tag, { listing: above.listing }).catch((error: unknown) => error)) as BoxdError).toMatchObject({
+          code: "BUDGET_REACHED",
+          details: { scope: "machines", inUse: 2, cap: 1 },
+        })
+      }
+    }
+  })
+
+  test("budget.orgMachines counts every machine, including another ledger's, and leaves budget.machines out", async () => {
+    const f = make({ options: { budget: { orgMachines: 3, action: "refuse" } }, works: [work("a"), work("b"), work("other")] })
+    f.labels.set("oc-other", { ledger: "another" })
+    const listing = await f.services.boxd.list({ maxAgeMs: 0 }, { call: tag })
+    expect(await f.services.cost.budget(tag, { listing })).toEqual({ today: null, orgMachines: { inUse: 3, limit: 3 }, action: "refuse", state: "reached" })
+    expect((await f.services.cost.assertCreateBudget(tag, { listing }).catch((error: unknown) => error)) as BoxdError).toMatchObject({
+      code: "BUDGET_REACHED",
+      details: { scope: "orgMachines", inUse: 3, cap: 3 },
+    })
+    for (const [cap, expected] of [[4, "ok"], [2, "reached"]] as const) {
+      const other = make({ options: { budget: { orgMachines: cap, action: "warn" } }, works: [work("a"), work("b"), work("other")] })
+      other.labels.set("oc-other", { ledger: "another" })
+      const rows = await other.services.boxd.list({ maxAgeMs: 0 }, { call: tag })
+      expect(await other.services.cost.budget(tag, { listing: rows })).toEqual({ today: null, orgMachines: { inUse: 3, limit: cap }, action: "warn", state: expected })
+    }
+  })
+
+  test("the ledger count includes its own machines without the ledger label, by name or by id", async () => {
+    const f = make({ options: { budget: { machines: 2, action: "refuse" } }, works: [work("old"), work("new")], records: [record("old"), record("new")] })
+    f.labels.set("oc-old", {})
+    const listing = await f.services.boxd.list({ maxAgeMs: 0 }, { call: tag })
+    expect(machineCounts(listing, LEDGER_ID, [record("old"), record("new")])).toEqual({ ledger: 2, org: 2 })
+    expect(await f.services.cost.budget(tag, { listing })).toEqual({ today: null, machines: { inUse: 2, limit: 2 }, action: "refuse", state: "reached" })
+    expect((await f.services.cost.assertCreateBudget(tag, { listing }).catch((error: unknown) => error)) as BoxdError).toMatchObject({
+      code: "BUDGET_REACHED",
+      details: { scope: "machines", inUse: 2, cap: 2 },
+    })
+
+    // A record's machine id still counts after a rename, even when the listing carries the id and the old name does not.
+    const renamed = { ...listing, machines: listing.machines.map((machine) => (machine.name === "oc-old" ? { ...machine, id: "vm_old" as never, name: "oc-renamed" } : machine)) }
+    expect(await f.services.cost.budget(tag, { listing: renamed })).toMatchObject({ machines: { inUse: 2, limit: 2 }, state: "reached" })
+
+    const room = make({ options: { budget: { machines: 3, action: "refuse" } }, works: [work("old"), work("new")], records: [record("old"), record("new")] })
+    room.labels.set("oc-old", {})
+    await room.services.cost.assertCreateBudget(tag, { listing })
+  })
+
+  test("a create the listing cannot show counts: a pending record and an in-flight create each add one", async () => {
+    const pending = record("pending", { machineId: null, pendingCreate: { at: T0.toISOString(), image: "oc-golden-2.4.4-4x16" } })
+    const f = make({ options: { budget: { machines: 2, action: "refuse" } }, works: [work("a")], records: [pending] })
+    const listing = await f.services.boxd.list({ maxAgeMs: 0 }, { call: tag })
+    expect(await f.services.cost.budget(tag, { listing })).toEqual({ today: null, machines: { inUse: 2, limit: 2 }, action: "refuse", state: "reached" })
+    expect((await f.services.cost.assertCreateBudget(tag, { listing }).catch((error: unknown) => error)) as BoxdError).toMatchObject({
+      code: "BUDGET_REACHED",
+      details: { scope: "machines", inUse: 2, cap: 2 },
+    })
+
+    const flying = make({ options: { budget: { orgMachines: 1, action: "refuse" } } })
+    expect((await flying.services.cost.assertCreateBudget(tag, { inFlight: 1 }).catch((error: unknown) => error)) as BoxdError).toMatchObject({
+      code: "BUDGET_REACHED",
+      details: { scope: "orgMachines", inUse: 1, cap: 1 },
+    })
+  })
+
+  test("a machine budget shows its figures without reading usage, and a wake is not refused by a machine cap", async () => {
+    const f = make({ options: { budget: { machines: 2, orgMachines: 3, action: "warn" } }, works: [work("a"), work("b")] })
+    f.labels.set("oc-b", { ledger: "another" })
+    expect(await f.services.cost.budget(tag)).toEqual({
+      today: null,
+      machines: { inUse: 1, limit: 2 },
+      orgMachines: { inUse: 2, limit: 3 },
+      action: "warn",
+      state: "ok",
+    })
+    expect(f.calls.some((call) => call.startsWith("usage"))).toBe(false)
+    // assertBudget is the wake/run check: a reached machine cap does not refuse a machine that already exists.
+    const atCap = make({ options: { budget: { machines: 1, action: "refuse" } }, works: [work("a")] })
+    await atCap.services.cost.assertBudget(tag)
   })
 })
 

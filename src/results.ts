@@ -34,6 +34,10 @@ export interface ErrorFacts {
   readonly currency?: string
   /** `BUDGET_REACHED`: today's running hours and the ledger's cap. */
   readonly machineHours?: { readonly today: number; readonly cap: number }
+  /** `BUDGET_REACHED` for a machine cap: which cap, the count and the cap. */
+  readonly scope?: "machines" | "orgMachines"
+  readonly inUse?: number
+  readonly cap?: number
 }
 
 /** A refusal or failure, in the shape of any answer. */
@@ -206,15 +210,24 @@ export interface OrphanResult {
   readonly next?: string
 }
 
+export interface BudgetMachineCount {
+  readonly inUse: number
+  readonly limit: number
+}
+
 export interface BudgetState {
   /** The money cap, only with `budget.daily`. */
   readonly daily?: number
-  /** Today's machine cost, or null when unreadable or when only `machineHours` is set. */
+  /** Today's machine cost, or null when unreadable or when no money cap is set. */
   readonly today: number | null
   /** Today's running hours against the cap, only with `budget.machineHours`. */
   readonly machineHours?: { readonly today: number; readonly cap: number }
+  /** `budget.machines` and this ledger's machine count; absent when `budget.machines` is not set. */
+  readonly machines?: BudgetMachineCount
+  /** `budget.orgMachines` and the organisation's machine count; absent when `budget.orgMachines` is not set. */
+  readonly orgMachines?: BudgetMachineCount
   readonly action: "warn" | "refuse"
-  /** `reached` is either cap at or over its limit; `unknown` is a money cap this sign-in cannot measure. */
+  /** `reached` when any configured cap is at its value, `unknown` when a configured cap cannot be measured. */
   readonly state: "ok" | "reached" | "unknown"
 }
 

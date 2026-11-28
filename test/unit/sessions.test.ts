@@ -81,6 +81,10 @@ beforeEach(async () => {
       budget.calls += 1
       if (budget.refuse) throw boxdError("BUDGET_REACHED", "Today's machine cost reached the budget.", { today: 10, daily: 5, currency: "EUR" })
     },
+    assertCreateBudget: async () => {
+      budget.calls += 1
+      if (budget.refuse) throw boxdError("BUDGET_REACHED", "A machine cap was reached.", { scope: "machines", inUse: 10, cap: 5 })
+    },
   }
   services = {
     options: parseOptions({}),

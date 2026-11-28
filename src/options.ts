@@ -16,6 +16,10 @@ export interface Budget {
   readonly daily?: number
   /** Machine-hours this ledger's works may run in one local day, when set. */
   readonly machineHours?: number
+  /** The most machines this ledger may hold at once, any state but destroyed. */
+  readonly machines?: number
+  /** The organisation's machine count at which this plugin stops creating, below boxd's own limit. */
+  readonly orgMachines?: number
   readonly action: "warn" | "refuse"
 }
 
@@ -132,7 +136,8 @@ const ACCEPTED = {
   autoSleepMinutes: "a whole number of minutes, 0 or more (10 by default; 0 turns auto-sleep off)",
   orphanHours: "a whole number of hours, 1 or more (12 by default)",
   leaseDays: "a whole number of days, 0 or more (0, off, by default)",
-  budget: 'an object with "action" ("warn" or "refuse") and at least one positive cap: "daily" in the organisation\'s billing currency, or "machineHours" in this ledger\'s running hours per local day',
+  budget:
+    'an object with "action" ("warn" or "refuse") and at least one positive cap: "daily" in the organisation\'s billing currency, "machineHours" in this ledger\'s running hours per local day, "machines" this ledger may hold, or "orgMachines", the organisation\'s machine count',
 } as const satisfies Record<keyof Options, string>
 
 const EXAMPLE = `"plugins": [{ "package": "github:we-the-rebel-alliance/boxd-plugin#v<version>", "options": { "region": "auto", "size": "2x8" } }]`
@@ -244,15 +249,21 @@ export function parseOptions(raw: unknown): Options {
   if (input.budget !== undefined) {
     const raw = input.budget
     if (!isObject(raw)) throw wrong("budget", raw)
-    const keys = Object.keys(raw).sort().join()
-    if (keys !== "action,daily" && keys !== "action,machineHours" && keys !== "action,daily,machineHours") throw wrong("budget", raw)
+    const keys = ["action", "daily", "machineHours", "machines", "orgMachines"]
+    if (Object.keys(raw).some((key) => !keys.includes(key))) throw wrong("budget", raw)
     if (raw.daily !== undefined && (typeof raw.daily !== "number" || !Number.isFinite(raw.daily) || raw.daily <= 0)) throw wrong("budget", raw)
     if (raw.machineHours !== undefined && (typeof raw.machineHours !== "number" || !Number.isFinite(raw.machineHours) || raw.machineHours <= 0)) throw wrong("budget", raw)
-    if (raw.daily === undefined && raw.machineHours === undefined) throw invalid('The option "budget" must set at least one of "daily", in the organisation\'s billing currency, or "machineHours", this ledger\'s running hours per local day')
+    if (raw.daily === undefined && raw.machineHours === undefined && raw.machines === undefined && raw.orgMachines === undefined) {
+      throw invalid('The option "budget" must set at least one of "daily", "machineHours", "machines" or "orgMachines"')
+    }
     if (typeof raw.action !== "string" || !(BUDGET_ACTIONS as readonly string[]).includes(raw.action)) throw wrong("budget", raw)
+    const count = (value: unknown) => value === undefined || (typeof value === "number" && Number.isInteger(value) && value >= 0)
+    if (!count(raw.machines) || !count(raw.orgMachines)) throw wrong("budget", raw)
     budget = {
       ...(raw.daily !== undefined ? { daily: raw.daily as number } : {}),
       ...(raw.machineHours !== undefined ? { machineHours: raw.machineHours as number } : {}),
+      ...(raw.machines !== undefined ? { machines: raw.machines as number } : {}),
+      ...(raw.orgMachines !== undefined ? { orgMachines: raw.orgMachines as number } : {}),
       action: raw.action as Budget["action"],
     }
   }

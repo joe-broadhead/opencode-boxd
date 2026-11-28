@@ -276,6 +276,14 @@
               "type": "number",
               "exclusiveMinimum": 0
             },
+            "machines": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "orgMachines": {
+              "type": "integer",
+              "minimum": 0
+            },
             "action": {
               "type": "string",
               "enum": [
@@ -297,10 +305,20 @@
               "required": [
                 "machineHours"
               ]
+            },
+            {
+              "required": [
+                "machines"
+              ]
+            },
+            {
+              "required": [
+                "orgMachines"
+              ]
             }
           ],
           "additionalProperties": false,
-          "description": "Machine cost per day in the organisation's billing currency, or machine-hours this ledger's works may run per local day, warned about or refused at."
+          "description": "Machine cost per day, machine-hours and machine caps, warned about or refused at: daily in the organisation's billing currency, machine-hours this ledger's works may run per local day, machines this ledger may hold, and the organisation's machine count."
         }
       },
       "additionalProperties": false

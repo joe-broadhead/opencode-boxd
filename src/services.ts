@@ -18,7 +18,7 @@
 import type { Plugin } from "@opencode/plugin"
 import type { Phase, SavedState } from "./ledger/types.js"
 import type { Options } from "./options.js"
-import type { BoxdPort, CallTag, FleetWatch, GuestPort, LaptopPort, LedgerPort, Runner } from "./ports.js"
+import type { BoxdPort, CallTag, FleetWatch, GuestPort, LaptopPort, LedgerPort, Listing, Runner } from "./ports.js"
 import type { AutomationState, BudgetState, CleanupAction, CostBlock, HarvestResult, ListResult, Refusal, SleepResult, ToolResults } from "./results.js"
 import type { CallContext } from "./call.js"
 
@@ -144,14 +144,20 @@ export interface CostPort {
   /** The `cleanup` block: suggested actions, biggest saving first. */
   cleanup(context: CallTag): Promise<readonly CleanupAction[]>
   automation(): AutomationState
-  /** Only with the `budget` option. */
-  budget(context: CallTag): Promise<BudgetState | undefined>
+  /** Only with the `budget` option. `listing` is the status call's own, so a machine count adds no boxd call. */
+  budget(context: CallTag, facts?: { readonly listing?: Listing }): Promise<BudgetState | undefined>
   /**
    * For a call that would make a machine run (ensure, resume, a submit to a hibernated work, exec with `wake`): throws
-   * `BUDGET_REACHED` when `budget.action` is `refuse` and either cap is reached. Machine-hours are from the ledger, so
-   * they refuse for a member too; an unmeasurable money cap alone acts as warn.
+   * `BUDGET_REACHED` when `budget.action` is `refuse` and any cap is reached. Machine-hours are from the ledger, and
+   * the machine counts from the listing, so both refuse for a member too; an unmeasurable money cap alone acts as warn.
    */
   assertBudget(context: CallTag): Promise<void>
+  /**
+   * For a call that would create a machine (ensure, and resume when it rebuilds): throws `BUDGET_REACHED` when
+   * `budget.action` is `refuse` and either machine cap is reached. `inFlight` counts this process's creates the listing
+   * cannot show yet. Waking an existing machine never calls this.
+   */
+  assertCreateBudget(context: CallTag, facts?: { readonly listing?: Listing; readonly inFlight?: number }): Promise<void>
 }
 
 // A phase and a saved state are part of the status report's vocabulary; re-exported so a handler needs one import.

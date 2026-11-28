@@ -16,6 +16,9 @@
 - A work's OpenCode server starts with the machine's basics and the variable names the work declares in `ensure` as
   `env`, without the operator's other variables. A session can still read them from boxd's variables file, a login shell
   or sudo.
+- The `budget` option takes `machines`, the most machines this ledger may hold, and `orgMachines`, the organisation's
+  count at which this plugin stops creating. `boxd_ensure`, and `boxd_resume` when it rebuilds, check both before a
+  create; `daily` is now optional, and a wake never counts as a new machine.
 
 ## 0.0.0 (2026-11-25)
 

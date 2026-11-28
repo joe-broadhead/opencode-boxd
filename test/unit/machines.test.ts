@@ -216,6 +216,39 @@ describe("boxd_ensure: a new work", () => {
     expect(error).toMatchObject({ code: "BUDGET_REACHED", details: { today: 51, daily: 50, currency: "EUR" } })
     expect(k.calls().some((entry) => entry.startsWith("machine new"))).toBe(false)
   })
+
+  test("a reached budget.machines refuses a create before any machine is made", async () => {
+    const k = await kit({ realCost: true, options: { budget: { machines: 1, action: "refuse" } } })
+    await owned(k, "existing")
+    k.reset()
+    const error = await errorOf(k.runs.boxd_ensure({ workId: "extra" }, k.call()))
+    expect(error).toMatchObject({ code: "BUDGET_REACHED", details: { scope: "machines", inUse: 1, cap: 1 } })
+    expect(k.calls().some((entry) => entry.startsWith("machine new"))).toBe(false)
+  })
+
+  test("a reached budget.orgMachines refuses a create before any machine is made", async () => {
+    const k = await kit({ realCost: true, options: { budget: { orgMachines: 1, action: "refuse" } } })
+    k.counter.fake.machine({ name: "oc-another-ledger", region: "nyc", labels: { ledger: "another" } })
+    k.reset()
+    const error = await errorOf(k.runs.boxd_ensure({ workId: "extra" }, k.call()))
+    expect(error).toMatchObject({ code: "BUDGET_REACHED", details: { scope: "orgMachines", inUse: 1, cap: 1 } })
+    expect(k.calls().some((entry) => entry.startsWith("machine new"))).toBe(false)
+  })
+
+  test("two creates at once count each other: with budget.machines 1, one is made and one is refused", async () => {
+    const k = await kit({ realCost: true, options: { budget: { machines: 1, action: "refuse" } } })
+    await k.golden("fra")
+    k.reset()
+    const results = await Promise.allSettled([
+      k.runs.boxd_ensure({ workId: "first" }, k.call()),
+      k.runs.boxd_ensure({ workId: "second" }, k.call()),
+    ])
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1)
+    const refused = results.filter((result): result is PromiseRejectedResult => result.status === "rejected")
+    expect(refused).toHaveLength(1)
+    expect((refused[0]!.reason as { code?: string }).code).toBe("BUDGET_REACHED")
+    expect(k.calls().filter((entry) => entry.startsWith("machine new oc-"))).toHaveLength(1)
+  })
 })
 
 describe("boxd_ensure: adoption (L-b)", () => {
@@ -413,6 +446,15 @@ describe("boxd_ensure: an existing work converges", () => {
     const calls = k.calls()
     expect(calls.indexOf(`machine get oc-napper --region fra --json`)).toBeLessThan(calls.indexOf(`machine wake ${machine.id} --region fra --json`))
     expect(k.counter.fake.read().wokenByExec ?? []).toEqual([])
+  })
+
+  test("a reached budget.machines never refuses a wake, because waking makes no machine", async () => {
+    const k = await kit({ realCost: true, options: { budget: { machines: 1, action: "refuse" } } })
+    const machine = await known(k, "napper", {}, { status: "hibernated" })
+    k.reset()
+    const result = (await k.runs.boxd_ensure({ workId: "napper", wait: "none" }, k.call())) as EnsureResult
+    expect(result.state).toBe("starting")
+    expect(k.calls()).toContain(`machine wake ${machine.id} --region fra --json`)
   })
 
   test("another size: resized by id when the session is idle; SESSION_BUSY and no resize when it runs", async () => {
@@ -1139,6 +1181,17 @@ describe("boxd_resume (design §3.8)", () => {
     const record = await k.record("phoenix")
     expect(record?.machineId).not.toBe(machine.id)
     expect(record?.session?.rootId).toBe("ses_phoenix")
+  })
+
+  test("a reached budget.machines refuses a resume rebuild before any machine is made", async () => {
+    const k = await kit({ realCost: true, options: { budget: { machines: 1, action: "refuse" } } })
+    const machine = await known(k, "phoenix")
+    await owned(k, "existing")
+    k.counter.fake.update((state) => { state.machines.find((entry) => entry.id === machine.id)!.status = "destroyed" })
+    k.reset()
+    const error = await errorOf(k.runs.boxd_resume({ workId: "phoenix" }, k.call()))
+    expect(error).toMatchObject({ code: "BUDGET_REACHED", details: { scope: "machines", inUse: 1, cap: 1 } })
+    expect(k.calls().some((entry) => entry.startsWith("machine new"))).toBe(false)
   })
 
   test("a failed read is never gone: a get that fails other than not-found rebuilds nothing", async () => {
