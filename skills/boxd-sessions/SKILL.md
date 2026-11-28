@@ -28,11 +28,11 @@ cache with more CPU. Read a method's description before its first call.
    messages and `cost` for its figures. `lastText` is cut to 300 characters; `full: true` returns the whole last
    assistant message, line breaks kept, up to 64,000 characters. A work is done only when `done: true`; `job` then
    carries `summary` and `prs`, its report. `outcome: completed` without `done` means the turn ended, not the task.
-   `tools.boxd.events_list` lists every work's phase changes from the local ledger: pass `since` for a first read, then
-   the previous page's `cursor`. Each event names its change in one label: `change:started`, `change:waiting`,
-   `change:finished`, `change:failed` or `change:idle`. Wait on the `rpc.boxd.changed` bus event and read from the
-   cursor in state; do not poll `status` or `job` for a work's state. `tools.boxd.status({ list: "works" })` lists the
-   works and which are done.
+   `tools.boxd.events_list` lists every change of every work from the local ledger, including a wait for input that
+   starts or clears: pass `since` for a first read, then the previous page's `cursor`. Each event names its change in
+   one label: `change:started`, `change:waiting`, `change:finished`, `change:failed` or `change:idle`. Wait on the
+   `rpc.boxd.changed` bus event and read from the cursor in state; do not poll `status` or `job` for a work's state.
+   `tools.boxd.status({ list: "works" })` lists the works and which are done.
 4. `tools.boxd.harvest({ workId })` brings the transcript and git back here; `files` brings outputs back, and
    `localDirectory` names another folder to import into. `saved` then reads `fresh`.
 5. `tools.boxd.sleep({ workId })` hibernates; `tools.boxd.drop({ workId })` destroys a finished, saved work;

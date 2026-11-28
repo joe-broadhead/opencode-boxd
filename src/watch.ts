@@ -10,9 +10,10 @@
  *   the listing just showed `running`, in the background pool (at most 4 at once, one per machine). It never reads an
  *   idle, ready or asleep guest, because an inbound exec resets the machine's idle clock, and it never uploads anything.
  *   The sweep runs every 60 s, or every twice its own duration when that is longer.
- * - **A phase change is appended** to `events.jsonl` (`unreachable` after two failed reads in a row, `gone` after two
- *   listings in a row without the machine), handed to every subscriber in `seq` order, and queued as a notice; the
- *   queue's durable cursor per coordinator (`src/notice-cursors.ts`) keeps each change to one delivery.
+ * - **A phase change, or a wait for input that starts or clears, is appended** to `events.jsonl` (`unreachable` after
+ *   two failed reads in a row, `gone` after two listings in a row without the machine), handed to every subscriber in
+ *   `seq` order, and queued as a notice; the queue's durable cursor per coordinator (`src/notice-cursors.ts`) keeps each
+ *   change to one delivery. A wait whose phase stays the same appends one event with `from` equal to `to`.
  * - **Every tick that appended or tailed an event** calls `changed` once, after all its events, so the works source's
  *   subscribers can re-read. A tick with nothing new calls nothing, and a failed call never loses the event.
  * - **It stops** sweeping when nothing is busy, when the plugin is disposed, and after three failed sweeps in a row
@@ -78,14 +79,20 @@ export interface Watcher {
 
 const ACTIVE: ReadonlySet<Phase> = new Set<Phase>(["busy", "creating", "starting", "unreachable"])
 
+/** What a work is waiting on, as its events carry it: only `busy` and `idle` events name an input. */
+type Waiting = NonNullable<WorkEvent["needsInput"]>
+
+const waitingOf = (phase: Phase, observed: Observed | undefined): Waiting | undefined =>
+  phase === "busy" || phase === "idle" ? observed?.needsInput : undefined
+
 export function createWatch(core: CoreServices, options: WatchOptions = {}): Watcher {
   const auto = options.autoStart ?? true
   const interval = options.intervalMs ?? WATCH_INTERVAL_MS
   const now = () => core.clock.now()
   const observed = new Map<string, Observed>()
-  /** The last phase the event log holds per work, and when. */
+  /** The last phase and wait the event log holds per work, and when. */
   /** `seenAt` is when this process learned it (`Date.now()`, the listing's clock). */
-  const logged = new Map<string, { readonly phase: Phase; readonly at: string; readonly seenAt: number }>()
+  const logged = new Map<string, { readonly phase: Phase; readonly needsInput?: Waiting; readonly at: string; readonly seenAt: number }>()
   const records = new Map<string, WorkRecord>()
   const listeners = new Set<(event: WorkEvent) => void>()
   /** Sequence numbers this process already handed out, so the tail does not hand them out twice. */
@@ -165,12 +172,19 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
 
   /** What an event says, kept unless a guest read since is newer. */
   function learn(event: WorkEvent): void {
-    logged.set(event.workId, { phase: event.to, at: event.at, seenAt: Date.now() })
+    logged.set(event.workId, {
+      phase: event.to,
+      at: event.at,
+      seenAt: Date.now(),
+      ...(event.needsInput ? { needsInput: event.needsInput } : {}),
+    })
     const previous = observed.get(event.workId)
     if (previous?.readAt !== undefined && previous.readAt >= Date.parse(event.at)) return
     const at = new Date(event.at)
+    // The newest event's wait replaces what was known, so an event without one clears it.
+    const { needsInput: _cleared, ...rest } = base(previous, event.to, at)
     observed.set(event.workId, {
-      ...base(previous, event.to, at),
+      ...rest,
       outcome: event.to === "idle" ? (event.outcome ?? null) : (previous?.outcome ?? null),
       ...(event.code !== undefined ? { code: event.code as Observed["code"] } : {}),
       ...(event.needsInput ? { needsInput: event.needsInput } : {}),
@@ -179,8 +193,9 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
   }
 
   /**
-   * Seeds once from the ledger's cached phases (the `to` of each work's last event, with no replay of the log) and the
-   * log's newest cursor, then tails the log whenever the file changed. Answers how many events it handed out.
+   * Seeds once from the ledger's cached phases (the `to` of each work's last event) and the last kept event per work, so
+   * a wait already logged survives a restart, then tails the log whenever the file changed. Nothing is dispatched on the
+   * seed. Answers how many events it handed out.
    */
   async function sync(op: OpContext): Promise<number> {
     // The events of one tail go out together: nothing is posted until the whole page is dispatched.
@@ -195,14 +210,24 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
   async function tail(op: OpContext): Promise<number> {
     if (!seeded) {
       const phases = await core.ledger.phases({}, op)
+      const kept = await core.ledger.eventsSince(0, op)
+      const lastEvent = new Map<string, WorkEvent>()
+      for (const event of kept.events) lastEvent.set(event.workId, event)
       const at = now()
       for (const [workId, entry] of phases) {
         if (entry.phase === null) continue
-        // Known from the index, not from a read or an event this process saw: it never blocks a listing.
-        logged.set(workId, { phase: entry.phase, at: new Date(0).toISOString(), seenAt: 0 })
+        const event = lastEvent.get(workId)
+        // Known from the index, not from a read or an event this process saw: it never blocks a listing. The wait comes
+        // from the last kept event, so a wait this process did not see is not appended again after a restart.
+        logged.set(workId, {
+          phase: entry.phase,
+          at: new Date(0).toISOString(),
+          seenAt: 0,
+          ...(event !== undefined && event.to === entry.phase && event.needsInput ? { needsInput: event.needsInput } : {}),
+        })
         if (!observed.has(workId)) observed.set(workId, base(undefined, entry.phase, at))
       }
-      cursor = (await core.ledger.eventsSince(0, op)).cursor
+      cursor = kept.cursor
       seeded = true
       logStamp = stampOf()
       return 0
@@ -255,24 +280,31 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
     const before = logged.get(record.workId)
     const outcome = phase === "idle" ? outcomeOf(record, obs) : undefined
     const done = phase === "idle" ? obs?.done : undefined
+    const needsInput = waitingOf(phase, obs)
     // An idle event carries a code for a failed run, and for any code the observation has (a missing session).
     const code = phase === "idle" ? (outcome === "failed" || obs?.code ? codeOf(record, obs) : undefined) : phase === "unreachable" ? obs?.code : undefined
     const sleptByPlugin = record.slept && (!before || Date.parse(record.slept.at) >= Date.parse(before.at))
     const event: Omit<WorkEvent, "seq"> = {
       at: now().toISOString(),
       workId: record.workId,
+      // A wait that starts or clears keeps the phase, so its event's `from` equals its `to`.
       from: before?.phase ?? null,
       to: phase,
       ...(phase === "idle" ? { outcome: outcome ?? null } : {}),
       ...(done ? { done: true as const } : {}),
       ...(code ? { code } : {}),
       ...(phase === "asleep" ? { asleepBy: sleptByPlugin ? record.slept!.by : "idle-or-cli" } : {}),
-      ...(obs?.needsInput && (phase === "busy" || phase === "idle") ? { needsInput: obs.needsInput } : {}),
+      ...(needsInput ? { needsInput } : {}),
       ...(obs?.reading && (phase === "busy" || phase === "idle") ? { reading: { residentGiB: obs.reading.residentGiB, load1: obs.reading.load1 } } : {}),
     }
     const line = await core.ledger.appendEvent(event, op)
     dispatched.add(line.seq)
-    logged.set(record.workId, { phase: line.to, at: line.at, seenAt: Date.now() })
+    logged.set(record.workId, {
+      phase: line.to,
+      at: line.at,
+      seenAt: Date.now(),
+      ...(line.needsInput ? { needsInput: line.needsInput } : {}),
+    })
     // A first sight of a work the log never named is a fact to record, not news for its coordinator.
     dispatch(line, line.from !== null)
     // The record keeps the report, so a restart, a sleep and a harvest keep it; the tick then nudges the source changed.
@@ -353,7 +385,8 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
       if (absent === 0) absentListing.delete(record.workId)
       if (!previous || previous.phase !== phase || previous.absent !== absent) observed.set(record.workId, { ...base(previous, phase, now()), absent })
       const last = logged.get(record.workId)
-      if (last?.phase === phase) continue
+      // A wait that starts or clears is a change of its own, with the phase unchanged.
+      if (last?.phase === phase && last.needsInput === waitingOf(phase, observed.get(record.workId))) continue
       // A listing taken before the log's newest word on this work (a sleep a change tool just recorded) never
       // contradicts it; the next sweep's listing decides.
       if (last && last.seenAt > listing.takenAt && !readNow.has(record.workId)) continue
@@ -362,7 +395,7 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
         appended += 1
       } catch (error) {
         if (abort.signal.aborted) return appended
-        core.report("watch", `The watcher could not record a phase change: ${reasonOf(error)}.`)
+        core.report("watch", `The watcher could not record a change: ${reasonOf(error)}.`)
       }
     }
     await checkTargets(open)

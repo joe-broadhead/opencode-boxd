@@ -1,7 +1,7 @@
 # Automations
 
-The works source is a local events feed: the ledger's phase changes, with a cursor. A timer automation reads it with
-`tools.boxd.events_list`, keeps the cursor in its durable state, and reports what changed.
+The works source is a local events feed: the ledger's changes, waits for input included, with a cursor. A timer
+automation reads it with `tools.boxd.events_list`, keeps the cursor in its durable state, and reports what changed.
 
 <!-- generated:automations -->
 | Source | Method | Provider floor | Suggested | Signals |
@@ -11,7 +11,7 @@ The works source is a local events feed: the ledger's phase changes, with a curs
 
 ## The timer recipe
 
-An OpenCode automation runs on a schedule and gets its state back on the next run. This one lists the phase changes
+An OpenCode automation runs on a schedule and gets its state back on the next run. This one lists the changes
 since the last run and reports them in one line:
 
 ```ts
