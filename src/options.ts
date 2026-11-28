@@ -1,5 +1,5 @@
 import { boxdError } from "./errors.js"
-import { assertSnapshot } from "./names.js"
+import { assertRef, assertSnapshot, normaliseRepo } from "./names.js"
 import { REGIONS, SIZES, type Region, type Size } from "./ports.js"
 
 export type Access = "all" | "ask-changes" | "read-only"
@@ -17,6 +17,16 @@ export interface Budget {
   /** Machine-hours this ledger's works may run in one local day, when set. */
   readonly machineHours?: number
   readonly action: "warn" | "refuse"
+}
+
+/** A repository whose checkout, toolchain and dependencies a warm image carries. */
+export interface WarmRepository {
+  /** An https://github.com/owner/repo URL, stored and matched without `.git`. */
+  readonly repo: string
+  /** The branch or tag to warm; the remote's default branch when unset. */
+  readonly ref?: string
+  /** An absolute path here to a script that installs the repository's toolchain and dependencies inside its checkout. */
+  readonly setup?: string
 }
 
 /** The plugin options (design §9.2). Every option is optional; each default is below. */
@@ -45,6 +55,8 @@ export interface Options {
   readonly goldenBase: "stock" | string
   /** A laptop script, inside the project or an allowed root, run on every golden builder before the scrub. */
   readonly goldenSetup?: string
+  /** The repositories a warm image carries; `golden` with a `repo` builds one. */
+  readonly warm: readonly WarmRepository[]
   readonly buildGolden: BuildGolden
   readonly notices: Notices
   /** The platform's idle bound set at creation (design §C.2), 30 to 1440; auto-suspend is always off. */
@@ -72,6 +84,7 @@ export const DEFAULT_OPTIONS: Options = {
   size: "2x8",
   goldenPrefix: "oc-golden",
   goldenBase: "stock",
+  warm: [],
   buildGolden: "auto",
   notices: "wake",
   autoHibernateMinutes: 120,
@@ -107,6 +120,7 @@ const ACCEPTED = {
   goldenPrefix: 'a lowercase name of up to 32 letters, digits or hyphens, starting with a letter ("oc-golden" by default)',
   goldenBase: '"stock" (the default) or a lowercase boxd snapshot name',
   goldenSetup: "an absolute path here to a script",
+  warm: "an array of objects like { repo, ref, setup }: repo is an https://github.com/owner/repo URL, ref is a branch or tag, and setup is an absolute path here to a script (empty by default)",
   buildGolden: '"auto" (the default) or "never"',
   notices: '"wake" (the default), "queue" or "off"',
   autoHibernateMinutes: "a whole number of minutes from 30 to 1440 (120 by default)",
@@ -194,6 +208,34 @@ export function parseOptions(raw: unknown): Options {
   }
   if (goldenSetup !== undefined && (typeof goldenSetup !== "string" || !goldenSetup.startsWith("/"))) throw wrong("goldenSetup", goldenSetup)
 
+  const { warm } = input
+  if (!Array.isArray(warm)) throw wrong("warm", warm)
+  const repositories: WarmRepository[] = []
+  const seen = new Set<string>()
+  warm.forEach((raw, index) => {
+    if (!isObject(raw) || Object.keys(raw).some((key) => !["repo", "ref", "setup"].includes(key))) throw wrong("warm", warm)
+    const { repo, ref, setup } = raw
+    if (typeof repo !== "string") throw invalid(`The option "warm" item ${index + 1} must name its repository in "repo", as an https://github.com/owner/repo URL`)
+    let url: string
+    try {
+      url = normaliseRepo(repo)
+    } catch {
+      throw invalid(`The option "warm" item ${index + 1} "repo" must be an https://github.com/owner/repo URL, found ${describe(repo)}`)
+    }
+    if (seen.has(url)) throw invalid(`The option "warm" lists ${url} twice; name each repository once`)
+    seen.add(url)
+    if (ref !== undefined) {
+      if (typeof ref !== "string") throw invalid(`The option "warm" item ${index + 1} "ref" must be a branch or tag name`)
+      try {
+        assertRef(ref)
+      } catch {
+        throw invalid(`The option "warm" item ${index + 1} "ref" is not a branch or tag name: up to 120 letters, digits, dots, underscores, slashes or hyphens`)
+      }
+    }
+    if (setup !== undefined && (typeof setup !== "string" || !setup.startsWith("/"))) throw invalid(`The option "warm" item ${index + 1} "setup" must be an absolute path here to a script`)
+    repositories.push({ repo: url, ...(ref !== undefined ? { ref } : {}), ...(setup !== undefined ? { setup } : {}) })
+  })
+
   let budget: Budget | undefined
   if (input.budget !== undefined) {
     const raw = input.budget
@@ -224,6 +266,7 @@ export function parseOptions(raw: unknown): Options {
     goldenPrefix,
     goldenBase,
     ...(goldenSetup !== undefined ? { goldenSetup: goldenSetup as string } : {}),
+    warm: repositories,
     buildGolden: oneOf("buildGolden", input.buildGolden, BUILD_GOLDEN),
     notices: oneOf("notices", input.notices, NOTICES),
     autoHibernateMinutes: wholeNumber("autoHibernateMinutes", input.autoHibernateMinutes, 30, 1440),

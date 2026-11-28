@@ -191,7 +191,8 @@ export const REASSIGN_INPUT = object(
 export const GOLDEN_INPUT = object({
   region: choice([...REGIONS, "all"], 'Which region; every region the option "regions" allows by default, and a prune may name any region.'),
   size: SIZE,
-  from: string('"stock", or a base snapshot name in that region; the goldenBase option by default.'),
+  from: string('"stock", or a base snapshot name in that region; the goldenBase option by default. A warm build always starts from its version\'s image.'),
+  repo: string('An https://github.com/owner/repo URL listed in the plugin option "warm": build that repository\'s warm image, with its checkout and setup script, from its OpenCode version\'s golden image.'),
   rebuild: boolean("Rebuild an image that exists, under the same name."),
   prune: boolean("Remove the images that no open work records and that are not the current version's, and list them."),
 })

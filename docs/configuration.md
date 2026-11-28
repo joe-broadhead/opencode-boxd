@@ -17,6 +17,7 @@ Every option is optional. Set them under the plugin entry in `opencode.json`.
 | `goldenPrefix` | string | `"oc-golden"` | Golden image names are <goldenPrefix>-<opencode version>-<size>. |
 | `goldenBase` | string | `"stock"` | What a golden build starts from: stock, or a snapshot name in the region it lives in. |
 | `goldenSetup` | string | — | An absolute path here to a script the golden builder runs before the scrub. |
+| `warm` | array | `[]` | Repositories whose checkouts, toolchains and dependencies a warm image carries, each { repo, ref?, setup? }, where setup is an absolute path here to the script that installs them; golden with repo builds one. |
 | `buildGolden` | `auto` \| `never` | `"auto"` | Whether boxd_ensure builds a missing golden image itself, or refuses with a next step. |
 | `notices` | `wake` \| `queue` \| `off` | `"wake"` | How a work's change reaches its session: yes, queue for when it is idle, or no notice. |
 | `autoHibernateMinutes` | integer | `120` | The platform's idle bound before a machine hibernates, in minutes. |

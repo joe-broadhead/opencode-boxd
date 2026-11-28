@@ -2,7 +2,9 @@
 // contract's status and probe answers validate, the access rules are generated for each level, a read runs at every
 // level, a change asks at ask-changes and is denied at read-only, and the one RPC id carries every method.
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test"
-import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { createHash } from "node:crypto"
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { warmImageName } from "../../src/fleet/warm.js"
 import { agentRules, attempt, cleanup, effect, HOST_VERSION, session, startHost, statusThroughRpc, until } from "./harness.js"
@@ -296,6 +298,34 @@ describe("the plugin on OpenCode 2.4.1", () => {
       expect(host.boxd.calls().some((call) => call.startsWith("machine wake"))).toBe(false)
     } finally {
       await host.close()
+    }
+  })
+
+  test("boxd_golden builds one repository's warm image through the registered tool", async () => {
+    const repo = "https://github.com/octocat/Hello-World"
+    const setup = mkdtempSync(join(tmpdir(), "boxd-warm-setup-"))
+    writeFileSync(join(setup, "warm.sh"), "set -e\ntest -d .git\nprintf 'ok\\n' > warm-setup.txt\n")
+    const host = await startHost({ options: { warm: [{ repo, setup: join(setup, "warm.sh") }], allowedRoots: [setup] } })
+    try {
+      const sessionID = await session(host, "build")
+      const built = await attempt(host, sessionID, "build", "boxd_golden", "reject", { repo, region: "fra" })
+      expect(built.ok).toBe(true)
+      const images = (built.output as { images: Array<{ name: string; repo?: string }> }).images
+      expect(images).toHaveLength(1)
+      expect(images[0]).toMatchObject({ repo })
+      const hash = createHash("sha256").update(repo).digest("hex").slice(0, 8)
+      expect(images[0]!.name).toBe(`oc-golden-hello-world-${hash}-${HOST_VERSION}-2x8`)
+      const state = host.boxd.fake.read()
+      const image = state.snapshots.find((snapshot) => snapshot.name === images[0]!.name)!
+      expect(image).toBeDefined()
+      const key = createHash("sha256").update(repo).digest("hex").slice(0, 16)
+      const checkout = join(image.disk!, "home/boxd/.boxd-plugin/warm", key)
+      expect(existsSync(join(checkout, ".git"))).toBe(true)
+      expect(readFileSync(join(checkout, "warm-setup.txt"), "utf8")).toBe("ok\n")
+      expect(state.machines.filter((machine) => machine.name.startsWith("oc-gb-") && machine.status !== "destroyed")).toEqual([])
+    } finally {
+      await host.close()
+      rmSync(setup, { recursive: true, force: true })
     }
   })
 })

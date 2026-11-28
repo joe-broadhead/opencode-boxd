@@ -4,9 +4,13 @@
 // the §4.4 spawn budgets of ensure.
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { Database } from "bun:sqlite"
+import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
+import { parseImageName } from "../../src/fleet/golden.js"
+import { warmImageName } from "../../src/fleet/warm.js"
 import type { WorkRecord } from "../../src/ledger/types.js"
+import { repositoryHash } from "../../src/names.js"
 import type { EnsureResult, ListResult, OrphanResult, Refusal, ResumeResult, GoldenResult } from "../../src/results.js"
 import { budgetProblems, SPAWN_BUDGETS } from "../support/spawn-count.js"
 import { startKit, VERSION, workRecord, type Kit } from "../support/machines-kit.js"
@@ -24,6 +28,8 @@ async function kit(input: Parameters<typeof startKit>[0] = {}) {
 }
 
 const IMAGE = `oc-golden-${VERSION}-2x8`
+const REPO = "https://github.com/we-the-rebel-alliance/boxd-plugin"
+const WARM = warmImageName("oc-golden", REPO, VERSION, "2x8")
 const row = (call: string, scenario: string) => SPAWN_BUDGETS.find((entry) => entry.call === call && entry.scenario.startsWith(scenario))!
 const errorOf = async (promise: Promise<unknown>) =>
   promise.then(
@@ -707,6 +713,87 @@ describe("boxd_golden (design §2.3, §3.11)", () => {
     const outside = await kit({ optionsFor: () => ({ goldenSetup: join(k.project, "setup.sh") }) })
     expect((await errorOf(outside.runs.boxd_golden({ region: "fra" }, outside.call()))).code).toBe("PATH_REFUSED")
     expect(outside.calls().some((entry) => entry.startsWith("machine new"))).toBe(false)
+  })
+
+  test("a warm image starts from the version image, runs warm and its setup in the checkout, then the scrub and the save", async () => {
+    const k = await kit({
+      optionsFor: (project) => {
+        writeFileSync(join(project, "warm-setup.sh"), 'pwd > setup-pwd.txt\necho setup >> "$HOME/order.log"\n')
+        return { warm: [{ repo: REPO, setup: join(project, "warm-setup.sh") }] }
+      },
+    })
+    const built = (await k.runs.boxd_golden({ repo: REPO, region: "fra" }, k.call())) as GoldenResult
+    expect(built).toMatchObject({ state: "built", images: [{ region: "fra", name: WARM, opencode: VERSION, size: "2x8", repo: REPO }] })
+    const news = k.calls().filter((entry) => entry.startsWith("machine new"))
+    // The version image first, from stock; then the warm builder from that image.
+    expect(news[0]).toMatch(/^machine new oc-gb-fra-2x8-[0-9a-f]{6} --region fra --vcpu 2 --label role=golden-builder --delete-after 2h --json$/)
+    expect(news[1]).toContain(`--from-snapshot ${IMAGE}`)
+    const state = k.counter.fake.read()
+    const image = state.snapshots.find((snapshot) => snapshot.name === WARM)!
+    const key = createHash("sha256").update(REPO).digest("hex").slice(0, 16)
+    const checkout = join(image.disk!, "home/boxd/.boxd-plugin/warm", key)
+    expect(readFileSync(join(checkout, "warm.txt"), "utf8")).toContain(REPO)
+    // The setup ran inside the checkout, after warm and before the scrub.
+    expect(readFileSync(join(checkout, "setup-pwd.txt"), "utf8").trim().endsWith(`/.boxd-plugin/warm/${key}`)).toBe(true)
+    expect(readFileSync(join(image.disk!, "home/boxd/order.log"), "utf8")).toBe("warm\nsetup\n")
+    expect(existsSync(join(image.disk!, "home/boxd/.boxd-plugin-warm-setup.sh"))).toBe(false)
+    expect(state.machines.filter((machine) => machine.status !== "destroyed")).toEqual([])
+    // The image is present on the next call, and the version image is not rebuilt.
+    k.reset()
+    expect(await k.runs.boxd_golden({ repo: REPO, region: "fra" }, k.call())).toMatchObject({ state: "present", images: [{ name: WARM }] })
+    expect(k.calls().some((entry) => entry.startsWith("machine new"))).toBe(false)
+  })
+
+  test("the name golden saves is the name ensure looks up, with .git on the URL", async () => {
+    const url = `${REPO}.git`
+    const k = await kit({ options: { warm: [{ repo: url }], regions: ["fra"], buildGolden: "never" } })
+    const built = (await k.runs.boxd_golden({ repo: url, region: "fra" }, k.call())) as GoldenResult
+    const image = built.images[0]!.name
+    k.reset()
+    const ensured = (await k.runs.boxd_ensure({ workId: "from-warm", repo: url, region: "fra" }, k.call())) as EnsureResult
+    expect(ensured).toMatchObject({ state: "ready", image, warm: true, created: true })
+    expect(await k.record("from-warm")).toMatchObject({ image: { name: image }, warm: true })
+    expect(k.calls().find((entry) => entry.startsWith("machine new oc-from-warm"))).toContain(`--from-snapshot ${image}`)
+    expect(k.calls().some((entry) => entry.startsWith("machine new oc-gb-"))).toBe(false)
+  })
+
+  test("a warm setup that exits non-zero fails GOLDEN_BUILD_FAILED at its step and removes the builder", async () => {
+    const k = await kit({
+      optionsFor: (project) => {
+        writeFileSync(join(project, "warm-setup.sh"), "exit 7\n")
+        return { warm: [{ repo: REPO, setup: join(project, "warm-setup.sh") }] }
+      },
+    })
+    const error = await errorOf(k.runs.boxd_golden({ repo: REPO, region: "fra" }, k.call()))
+    expect(error.code).toBe("GOLDEN_BUILD_FAILED")
+    expect(error.details?.step).toBe("run the repository's setup")
+    expect(error.what).toContain(`The setup for ${REPO} exited with 7`)
+    const state = k.counter.fake.read()
+    expect(state.machines.filter((machine) => machine.status !== "destroyed")).toEqual([])
+    expect(state.snapshots.some((snapshot) => snapshot.name === WARM)).toBe(false)
+  })
+
+  test("a repository not in warm is refused NAME_INVALID before any call, and so is from or prune with repo", async () => {
+    const k = await kit()
+    const missing = await errorOf(k.runs.boxd_golden({ repo: REPO, region: "fra" }, k.call()))
+    expect(missing).toMatchObject({ code: "NAME_INVALID", details: { field: "repo" } })
+    expect(k.calls()).toEqual([])
+    const configured = await kit({ optionsFor: () => ({ warm: [{ repo: REPO }] }) })
+    expect(await errorOf(configured.runs.boxd_golden({ repo: REPO, from: "stock" }, configured.call()))).toMatchObject({ code: "NAME_INVALID", details: { field: "repo" } })
+    expect(await errorOf(configured.runs.boxd_golden({ repo: REPO, prune: true }, configured.call()))).toMatchObject({ code: "NAME_INVALID", details: { field: "repo" } })
+    expect(configured.calls().some((entry) => entry.startsWith("machine new"))).toBe(false)
+  })
+
+  test("a warm image's name carries its repository and hash, fits 64 characters, and parseImageName reads it back", () => {
+    const long = "https://github.com/we-the-rebel-alliance/a-very-long-repository-name-that-keeps-going-and-going"
+    const name = warmImageName("oc-golden", long, VERSION, "8x32")
+    expect(name.length).toBeLessThanOrEqual(64)
+    expect(name).toBe(name.toLowerCase())
+    expect(parseImageName("oc-golden", name)).toEqual({ opencode: VERSION, size: "8x32", repo: { name: expect.any(String), hash: repositoryHash(long) } })
+    expect(parseImageName("oc-golden", IMAGE)).toEqual({ opencode: VERSION, size: "2x8" })
+    expect(parseImageName("oc-golden", "someone-elses")).toBeUndefined()
+    // The URL's optional .git does not change the name.
+    expect(warmImageName("oc-golden", `${REPO}.git`, VERSION, "2x8")).toBe(WARM)
   })
 
   test("prune removes unused images of other versions, never the current one or one an open work records", async () => {
