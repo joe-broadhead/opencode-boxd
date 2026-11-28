@@ -8,7 +8,7 @@
 // runner's own timeouts, so a test's limit is generous rather than tight, and a wait waits for its event, not a count.
 import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { createHash } from "node:crypto"
-import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { BoxdError } from "../../src/errors.js"
 import { createBoxdCli } from "../../src/provider/boxd/cli.js"
@@ -72,6 +72,7 @@ async function cloneEnds(directory: string): Promise<string | undefined> {
 
 const onDisk = (path: string) => join(fake.disk(machine), path)
 const verbs = () => fake.calls().map((call) => call.split(" ").slice(0, 2).join(" "))
+const DONE_PLUGIN_PATH = "/home/boxd/.config/opencode/plugins/boxd-done.js"
 
 /** A change as the fleet makes it: the by-id check, under the machine's lock. */
 function change<T>(fn: (target: ChangeTarget) => Promise<T>): Promise<T> {
@@ -106,6 +107,28 @@ describe("the helper on the machine", () => {
     writeFileSync(onDisk(GUEST_HELPER_PATH), readFileSync(new URL("../../guest/guest.py", import.meta.url)).toString().replace("PROTOCOL = 1", "PROTOCOL = 1  # an older build"))
     expect((await setup()).helperUploaded).toBe(true)
     expect(verbs().filter((verb) => verb === "machine cp")).toHaveLength(1)
+  })
+
+  test("setup writes the completion tool once, rewrites only a changed copy, and never restarts the server for it", async () => {
+    await setup()
+    const written = readFileSync(onDisk(DONE_PLUGIN_PATH), "utf8")
+    expect(written).toContain('name: "done"')
+    expect(written).toContain('editor.namespace({ name: "boxd"')
+    expect(written).toContain("as your last act")
+    const first = statSync(onDisk(DONE_PLUGIN_PATH))
+    await setup()
+    expect(statSync(onDisk(DONE_PLUGIN_PATH)).ino).toBe(first.ino)
+    writeFileSync(onDisk(DONE_PLUGIN_PATH), "// stale\n")
+    await setup()
+    expect(statSync(onDisk(DONE_PLUGIN_PATH)).ino).not.toBe(first.ino)
+    expect(readFileSync(onDisk(DONE_PLUGIN_PATH), "utf8")).toBe(written)
+    // The fake server answers as a running one: a restart would have written a pid file and stopped it.
+    guestServer.sessions.set("ses_busy", { id: "ses_busy", busy: true, directory: DIRECTORY, messages: [], inbox: [], updated: 1 })
+    rmSync(onDisk(DONE_PLUGIN_PATH))
+    expect((await setup()).server).toBe("up")
+    expect(existsSync(onDisk(DONE_PLUGIN_PATH))).toBe(true)
+    expect(existsSync(onDisk("/home/boxd/.boxd-plugin/server.pid"))).toBe(false)
+    expect(guestServer.sessions.get("ses_busy")?.busy).toBe(true)
   })
 
   test("an upload that is not the copy the plugin sent installs nothing and changes nothing", async () => {
