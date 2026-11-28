@@ -52,6 +52,19 @@ export const SHARED_LABEL = "shared"
 /** The label a golden builder carries; restores inherit it under the work's own `role=session`. */
 export const BUILDER_LABELS = { role: "golden-builder" } as const
 
+/**
+ * boxd's label value grammar: up to 63 letters, digits or `.` `_` `/` `@` `:` `-`; empty is allowed. The plugin refuses
+ * a value outside it before any CLI call.
+ */
+export const LABEL_VALUE = /^[A-Za-z0-9._/@:-]{0,63}$/
+/** The labels a work carries for the fleet, in the order the docs and the machine's `work.*` keys name them. */
+export const WORK_LABEL_KEYS = ["product", "role", "feature", "task"] as const
+export type WorkLabelKey = (typeof WORK_LABEL_KEYS)[number]
+/** A work's labels: what the fleet answers by. Each value is a boxd label value. */
+export type WorkLabels = Partial<Record<WorkLabelKey, string>>
+/** The machine label prefix for a work's labels: `work.product`, `work.role`, `work.feature`, `work.task`. */
+export const WORK_LABEL_PREFIX = "work."
+
 export type MachineStatus = "running" | "starting" | "standby" | "hibernated" | "stopped" | "destroyed" | "other"
 
 /** One machine as `machine list --region all --json` shows it. The listing has no `id` until boxd adds it (U14). */
@@ -75,12 +88,13 @@ export interface MachineInfo extends Omit<MachineRow, "id" | "isolated"> {
 }
 
 /**
- * A machine the plugin may change, as every owning call yields it: the branded target and the status the same boxd
- * answer showed. `checkOwned` returns one; `create` and `get` carry one as `owned`.
+ * A machine the plugin may change, as every owning call yields it: the branded target, the status and the labels the
+ * same boxd answer showed. `checkOwned` returns one; `create` and `get` carry one as `owned`.
  */
 export interface Owned {
   readonly target: ChangeTarget
   readonly status: MachineStatus
+  readonly labels: Readonly<Record<string, string>>
 }
 
 /**
@@ -362,6 +376,8 @@ export interface CreateWork {
   readonly shared?: string
   /** The id of the ledger that registers this work, set as the `ledger` label. */
   readonly ledger: string
+  /** The work's labels, set as `work.product`, `work.role`, `work.feature` and `work.task`; never on a shared machine. */
+  readonly labels?: WorkLabels
   readonly image: string
   /** Always 0: standby bills resident RAM too, so it saves almost nothing (§C.1). */
   readonly autoSuspendSeconds: 0
@@ -739,6 +755,8 @@ export interface WorkSnapshot {
   readonly region: Region | null
   readonly machineId: MachineId | null
   readonly size: Size
+  /** What the work is, for the fleet to answer by: product, role, feature and task. */
+  readonly labels?: WorkLabels
   readonly phase: Phase
   readonly outcome: RunOutcome | null
   readonly saved: SavedState

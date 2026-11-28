@@ -501,6 +501,7 @@ export async function fleetStatus(services: FleetServices, input: StatusInput, c
       workId: row.record.workId,
       ...(row.record.slot === true ? { machine: row.record.machine } : {}),
       region: row.record.region,
+      ...(row.record.labels && Object.keys(row.record.labels).length > 0 ? { labels: row.record.labels } : {}),
       phase: row.phase,
       outcome: outcomeOf(row.record, row.observed),
       saved: row.saved,

@@ -21,6 +21,12 @@ describe("argv", () => {
     expect(argv.createWorkArgs({ ...work, leaseDays: 3 }).join(" ")).toContain("--delete-after 3d --json")
     expect(argv.createWorkArgs(work).join(" ")).not.toMatch(/--shared|--isolated|--vcpu/)
     expect(() => argv.createWorkArgs({ ...work, name: "oc-other" })).toThrow(/NAME_INVALID/)
+    expect(argv.createWorkArgs({ ...work, labels: { product: "checkout", role: "lane", feature: "boxd-plugin/59", task: "boxd-plugin/130" } })).toEqual([
+      "machine", "new", "oc-review-api", "--region", "nyc", "--from-snapshot", "oc-golden-2.4.1-4x16",
+      "--label", "ledger=0a1b2c3d4e", "--label", "owner=boxd", "--label", "role=session", "--label", "work=review-api",
+      "--label", "work.feature=boxd-plugin/59", "--label", "work.product=checkout", "--label", "work.role=lane", "--label", "work.task=boxd-plugin/130",
+      "--auto-suspend-timeout", "0", "--auto-hibernate-timeout", "7200", "--idle-ignore-outbound=off", "--json",
+    ])
   })
 
   test("a shared machine's create: oc-shared-<name>, the owner, role, shared and ledger labels, and no work label", () => {
@@ -31,6 +37,7 @@ describe("argv", () => {
       "--auto-suspend-timeout", "0", "--auto-hibernate-timeout", "7200", "--idle-ignore-outbound=off", "--json",
     ])
     expect(argv.createWorkArgs(shared).join(" ")).not.toContain("--label work=")
+    expect(argv.createWorkArgs({ ...shared, labels: { product: "checkout", task: "boxd-plugin/130" } }).join(" ")).not.toContain("--label work.")
     expect(() => argv.createWorkArgs({ ...shared, name: "oc-common" })).toThrow(/NAME_INVALID/)
   })
 

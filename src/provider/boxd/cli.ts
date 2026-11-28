@@ -8,6 +8,7 @@
  * 5 minutes. The CLI flavour check runs once per binary, as one flight (F9).
  */
 import { BoxdError, boxdError } from "../../errors.js"
+import { machineWorkLabels } from "../../names.js"
 import { partialOutput, type PluginRunner } from "../runner.js"
 import {
   BUILDER_LABELS,
@@ -145,9 +146,10 @@ export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
    * The one place a change target is made, for a machine this process just read or made with this id, with the status
    * that same answer showed. Only `get`, `create` and `checkOwned` call it.
    */
-  const owned = (info: { readonly region: Region; readonly name: string; readonly id: MachineId; readonly status: MachineStatus }): Owned => ({
+  const owned = (info: { readonly region: Region; readonly name: string; readonly id: MachineId; readonly status: MachineStatus; readonly labels: Readonly<Record<string, string>> }): Owned => ({
     target: { region: info.region, name: info.name as MachineName, machineId: info.id, checkedAt: now() } as ChangeTarget,
     status: info.status,
+    labels: info.labels,
   })
 
   /**
@@ -292,7 +294,7 @@ export function createBoxdCli(options: BoxdCliOptions): BoxdPort {
             ? { ...BUILDER_LABELS }
             : input.shared !== undefined
               ? { ...WORK_LABELS, [SHARED_LABEL]: input.shared, [LEDGER_LABEL]: input.ledger }
-              : { ...WORK_LABELS, work: input.workId, [LEDGER_LABEL]: input.ledger },
+              : { ...WORK_LABELS, work: input.workId, [LEDGER_LABEL]: input.ledger, ...machineWorkLabels(input.labels) },
         sharing: "private",
         isolated: false,
       }

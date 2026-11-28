@@ -215,6 +215,28 @@ describe("the plugin on OpenCode 2.4.1", () => {
     }
   })
 
+  test("a work's labels are recorded at ensure, carried by its machine, and answered by job", async () => {
+    const host = await startHost()
+    try {
+      const sessionID = await session(host, "build")
+      const labels = { product: "checkout", role: "lane", feature: "boxd-plugin/59", task: "boxd-plugin/130" }
+      const ready = await attempt(host, sessionID, "build", "boxd_ensure", "reject", { workId: "labelled", labels })
+      expect(ready.ok).toBe(true)
+      const job = await attempt(host, sessionID, "build", "boxd_job", "reject", { workId: "labelled" })
+      expect(job.ok).toBe(true)
+      expect(job.output).toMatchObject({ workId: "labelled", labels })
+      const machine = host.boxd.machines().find((entry) => entry.name === "oc-labelled")!
+      expect(machine.labels).toMatchObject({
+        "work.product": "checkout",
+        "work.role": "lane",
+        "work.feature": "boxd-plugin/59",
+        "work.task": "boxd-plugin/130",
+      })
+    } finally {
+      await host.close()
+    }
+  })
+
   test("the /boxd command posts the report", async () => {
     const host = await startHost()
     try {

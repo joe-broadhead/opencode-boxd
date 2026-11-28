@@ -177,6 +177,14 @@ describe("boxd_status", () => {
     expect(((await job({ workId: "metered" })) as JobResult).hours).toEqual(hours)
   })
 
+  test("labels recorded for a work come back in job and the status works list", async () => {
+    const labels = { product: "checkout", role: "lane", feature: "boxd-plugin/59", task: "boxd-plugin/130" }
+    await world.bulk([{ workId: "labelled", labels }])
+    const answer = await status({ view: "all" })
+    expect(answer.works?.find((work) => work.workId === "labelled")?.labels).toEqual(labels)
+    expect(((await job({ workId: "labelled" })) as JobResult).labels).toEqual(labels)
+  })
+
   test("the budget: reached with warn is BUDGET_WARN, reached with refuse is only the budget block, unmeasurable is BUDGET_UNKNOWN", async () => {
     const cost = (budget: BudgetState): CostPort => ({
       block: async () => ({

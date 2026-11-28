@@ -44,6 +44,14 @@ runs one command with a timeout; `tools.boxd.reassign({ from, to })` moves an un
 listed in the `warm` option, it builds that repository's warm image from its version's image; `tools.boxd.probe` says
 whose ledger this is. `saved` says whether this machine holds the work: `fresh`, `stale` or `none`.
 
+## Labels
+
+A work carries four labels for the fleet. `product` is the product it serves; `role` is what it does for the feature, such as `lane` or `review`; `feature` is the feature it serves, as a tracker reference such as `boxd-plugin/59`; and `task` is the task it does, such as `boxd-plugin/130`. When you start a lane, pass all four to `ensure`:
+
+`tools.boxd.ensure({ workId, labels: { product: "checkout", role: "lane", feature: "boxd-plugin/59", task: "boxd-plugin/130" } })`
+
+A later ensure that passes `labels` replaces them; one that omits the field keeps the recorded ones. A work on its own machine also carries them as boxd labels `work.product`, `work.role`, `work.feature` and `work.task`; a slot on a shared machine records them in the ledger only. A rebuild through `resume` keeps them on the new machine. `job` and the status works list return them.
+
 ## Many works at once
 
 Use one list call, not many single calls: `works: [...]` takes up to 300 items, and the results come back in input

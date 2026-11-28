@@ -209,7 +209,12 @@ async function rebuild(
       const built = await context.waiting(() => machines.golden.build({ region, size: record.size, base: options.goldenBase, name: image }, { signal: context.signal, until: context.deadline }))
       if (built === STILL_BUILDING) return { building: image }
     }
-    landed = await createAt(machines, { workId: record.workId, region, image, adopt: false, used, recordedId: record.machineId, ...(reserved ? { reserved } : {}) }, context, op)
+    landed = await createAt(
+      machines,
+      { workId: record.workId, region, image, adopt: false, used, recordedId: record.machineId, ...(record.labels !== undefined ? { labels: record.labels } : {}), ...(reserved ? { reserved } : {}) },
+      context,
+      op,
+    )
   } finally {
     reserved?.(false)
   }
