@@ -7,7 +7,7 @@ One JSON object on stdin, one JSON line on stdout: {"ok": true, "protocol": 1, .
 library only.
 
 Read actions (serve, phase, read, health, describe, slots) never start, write or upload anything. Change actions
-(setup, prompt, interrupt, upgrade, export, import, git, warm, scrub, release) first check that this file is the copy
+(setup, prompt, interrupt, upgrade, export, import, git, warm, scrub, release, legacy) first check that this file is the copy
 the laptop expects (its sha256): an older copy answers HELPER_OUTDATED and does nothing, and the laptop uploads the new
 one. An upload runs once with --install, which moves it to the stable path before it acts. Every action takes an
 optional `slot` (a work id) and keeps that work's state in its own folder; without one it uses the machine's one home.
@@ -1851,6 +1851,60 @@ def action_scrub(request):
     emit({"removed": removed})
 
 
+# A work the build before the 0.0.0 rebuild started keeps its helper, its server's password and pid under
+# ~/.opencode-boxd, and its OpenCode server on PORT, with its sessions in the one OpenCode store. Taking it over moves
+# that password and pid here, so this helper speaks to the same server and the same session continues; the fence then
+# puts a stub at the old helper's path, so the old build's laptop can neither prompt, harvest nor drop the work again.
+LEGACY_HOME = local(HOME + "/.opencode-boxd")
+LEGACY_HELPER = LEGACY_HOME + "/guest.py"
+LEGACY_KEPT = LEGACY_HOME + "/guest.py.moved"
+LEGACY_STUB = '''#!/usr/bin/env python3
+"""The boxd plugin took this work over; the old build's helper is kept beside this file as guest.py.moved."""
+import json
+import sys
+
+sys.stdout.write(json.dumps({"ok": False, "protocol": 1, "error": "WORK_MOVED", "detail": "this work moved to the boxd plugin's ledger; drive it from there"}) + "\\n")
+raise SystemExit(1)
+'''
+
+
+def legacy_fenced():
+    return os.path.isfile(LEGACY_KEPT)
+
+
+def action_legacy(request):
+    """Takes over the machine's one home from the old build: `adopt` copies its server's password and pid here when
+    this helper has none, and `fence` puts the stub in front of the old helper, which it keeps as guest.py.moved (moving
+    that back is the rollback). It never starts, stops or prompts a server, and never touches a session."""
+    step = request.get("step")
+    if step not in ("adopt", "fence"):
+        fail("NAME_INVALID", "step must be adopt or fence")
+    if not os.path.isdir(LEGACY_HOME):
+        emit({"legacy": False, "takeover": "none", "fenced": False})
+        return
+    place = Place(None)
+    takeover = "none"
+    if step == "adopt":
+        place.ensure_home()
+        for source, target in ((LEGACY_HOME + "/password", place.password), (LEGACY_HOME + "/server.pid", place.server_pid)):
+            if os.path.isfile(target) or not os.path.isfile(source):
+                continue
+            with open(source, "rb") as handle:
+                write_file(target, handle.read(), 0o600)
+            if target == place.password:
+                takeover = "adopted"
+        if takeover == "none" and os.path.isfile(place.password):
+            takeover = "kept"
+    else:
+        if not legacy_fenced():
+            if os.path.isfile(LEGACY_HELPER):
+                os.replace(LEGACY_HELPER, LEGACY_KEPT)
+            else:
+                write_file(LEGACY_KEPT, b"", 0o600)
+        write_file(LEGACY_HELPER, LEGACY_STUB.encode(), 0o700)
+    emit({"legacy": True, "takeover": takeover, "fenced": legacy_fenced()})
+
+
 def action_release(request):
     """Stops one slot's server and removes its slot folder and work folder, touching nothing else."""
     place = Place(slot_id(request.get("slot")))
@@ -1877,6 +1931,7 @@ CHANGES = {
     "warm": action_warm,
     "scrub": action_scrub,
     "release": action_release,
+    "legacy": action_legacy,
 }
 
 

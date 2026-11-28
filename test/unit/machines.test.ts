@@ -8,9 +8,11 @@ import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { parseImageName } from "../../src/fleet/golden.js"
+import { classifyMachines, machineSummary } from "../../src/fleet/orphans.js"
 import { warmImageName } from "../../src/fleet/warm.js"
 import { contractCodeOf } from "../../src/handlers/refusals.js"
 import type { WorkRecord } from "../../src/ledger/types.js"
+import type { MachineRow } from "../../src/ports.js"
 import { repositoryHash } from "../../src/names.js"
 import type { EnsureResult, ListResult, OrphanResult, Refusal, ResumeResult, GoldenResult } from "../../src/results.js"
 import { budgetProblems, SPAWN_BUDGETS } from "../support/spawn-count.js"
@@ -462,6 +464,52 @@ describe("boxd_ensure select orphans", () => {
     expect(again.results.filter((item) => item.state === "adopted")).toEqual([])
     expect(k.calls().some((call) => call.startsWith("machine label"))).toBe(false)
     expect(k.counter.fake.spawns().filter((spawn) => spawn.startedAt >= againStarted && spawn.action)).toEqual([])
+  })
+
+  test("a work the build before the rebuild started is taken over with its server and session, and the old build is fenced off", async () => {
+    const k = await kit()
+    const machine = k.counter.fake.machine({ name: "oc-old", region: "fra", labels: { owner: "old-build", role: "session", work: "old" } })
+    const disk = k.counter.fake.disk(machine)
+    const directory = join(disk, "home/boxd/work/old")
+    mkdirSync(directory, { recursive: true })
+    Bun.spawnSync(["git", "-C", directory, "init", "--quiet"])
+    writeFileSync(join(directory, "README.md"), "# old\n")
+    Bun.spawnSync(["git", "-C", directory, "add", "."])
+    Bun.spawnSync(["git", "-C", directory, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "--quiet", "-m", "init"])
+    const legacyHome = join(disk, "home/boxd/.opencode-boxd")
+    mkdirSync(legacyHome, { recursive: true })
+    writeFileSync(join(legacyHome, "guest.py"), "# the old build's helper\n")
+    writeFileSync(join(legacyHome, "password"), "old-server-password\n")
+    writeFileSync(join(legacyHome, "server.pid"), "4242\n")
+    k.guest.sessions.set("ses_old", { id: "ses_old", busy: true, directory: "/home/boxd/work/old", messages: [], inbox: [], updated: Date.now() })
+    const store = join(disk, "home/boxd/.local/share/opencode")
+    mkdirSync(store, { recursive: true })
+    const db = new Database(join(store, "opencode.db"))
+    db.run("create table session_v2 (id text, parent_id text, directory text, time_busy integer, time_idle integer)")
+    db.run("insert into session_v2 values (?, ?, ?, ?, ?)", ["ses_old", null, "/home/boxd/work/old", 2, null])
+    db.close()
+
+    const listed = k.counter.fake.read().machines.find((entry) => entry.id === machine.id)!
+    const row: MachineRow = { name: listed.name, region: "fra", id: null, status: "running", size: "2x8", labels: listed.labels, sharing: "private", isolated: false }
+    expect(machineSummary(classifyMachines([row], [], "0123456789", []), 10).orphans[0]?.next).toBe('boxd_ensure({ select: "orphans" }) adopts it')
+
+    k.reset()
+    const started = Date.now()
+    const result = (await k.runs.boxd_ensure({ select: "orphans" }, k.call())) as ListResult<OrphanResult>
+    expect(result.results[0]).toMatchObject({ state: "adopted", machine: "oc-old", workId: "old", why: "busy; adopted and left running" })
+    expect(await k.record("old")).toMatchObject({ state: "open", machineId: machine.id, guestDirectory: "/home/boxd/work/old", session: { rootId: "ses_old" }, adopted: { from: "orphan" } })
+    // The old server's password and pid are this helper's now; nothing was started, set up or prompted. The first
+    // legacy call finds no helper, so the plugin uploads its own, which installs itself and acts.
+    expect(readFileSync(join(disk, "home/boxd/.boxd-plugin/password"), "utf8")).toBe("old-server-password\n")
+    expect(readFileSync(join(disk, "home/boxd/.boxd-plugin/server.pid"), "utf8")).toBe("4242\n")
+    expect(k.counter.fake.spawns().filter((spawn) => spawn.startedAt >= started && spawn.action).map((spawn) => spawn.action)).toEqual(["legacy", "legacy", "describe", "legacy"])
+    // The old helper is kept beside a stub that refuses every call from the old build.
+    expect(readFileSync(join(legacyHome, "guest.py.moved"), "utf8")).toBe("# the old build's helper\n")
+    const stub = Bun.spawnSync(["python3", join(legacyHome, "guest.py")], { stdin: new Blob(['{"action":"phase"}']) })
+    expect(stub.exitCode).toBe(1)
+    expect(JSON.parse(stub.stdout.toString())).toMatchObject({ ok: false, protocol: 1, error: "WORK_MOVED" })
+    const ledger = await k.services.ledger.id({ call: { callId: "id", source: "boxd_ensure" } })
+    expect(k.counter.fake.read().machines.find((entry) => entry.id === machine.id)?.labels).toMatchObject({ owner: "boxd", role: "session", work: "old", ledger })
   })
 
   test("an adopted orphan's work.* labels are read back into its record", async () => {

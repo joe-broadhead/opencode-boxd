@@ -42,6 +42,11 @@ export interface Classified {
   readonly workId?: string
 }
 
+/** The labels of a machine the build before the rebuild started: a session with another owner, and no ledger. */
+export function beforeRebuild(labels: Readonly<Record<string, string>>): boolean {
+  return labels.role === WORK_LABELS.role && labels.work !== undefined && labels.owner !== undefined && labels.owner !== WORK_LABELS.owner && labels[LEDGER_LABEL] === undefined
+}
+
 /** The one call that adopts an actionable orphan. */
 const adopts = (workId: string) => `boxd_ensure({ workId: ${JSON.stringify(workId)} }) adopts it`
 
@@ -85,7 +90,8 @@ export function machineSummary(classified: readonly Classified[], limit: number)
   for (const item of classified) {
     counts[item.machineClass] += 1
     if (item.machineClass !== "orphan") continue
-    const next = !item.actionable ? "label it, or add a selector to keep" : item.workId ? adopts(item.workId) : "Remove it with the boxd CLI"
+    // A machine the build before the rebuild started is taken over by the orphan select, which keeps its session.
+    const next = !item.actionable ? "label it, or add a selector to keep" : beforeRebuild(item.row.labels) ? 'boxd_ensure({ select: "orphans" }) adopts it' : item.workId ? adopts(item.workId) : "Remove it with the boxd CLI"
     found.push({ machine: item.row.name, region: item.row.region, status: item.row.status, why: item.why ?? "no-ledger", actionable: item.actionable, next })
   }
   found.sort((left, right) => Number(right.actionable) - Number(left.actionable) || left.machine.localeCompare(right.machine) || left.region.localeCompare(right.region))

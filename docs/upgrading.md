@@ -11,20 +11,33 @@ OpenCode server gets only the variables it declares.
 ## From a build before the 0.0.0 rebuild
 
 A host that pins a build from before the rebuild, such as `github:joe-broadhead/opencode-boxd#v0.1.2`, is moving to a
-different plugin with the same tool names. 0.1.0 does not read that build's ledger, does not drive the works it
-started, and needs a newer OpenCode. Treat the move as a new install, in this order.
+different plugin with the same tool names. This plugin does not read that build's ledger, but it takes over the works
+that build started, on their machines, with their running OpenCode server and their sessions: the same conversation
+continues. The steps below do it without stopping a work. A host with many running works should follow the switchover
+runbook in [switchover.md](switchover.md), which runs both builds side by side while it moves.
 
-### 1. Finish the old works on the old build
+### 1. Plan how the old works move
 
-The old build is the only one that can harvest its works, so do this before anything else, on the OpenCode you run
-today:
+The old build left each work's helper, its OpenCode server's password and pid under `~/.opencode-boxd` on the machine,
+its server on port 4096 and its sessions in the machine's one OpenCode store. Its machines carry `owner=opencode-boxd`,
+`role=session` and `work=<id>`, and no `ledger` label. Once steps 2 to 4 are done, `/boxd` lists each one as an orphan with the next step
+`boxd_ensure({ select: "orphans" })`. That call, for each such machine:
 
-1. Run `/boxd` and list every open work.
-2. For each work you still need, `boxd_harvest` it, so its transcript, patch and untracked files reach the old ledger.
-3. Then `boxd_drop` it, or `boxd_sleep` it if you want to keep the machine for a while.
+1. uploads this plugin's helper, which copies the old server's password and pid to `~/.boxd-plugin`, so it speaks to
+   the same server; nothing is started, stopped or prompted;
+2. reads the machine's work checkout and root session with `describe`;
+3. fences the old build off: a stub takes the old helper's place and answers every call from the old build with
+   `WORK_MOVED`, and the old helper is kept beside it as `~/.opencode-boxd/guest.py.moved`;
+4. sets this ledger's labels and writes a record with the root session.
 
-A work you leave open keeps running on boxd after the upgrade, and keeps costing money, but nothing on this host can
-submit to it, read it or harvest it any more.
+A busy work is adopted and left running. The next `boxd_submit` continues its root session. The next `boxd_ensure` with
+the work's `env` writes the done tool and, once the session is idle, restarts its server with only the declared
+variables; the session is kept in the store, so it continues after the restart. A failed step skips the machine with
+its error, and the next call tries again. To give a machine back to the old build, move
+`~/.opencode-boxd/guest.py.moved` back to `~/.opencode-boxd/guest.py` and remove the machine's `ledger` label.
+
+A work you would rather finish on the old build: `boxd_harvest` it there and `boxd_drop` it before step 3, or keep
+it out of the orphan list with `"keep": ["owner=opencode-boxd"]`.
 
 ### 2. Move OpenCode to 2.4.1
 
@@ -82,23 +95,11 @@ old build means nothing to 0.1.0, so an automation that reads events must start 
 `boxd.works` source with RPC id `boxd`. The old build's `/boxd-cleanup` command and its terminal view are gone; `/boxd`
 reports the fleet, the cost and one next step.
 
-### 6. Running works keep running, unmanaged
+### 6. Running works keep running
 
 The upgrade does not stop, sleep or remove any machine. A work the old build left open keeps its machine, its guest
-OpenCode server and its session, which run until they finish, and the machine hibernates after its own
-`autoHibernateMinutes` of idle time, as boxd set it at creation.
-
-0.1.0 does not take those works over. Their guest helper and OpenCode server live under `~/.opencode-boxd` on the
-machine, on the port 0.1.0's helper also uses, so `boxd_ensure({ select: "orphans" })` skips them (their machine has no
-helper where 0.1.0 reads it), and adopting one with `boxd_ensure({ workId, adopt: true })` would start a new
-conversation beside the old one rather than continue it. Finish them on the old build first, as step 1 says.
-
-After the upgrade, `/boxd` lists any machine the old build left as an orphan, with the next step. Either:
-
-- keep it out of the orphan list while it finishes, with `"keep": ["owner=opencode-boxd"]`, which matches the old
-  build's label; or
-- copy what you need off it with `boxd machine cp -r oc-<id>:work/<id> .`, then remove it with
-  `boxd machine remove oc-<id> -y`.
+OpenCode server and its session until step 1 takes it over. Adopting one by name with `boxd_ensure({ workId, adopt:
+true })` does not take its old server over; use `boxd_ensure({ select: "orphans" })`.
 
 ### 7. Expect a new golden image and a registry machine
 
@@ -111,7 +112,7 @@ with daily disk backups, and keeps a copy of the ledger there. Leave it in place
 
 ### 8. Check
 
-Run `/boxd`. It should show the plugin on OpenCode 2.4.1, no option problems, and the orphans you chose to keep or
-remove. Then start one work with `boxd_ensure` and confirm it reaches `ready`. A work whose machine holds a real
+Run `/boxd`. It should show the plugin on OpenCode 2.4.1, no option problems, the old works as this ledger's works,
+and the orphans you chose to keep or remove. Then start one work with `boxd_ensure` and confirm it reaches `ready`. A work whose machine holds a real
 GitHub, model or cloud credential, such as the github.com login boxd's git integration gives a private machine, is
 refused with `ACTS_AS_OPERATOR`; see [security.md](security.md) for how to give it a placeholder identity instead.

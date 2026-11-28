@@ -35,6 +35,7 @@ import {
   readGit,
   readHealth,
   readImport,
+  readLegacy,
   readPhase,
   readPrompt,
   readRead,
@@ -201,5 +202,6 @@ export function createGuestPort(options: GuestPortOptions): GuestPort {
     git: (target, input, context) => change("git", target, { directory: input.directory, ...slot(input.slot), ...(input.rootId ? { rootId: input.rootId } : {}) }, context, TIMEOUTS.helperChange, readGit),
     release: (target, input, context) => change("release", target, { slot: input.slot }, context, TIMEOUTS.helperChange, readRelease),
     scrub: (target, context) => change("scrub", target, {}, context, TIMEOUTS.helperChange, readScrub),
+    legacy: (target, input, context) => change("legacy", target, { step: input.step }, context, TIMEOUTS.helperChange, readLegacy),
   }
 }

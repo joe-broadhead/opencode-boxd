@@ -17,6 +17,7 @@ import {
   type PromptAnswer,
   type ReadAnswer,
   type Reading,
+  type LegacyAnswer,
   type ReleaseAnswer,
   type RunOutcome,
   type ScrubAnswer,
@@ -363,6 +364,12 @@ export function readScrub(answer: Json): ScrubAnswer {
 export function readRelease(answer: Json): ReleaseAnswer {
   if (!string(answer.slot) || !/^[a-z][a-z0-9-]{0,24}$/.test(answer.slot) || !Array.isArray(answer.removed) || !answer.removed.every(string)) throw shape("release")
   return { slot: answer.slot, removed: answer.removed }
+}
+
+export function readLegacy(answer: Json): LegacyAnswer {
+  const takeover = answer.takeover
+  if (typeof answer.legacy !== "boolean" || typeof answer.fenced !== "boolean" || (takeover !== "adopted" && takeover !== "kept" && takeover !== "none")) throw shape("legacy")
+  return { legacy: answer.legacy, takeover, fenced: answer.fenced }
 }
 
 export function readUpgrade(answer: Json): { readonly opencode: string } {
