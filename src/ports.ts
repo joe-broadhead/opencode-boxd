@@ -679,6 +679,10 @@ export interface WorkEvent {
   /** With `to: "asleep"`: who put it to sleep, when the plugin knows. */
   readonly asleepBy?: SleptBy | "idle-or-cli"
   readonly needsInput?: "form" | "permission"
+  /** With `to: "ready"` after a create: the machine came from the repository's warm image. */
+  readonly warm?: boolean
+  /** With `to: "ready"`: seconds from the work's first ensure to this first ready. */
+  readonly readySeconds?: number
   readonly reading?: Reading
 }
 

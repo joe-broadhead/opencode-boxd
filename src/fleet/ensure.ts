@@ -55,6 +55,7 @@ import {
   type Region,
   type SetupAnswer,
   type Size,
+  type WorkEvent,
 } from "../ports.js"
 import type { Phase, WorkRecord } from "../ledger/types.js"
 import { LEDGER_FORMAT } from "../ledger/types.js"
@@ -66,6 +67,7 @@ import { runList, runOne, type ItemContext } from "./list.js"
 import { classReason, classifyMachines, type Classified } from "./orphans.js"
 import { pause } from "./sessions-common.js"
 import { inUseOf, limitAtCreate, pickRegion, regionsText, type InFlight, type InUse } from "./regions.js"
+import { warmImageName } from "./warm.js"
 
 /** A machine the plugin created, resized or renamed this recently may be rebooted once on its own (#14 §6). */
 export const AGENT_REBOOT_WINDOW_MS = 10 * 60_000
@@ -400,9 +402,9 @@ export async function rootSession(machines: Machines, sessionID: string): Promis
 }
 
 /** Appends a phase change; a failure is recorded for status and never fails the call. */
-export async function recordPhase(machines: Machines, workId: string, from: Phase | null, to: Phase, op: OpContext): Promise<void> {
+export async function recordPhase(machines: Machines, workId: string, from: Phase | null, to: Phase, op: OpContext, facts: Pick<WorkEvent, "warm" | "readySeconds"> = {}): Promise<void> {
   try {
-    await machines.services.ledger.appendEvent({ at: new Date(machines.now()).toISOString(), workId, from, to }, op)
+    await machines.services.ledger.appendEvent({ at: new Date(machines.now()).toISOString(), workId, from, to, ...facts }, op)
   } catch (error) {
     machines.services.report("events", `The phase change of ${workId} to ${to} was not recorded (${error instanceof Error ? error.message : String(error)}).`)
   }
@@ -414,7 +416,7 @@ export async function checkBudget(machines: Machines, op: OpContext): Promise<vo
 }
 
 /** A new record for a work, before its create or its adoption. */
-export function newRecord(machines: Machines, input: { readonly workId: string; readonly region: Region; readonly size: Size; readonly image: string; readonly laptopDirectory: string } & Partial<Pick<WorkRecord, "repo" | "git" | "env" | "model" | "title">>): WorkRecord {
+export function newRecord(machines: Machines, input: { readonly workId: string; readonly region: Region; readonly size: Size; readonly image: string; readonly laptopDirectory: string; readonly warm?: boolean } & Partial<Pick<WorkRecord, "repo" | "git" | "env" | "model" | "title">>): WorkRecord {
   const at = new Date(machines.now()).toISOString()
   return {
     format: LEDGER_FORMAT,
@@ -432,6 +434,8 @@ export function newRecord(machines: Machines, input: { readonly workId: string; 
     ...(input.env ? { env: input.env } : {}),
     ...(input.model ? { model: input.model } : {}),
     ...(input.title ? { title: input.title } : {}),
+    ...(input.warm ? { warm: true } : {}),
+    tracked: true,
     createdAt: at,
     touchedAt: at,
   }
@@ -633,24 +637,54 @@ async function settleAdopted(machines: Machines, landed: Landed, record: WorkRec
   return { target, record: settled, created: false, adopted: true, woke: asleep }
 }
 
-/** Records a landed machine's id at once, before any other step can fail. */
-async function recordLanded(machines: Machines, item: EnsureItem, landed: Landed, base: WorkRecord, size: Size, op: OpContext): Promise<WorkRecord> {
+/**
+ * Records a landed machine's id at once, before any other step can fail. A machine this call made records the image it
+ * was made from (`created`); an adopted one keeps the image the record held.
+ */
+async function recordLanded(machines: Machines, item: EnsureItem, landed: Landed, base: WorkRecord, size: Size, op: OpContext, created?: { readonly image: string; readonly warm: boolean }): Promise<WorkRecord> {
   const lease = landed.created ? leaseAt(machines) : undefined
   return patch(machines, item.workId, op, (now) => {
-    const { pendingCreate: _landed, ...rest } = now?.state === "open" ? now : base
-    return { ...rest, state: "open", region: landed.info.region, machineId: landed.info.id, size: landed.info.size ?? size, ...(lease ? { lease } : {}) } as WorkRecord
+    const current = now?.state === "open" ? now : base
+    const { pendingCreate: _landed, warm: wasWarm, ...rest } = current
+    const warm = landed.created && created ? created.warm : wasWarm === true
+    return {
+      ...rest,
+      state: "open",
+      region: landed.info.region,
+      machineId: landed.info.id,
+      size: landed.info.size ?? size,
+      ...(landed.created && created ? { image: { name: created.image, opencode: machines.services.hostVersion } } : {}),
+      ...(warm ? { warm: true } : {}),
+      ...(lease ? { lease } : {}),
+    } as WorkRecord
   })
 }
 
 /** Creates or adopts the machine of a work that has no machine id yet; `building` while its image builds. */
 async function createOrAdopt(machines: Machines, item: EnsureItem, context: ItemContext, op: OpContext, previous: WorkRecord | undefined): Promise<Converged | { readonly building: { readonly region: Region; readonly size: Size; readonly image: string } }> {
-  const { boxd, options } = machines.services
+  const { boxd, options, hostVersion } = machines.services
   const name = `oc-${item.workId}` as MachineName
   const size = item.size ?? options.size
   const laptopDirectory = item.directory ?? previous?.laptopDirectory ?? machines.services.projectDirectory
-  const image = imageName(options.goldenPrefix, machines.services.hostVersion, size)
-  const fresh = (region: Region) =>
-    newRecord(machines, { workId: item.workId, region, size, image, laptopDirectory, ...(item.repo ? { repo: item.repo } : {}), ...((item.git ?? options.git) ? { git: item.git ?? options.git } : {}), ...(item.env ? { env: item.env } : {}), ...(item.model ? { model: item.model } : {}), ...(item.title ? { title: item.title } : {}) })
+  const versionImage = imageName(options.goldenPrefix, hostVersion, size)
+  const repo = item.repo ?? previous?.repo
+  // A repository's warm image exists only for this laptop's OpenCode and the work's size; without a repository the
+  // version's golden image is the only image a work can come from.
+  const warmImage = repo && hostVersion !== null ? warmImageName(options.goldenPrefix, repo.url, hostVersion, size) : undefined
+  const fresh = (region: Region, image: string, warm: boolean) =>
+    newRecord(machines, {
+      workId: item.workId,
+      region,
+      size,
+      image,
+      warm,
+      laptopDirectory,
+      ...(repo ? { repo } : {}),
+      ...((item.git ?? options.git) ? { git: item.git ?? options.git } : {}),
+      ...(item.env ? { env: item.env } : {}),
+      ...(item.model ? { model: item.model } : {}),
+      ...(item.title ? { title: item.title } : {}),
+    })
 
   const asked = machines.now()
   const listing = await boxd.list({ maxAgeMs: 0 }, op)
@@ -663,7 +697,8 @@ async function createOrAdopt(machines: Machines, item: EnsureItem, context: Item
     throw boxdError("NOT_OURS", `${name} in ${shown.region} does not carry this plugin's labels (owner=boxd and work=${item.workId}), or carries another ledger's label, so it is not adopted. Pass adopt: true to take it over.`, { region: shown.region })
   }
   const adopted = async (landed: Landed) => {
-    const record = await recordLanded(machines, item, landed, previous?.state === "open" ? previous : fresh(landed.info.region), size, op)
+    // An adopted machine's image is unknown: the record keeps its own, or the version's, never a warm claim.
+    const record = await recordLanded(machines, item, landed, previous?.state === "open" ? previous : fresh(landed.info.region, versionImage, false), size, op)
     return settleAdopted(machines, landed, record, item, context, op)
   }
   // Where the machine is, or was being made: there first, and adopted if it is there.
@@ -678,13 +713,18 @@ async function createOrAdopt(machines: Machines, item: EnsureItem, context: Item
   const used = inUseOf(listing.machines, asked)
   const snapshots = await machines.golden.images(op)
   const allowed = options.regions
-  const withImage = new Set(REGIONS.filter((region) => allowed.includes(region) && snapshots.some((row) => row.region === region && row.name === image)))
+  // The region pick prefers a region that holds the warm image this work may use, and only falls back to the version
+  // image when no allowed region holds one (or the pick keeps the warm region for the margin in `pickRegion`).
+  const warmRegions = new Set(REGIONS.filter((region) => allowed.includes(region) && warmImage !== undefined && snapshots.some((row) => row.region === region && row.name === warmImage)))
+  const canWarm = warmImage !== undefined && warmRegions.size > 0
+  const imageRegions = canWarm ? warmRegions : new Set(REGIONS.filter((region) => allowed.includes(region) && snapshots.some((row) => row.region === region && row.name === versionImage)))
+  const imageAt = (region: Region) => (canWarm && warmRegions.has(region) ? warmImage! : versionImage)
   const limits = where ? [] : await boxd.machineLimit(op)
   // The pick and its reservation in one step, with nothing awaited between: items picking at once count each other.
-  const want = where ?? pickRegion({ choice: item.region ?? options.region, limits, keepFree: options.keepFree, inFlight: machines.inFlight, used, withImage, allowed })
+  const want = where ?? pickRegion({ choice: item.region ?? options.region, limits, keepFree: options.keepFree, inFlight: machines.inFlight, used, withImage: imageRegions, allowed })
   let reserved: ((landed: boolean) => void) | undefined = where ? undefined : machines.inFlight.reserve(want)
   try {
-    const claim = await claimRegion(machines, item.workId, want, fresh, image, op)
+    const claim = await claimRegion(machines, item.workId, want, (region) => fresh(region, imageAt(region), imageAt(region) === warmImage), imageAt(want), op)
     const region = claim.region
     if (region !== want) {
       reserved?.(false)
@@ -703,14 +743,23 @@ async function createOrAdopt(machines: Machines, item: EnsureItem, context: Item
         allowed,
       })
     }
-    if (!withImage.has(region)) {
-      if (options.buildGolden === "never") throw boxdError("GOLDEN_MISSING", `No golden image ${image} in ${region}, and buildGolden is "never".`, { region, size })
-      const built = await context.waiting(() => machines.golden.build({ region, size, base: options.goldenBase, name: image }, { signal: context.signal, until: context.deadline }))
-      if (built === STILL_BUILDING) return { building: { region, size, image } }
+    let image = imageAt(region)
+    let warm = canWarm && image === warmImage
+    if (!snapshots.some((row) => row.region === region && row.name === image)) {
+      // A warm image is never built here: a work falls back to the version's image and a clone instead.
+      if (warm) {
+        image = versionImage
+        warm = false
+      }
+      if (!snapshots.some((row) => row.region === region && row.name === image)) {
+        if (options.buildGolden === "never") throw boxdError("GOLDEN_MISSING", `No golden image ${image} in ${region}, and buildGolden is "never".`, { region, size })
+        const built = await context.waiting(() => machines.golden.build({ region, size, base: options.goldenBase, name: image }, { signal: context.signal, until: context.deadline }))
+        if (built === STILL_BUILDING) return { building: { region, size, image } }
+      }
     }
     const landed = await createAt(machines, { workId: item.workId, region, image, adopt: item.adopt, used, ...(reserved ? { reserved } : {}) }, context, op)
     if (!landed.created) return await adopted(landed)
-    const record = await recordLanded(machines, item, landed, claim.record, size, op)
+    const record = await recordLanded(machines, item, landed, claim.record, size, op, { image, warm })
     await recordPhase(machines, item.workId, null, "creating", op)
     return { target: landed.owned.target, record, created: true, adopted: false, woke: false }
   } finally {
@@ -811,6 +860,7 @@ export async function ensureOne(machines: Machines, item: EnsureItem, context: I
           size: made.building.size,
           image: made.building.image,
           guestVersion: null,
+          warm: false,
           created: false,
           next: again(item.workId, `the golden image ${made.building.image} is still being built in ${made.building.region}, and the next call joins that build`),
         }
@@ -855,8 +905,26 @@ export async function ensureOne(machines: Machines, item: EnsureItem, context: I
       if (noTime) state = "starting"
     }
 
-    if (converged.created) await recordPhase(machines, item.workId, "creating", state === "ready" ? "ready" : "starting", op)
-    else if (converged.woke) await recordPhase(machines, item.workId, "asleep", current.session?.rootId ? "idle" : "ready", op)
+    // The warm image and the seconds from the work's first ensure (its record's creation) to its first ready. The time
+    // is recorded once, so a later call answers the same measurement rather than a growing one. Only a work this
+    // version made is timed: an older record's first ready is unknown, and its age is not a ready measurement.
+    const warm = current.warm === true
+    const tracked = current.tracked === true
+    let readyAt = current.readyAt
+    if (state === "ready" && tracked && readyAt === undefined) {
+      const at = new Date(machines.now()).toISOString()
+      const prior = current
+      current = await patch(machines, item.workId, op, (now) => {
+        const base = now ?? prior
+        return { ...base, readyAt: base.readyAt ?? at }
+      })
+      readyAt = current.readyAt
+    }
+    const readySeconds = state === "ready" && tracked && readyAt !== undefined ? Math.max(0, Math.round((Date.parse(readyAt) - Date.parse(current.createdAt)) / 1000)) : undefined
+    const facts = { warm, ...(readySeconds !== undefined ? { readySeconds } : {}) }
+
+    if (converged.created) await recordPhase(machines, item.workId, "creating", state === "ready" ? "ready" : "starting", op, facts)
+    else if (converged.woke) await recordPhase(machines, item.workId, "asleep", current.session?.rootId ? "idle" : "ready", op, state === "ready" ? facts : { warm })
 
     return {
       state,
@@ -867,6 +935,8 @@ export async function ensureOne(machines: Machines, item: EnsureItem, context: I
       size: current.size,
       image: current.image.name,
       guestVersion,
+      warm,
+      ...(readySeconds !== undefined ? { readySeconds } : {}),
       ...(current.model ? { model: current.model } : {}),
       created: converged.created,
       ...(converged.adopted ? { adopted: true } : {}),
@@ -889,6 +959,7 @@ export async function ensureOne(machines: Machines, item: EnsureItem, context: I
       size: now?.size ?? item.size ?? machines.services.options.size,
       image: now?.image.name ?? imageName(machines.services.options.goldenPrefix, hostVersion, item.size ?? machines.services.options.size),
       guestVersion: null,
+      warm: now?.warm === true,
       created: converged?.created ?? false,
       next: again(item.workId, error.why),
     }

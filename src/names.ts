@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { boxdError } from "./errors.js"
 
 const WORK = /^[a-z][a-z0-9-]{0,24}$/
@@ -18,6 +19,24 @@ export function assertSnapshot(name: string): string {
 export function assertRepo(url: string): string {
   if (!REPO.test(url)) throw boxdError("NAME_INVALID", "repo must be an https://github.com/owner/repo URL.")
   return url
+}
+
+/** The one spelling of a repository URL: its optional `.git` is not part of the repository's name or hash. */
+export function normaliseRepo(url: string): string {
+  assertRepo(url)
+  return url.endsWith(".git") ? url.slice(0, -4) : url
+}
+
+/** A repository's short name, lowercased and made a snapshot name's part: the last path segment. */
+export function repositorySlug(url: string): string {
+  const name = new URL(normaliseRepo(url)).pathname.split("/").filter(Boolean).pop() ?? "repo"
+  const slug = name.toLowerCase().replace(/[^a-z0-9._-]+/g, "-")
+  return slug || "repo"
+}
+
+/** The first 8 hex of a repository URL's SHA-256: what tells two repositories with one name apart. */
+export function repositoryHash(url: string): string {
+  return createHash("sha256").update(normaliseRepo(url)).digest("hex").slice(0, 8)
 }
 
 export function workDirectory(workId: string): string {

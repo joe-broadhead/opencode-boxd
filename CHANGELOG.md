@@ -6,6 +6,9 @@
   selector, a golden builder, or an orphan with its reason and whether the plugin may act on it. `boxd_ensure` with
   `select: "orphans"` adopts every actionable orphan from its guest's `describe`, writing a record and this ledger's
   labels without setup, clone, upgrade or resize.
+- A work with a `repo` starts from that repository's warm image when one exists for its size in an allowed region, and
+  from the version's golden image with a clone otherwise. `ensure` answers `warm` and, for a work this version made,
+  once it is ready, `readySeconds`, the seconds from its first ensure to its first ready.
 - Every work's machine carries the label `ledger=<id>`, naming the ledger that registered it. `boxd_ensure` sets it on a
   create and on an adoption, and the automation pass adds it once to an open work's machine that lacks it.
 - The guest helper's `phase` and `export` read the newest completed `boxd_done` call after the root's latest prompt

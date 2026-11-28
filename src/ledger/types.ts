@@ -143,6 +143,12 @@ export interface WorkRecord {
   readonly size: Size
   /** `opencode` is null until a read has learned the guest's version. */
   readonly image: { readonly name: string; readonly opencode: string | null }
+  /** The machine was created from the repository's warm image, not the version's golden image. */
+  readonly warm?: boolean
+  /** Made by a plugin version that measures `readySeconds`: an older record's first ready is not known. */
+  readonly tracked?: boolean
+  /** When the work first reached `ready`: `readySeconds` counts from `createdAt`. */
+  readonly readyAt?: string
   readonly laptopDirectory: string
   readonly guestDirectory: string
   readonly repo?: { readonly url: string; readonly ref?: string }

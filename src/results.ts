@@ -296,6 +296,10 @@ export interface EnsureResult extends WorkFields, Next {
   readonly size: Size
   readonly image: string
   readonly guestVersion: string | null
+  /** True when the machine was created from the repository's warm image, false for the version's image and a clone. */
+  readonly warm: boolean
+  /** With `ready`: seconds from the work's first ensure to its first `ready`; later calls answer the same. */
+  readonly readySeconds?: number
   readonly model?: string
   readonly created: boolean
   readonly adopted?: boolean
