@@ -354,6 +354,24 @@ describe("boxd_ensure select orphans", () => {
     expect(k.counter.fake.spawns().filter((spawn) => spawn.startedAt >= againStarted && spawn.action)).toEqual([])
   })
 
+  test("a shared orphan and an isolated orphan are skipped, with no labels from this ledger and no record", async () => {
+    const k = await kit()
+    const labels = { owner: "boxd", role: "session" }
+    const shared = k.counter.fake.machine({ name: "oc-shared", region: "fra", labels: { ...labels, work: "shared" }, sharing: "shared" })
+    const isolated = k.counter.fake.machine({ name: "oc-isolated", region: "fra", labels: { ...labels, work: "isolated" }, isolated: true })
+    k.reset()
+    const result = (await k.runs.boxd_ensure({ select: "orphans" }, k.call())) as ListResult<OrphanResult>
+    const byWork = new Map(result.results.map((item) => [(item as OrphanResult).workId, item as OrphanResult]))
+    expect(byWork.get("shared")).toMatchObject({ state: "skipped", machine: "oc-shared", why: "it is shared with the organisation" })
+    expect(byWork.get("isolated")).toMatchObject({ state: "skipped", machine: "oc-isolated", why: "it is isolated" })
+    const after = new Map(k.counter.fake.read().machines.map((machine) => [machine.id, machine.labels]))
+    expect(after.get(shared.id)).toEqual({ owner: "boxd", role: "session", work: "shared" })
+    expect(after.get(isolated.id)).toEqual({ owner: "boxd", role: "session", work: "isolated" })
+    expect(await k.record("shared")).toBeUndefined()
+    expect(await k.record("isolated")).toBeUndefined()
+    expect(k.calls().some((call) => call.startsWith("machine label"))).toBe(false)
+  })
+
   test("a describe that fails is skipped with its error, and no record is written", async () => {
     const k = await kit()
     k.counter.fake.machine({ name: "oc-unready", region: "fra", labels: { owner: "boxd", role: "session", work: "unready" } })

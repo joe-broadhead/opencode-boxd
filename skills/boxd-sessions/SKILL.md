@@ -49,9 +49,10 @@ A machine belongs to a work here, to another ledger, to a `keep` selector, to a 
 are orphans: the fleet status lists each with its reason and whether the plugin may act on it. Only a session machine is
 actionable. `tools.boxd.ensure({ select: "orphans" })` adopts every actionable orphan: it reads the guest's `describe`,
 writes a record from the machine's folder, repository and root session, and sets this ledger's labels. It runs no setup,
-clone, upgrade or resize. A busy orphan, or one waiting on a person, is adopted and left running; an orphan whose
-`describe` fails is skipped with its error. The `keep` option takes label selectors (`key=value`, or a bare key) for
-machines owned elsewhere, so they are never listed as orphans of this ledger.
+clone, upgrade or resize. A busy orphan, or one waiting on a person, is adopted and left running; a hibernated orphan is
+woken for the read and left running. An orphan whose `describe` fails is skipped with its error. The `keep` option takes
+label selectors (`key=value`, or a bare key) for machines owned elsewhere, so they are never listed as orphans of this
+ledger.
 
 ## Account and access
 
