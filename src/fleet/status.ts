@@ -15,7 +15,7 @@ import { secretKinds } from "@we-the-rebel-alliance/plugin-contract/events"
 import { BoxdError, boxdError, type Code, type WarningCode } from "../errors.js"
 import { hoursAt, shownHours } from "../ledger/hours.js"
 import type { Phase, WorkRecord } from "../ledger/types.js"
-import { BUILDER_LABELS, LEDGER_LABEL, LIST_MAX_ITEMS, REGIONS, SIZES, TIMEOUTS, WORK_LABELS, type CallTag, type Listing, type OpContext, type Region, type Size } from "../ports.js"
+import { LIST_MAX_ITEMS, REGIONS, SIZES, TIMEOUTS, type CallTag, type Listing, type OpContext, type Region, type Size } from "../ports.js"
 import { excerpt, reasonOf } from "../redact.js"
 import {
   ATTENTION_ORDER,
@@ -25,9 +25,6 @@ import {
   type BudgetState,
   type CleanupAction,
   type CostBlock,
-  type MachineClass,
-  type OrphanMachine,
-  type OrphanReason,
   type StatusResult,
   type WorkBrief,
   type WorkCost,
@@ -35,6 +32,7 @@ import {
 import type { FleetServices } from "../services.js"
 import { watchHandle, type WatchHandle } from "../watch.js"
 import { codeOf, notRead, observe, observeFailure, outcomeOf, phaseOf, readGuest, STATUS_TEXT_LIMIT, wantsRead, type Observed } from "./model.js"
+import { classifyMachines, machineSummary } from "./orphans.js"
 
 export type StatusView = "attention" | "all" | "counts"
 export type StatusInclude = "credentials" | "cost" | "images" | "closed"
@@ -281,19 +279,6 @@ function automationFallback(services: FleetServices): AutomationState {
   return access === "all" ? "on" : "off (access)"
 }
 
-/** The plugin's labels before `ledger`: an owner label, or `role=session` with a `work` label. */
-function legacyLabels(labels: Readonly<Record<string, string>>): boolean {
-  return labels.owner === WORK_LABELS.owner || (labels.role === WORK_LABELS.role && labels.work !== undefined)
-}
-
-/** Whether a `keep` selector matches: a bare key by its presence, `key=value` by its value. */
-function kept(labels: Readonly<Record<string, string>>, selectors: readonly string[]): boolean {
-  return selectors.some((selector) => {
-    const at = selector.indexOf("=")
-    return at < 0 ? labels[selector] !== undefined : labels[selector.slice(0, at)] === selector.slice(at + 1)
-  })
-}
-
 /** Image names this plugin builds: `<prefix>-<opencode version>-<size>`. */
 function imageOf(name: string, prefix: string): { opencode: string; size: Size } | undefined {
   if (!name.startsWith(`${prefix}-`)) return undefined
@@ -492,40 +477,8 @@ export async function fleetStatus(services: FleetServices, input: StatusInput, c
 
   // Every machine, classified by what owns it: a record here, another ledger's label, a `keep` selector, a golden
   // builder, or an orphan. Only a session machine is ever actionable (design §C.3, #83).
-  const ledgerId = await services.ledger.currentId(op())
-  const byId = new Map(open.flatMap((record) => (record.machineId === null ? [] : [[record.machineId, record] as const])))
-  const byName = new Set(open.map((record) => `${record.region}/${record.machine}`))
-  const machineCounts: Record<MachineClass, number> = { work: 0, "other-ledger": 0, kept: 0, golden: 0, orphan: 0 }
-  const found: OrphanMachine[] = []
-  for (const machine of listing?.machines ?? []) {
-    if (machine.status === "destroyed" || (input.region && machine.region !== input.region)) continue
-    const labels = machine.labels
-    const legacy = legacyLabels(labels)
-    const recorded = byName.has(`${machine.region}/${machine.name}`) || (machine.id !== null && byId.has(machine.id))
-    const kind: MachineClass = recorded
-      ? "work"
-      : machine.name.startsWith("oc-gb-") || labels.role === BUILDER_LABELS.role
-        ? "golden"
-        : labels[LEDGER_LABEL] !== undefined && labels[LEDGER_LABEL] !== ledgerId
-          ? "other-ledger"
-          : kept(labels, services.options.keep)
-            ? "kept"
-            : "orphan"
-    machineCounts[kind] += 1
-    if (kind !== "orphan") continue
-    const why: OrphanReason = labels[LEDGER_LABEL] === undefined ? (legacy ? "legacy-labels" : "no-ledger") : "no-record"
-    // A session machine is the plugin's to act on; any other orphan is someone else's, whatever its name.
-    const actionable = labels.role === WORK_LABELS.role || (machine.name.startsWith("oc-") && legacy)
-    const workId = machine.name.slice(3)
-    const next = !actionable
-      ? "label it, or add a selector to keep"
-      : machine.name.startsWith("oc-") && WORK_ID.test(workId)
-        ? `${one("boxd_ensure", workId)} adopts it`
-        : "Remove it with the boxd CLI"
-    found.push({ machine: machine.name, region: machine.region, status: machine.status, why, actionable, next })
-  }
-  found.sort((left, right) => Number(right.actionable) - Number(left.actionable) || left.machine.localeCompare(right.machine) || left.region.localeCompare(right.region))
-  const machines = { counts: machineCounts, orphans: found.slice(0, input.limit), more: Math.max(0, found.length - input.limit) }
+  const classified = classifyMachines(listing?.machines ?? [], open, await services.ledger.currentId(op()), services.options.keep, input.region)
+  const machines = machineSummary(classified, input.limit)
 
   // One shared cause across many works: #1's case, 15 works stopped on one expired token.
   const authFailed = rows.filter((row) => row.record.state === "open" && codeOf(row.record, row.observed) === "GUEST_AUTH_FAILED")

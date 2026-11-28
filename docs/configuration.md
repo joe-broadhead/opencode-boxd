@@ -47,6 +47,11 @@ selector: `key=value` matches that value, and a bare key matches the label's pre
 `"keep": ["role=lead", "runner"]` keeps a machine whose `role` is `lead`, and any machine that carries a `runner`
 label.
 
+`boxd_ensure` with `select: "orphans"` adopts every actionable orphan that `/boxd` lists. It reads the guest's
+`describe`, writes a record from the machine's folder, repository and root session, and sets this ledger's labels. It
+runs no setup, clone, upgrade or resize. A busy orphan, or one waiting on a person, is adopted and left running; one
+whose `describe` fails is skipped with its error.
+
 ## Examples
 
 A small project that may place machines only in Frankfurt, at 2 vCPU and 8 GiB:

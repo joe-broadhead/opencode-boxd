@@ -42,6 +42,7 @@ describe("plugin options", () => {
     expect(parseOptions({ keepFree: { fra: 4 } })).toMatchObject({ keepFree: { fra: 4, nyc: 0 } })
     expect(parseOptions({ keep: ["role=lead", "runner", "owner=boxd", "role=lead"] })).toMatchObject({ keep: ["role=lead", "runner", "owner=boxd"] })
     expect(parseOptions({ keep: [] })).toMatchObject({ keep: [] })
+    expect(parseOptions({ keep: ["team=lead", "runner", "team=lead"] })).toMatchObject({ keep: ["team=lead", "runner"] })
     expect(parseOptions({ git: { name: "Review Bot", email: "bot@example.invalid" } })).toMatchObject({ git: { name: "Review Bot", email: "bot@example.invalid" } })
     expect(parseOptions({ goldenPrefix: "team-golden", goldenBase: "opencode-golden", goldenSetup: "/srv/setup.sh" })).toMatchObject({
       goldenPrefix: "team-golden",
@@ -77,6 +78,9 @@ describe("plugin options", () => {
       { keep: ["role lead"] },
       { keep: ["role=lead=extra"] },
       { keep: [1] },
+      { keep: "team=lead" },
+      { keep: ["team=lead", 2] },
+      { keep: ["team=lead,bad"] },
       { git: { name: "x" } },
       { git: { name: "", email: "a@b.c" } },
       { git: { name: "x", email: "not an email" } },

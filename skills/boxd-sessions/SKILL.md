@@ -40,6 +40,16 @@ Use one list call, not many single calls: `works: [...]` takes up to 300 items, 
 order. `tools.boxd.sleep({ select: "finished" })` sleeps every idle work whose last run ended, and
 `tools.boxd.harvest({ select: "unsaved-finished" })` saves every finished work that is not saved.
 
+## Orphans
+
+A machine belongs to a work here, to another ledger, to a `keep` selector, to a golden builder, or to no one. The last
+are orphans: the fleet status lists each with its reason and whether the plugin may act on it. Only a session machine is
+actionable. `tools.boxd.ensure({ select: "orphans" })` adopts every actionable orphan: it reads the guest's `describe`,
+writes a record from the machine's folder, repository and root session, and sets this ledger's labels. It runs no setup,
+clone, upgrade or resize. A busy orphan, or one waiting on a person, is adopted and left running; an orphan whose
+`describe` fails is skipped with its error. The `keep` option takes label selectors (`key=value`, or a bare key) for
+machines owned elsewhere, so they are never listed as orphans of this ledger.
+
 ## Account and access
 
 There is no plugin-held account: sign in with the boxd CLI, and `probe` reports this machine's local identity. No `account`

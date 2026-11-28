@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- The fleet status classifies every machine in the organisation: a work here, another ledger's work, kept by a `keep`
+  selector, a golden builder, or an orphan with its reason and whether the plugin may act on it. `boxd_ensure` with
+  `select: "orphans"` adopts every actionable orphan from its guest's `describe`, writing a record and this ledger's
+  labels without setup, clone, upgrade or resize.
 - Every work's machine carries the label `ledger=<id>`, naming the ledger that registered it. `boxd_ensure` sets it on a
   create and on an adoption, and the automation pass adds it once to an open work's machine that lacks it.
 - The guest helper's `phase` and `export` read the newest completed `boxd_done` call after the root's latest prompt

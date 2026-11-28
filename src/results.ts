@@ -184,6 +184,18 @@ export interface CleanupAction {
 /** Whether automation runs here (§C.3): by default at `all`, by the person's `automation: "on"`, or not, and why. */
 export type AutomationState = "on" | "on (consent)" | "off" | "off (access)" | "not-owner"
 
+/** One orphan as `boxd_ensure({ select: "orphans" })` answers it: adopted with a record, or skipped with why. */
+export interface OrphanResult {
+  readonly state: "adopted" | "skipped"
+  readonly machine: string
+  readonly region: Region
+  readonly machineId: MachineId | null
+  readonly workId?: string
+  readonly why: string
+  readonly error?: Code
+  readonly next?: string
+}
+
 export interface BudgetState {
   readonly daily: number
   readonly today: number | null
@@ -379,7 +391,7 @@ export interface ListResult<T extends { readonly state: string }> {
   readonly counts: Readonly<Record<string, number>>
   readonly results: ReadonlyArray<T | Refusal | SelectMatch>
   /** For a selector call (§C.4): the selector, and whether it only matched. Every matched work has its own result. */
-  readonly select?: CleanupAction["select"]
+  readonly select?: CleanupAction["select"] | "orphans"
   readonly dryRun?: boolean
 }
 
@@ -387,7 +399,8 @@ export interface ListResult<T extends { readonly state: string }> {
 export interface ToolResults {
   readonly boxd_job: JobResult
   readonly boxd_read: ReadResult
-  readonly boxd_ensure: EnsureResult
+  /** A single or list ensure answers works; `select: "orphans"` answers orphans. */
+  readonly boxd_ensure: EnsureResult | OrphanResult
   readonly boxd_submit: SubmitResult
   readonly boxd_harvest: HarvestResult
   readonly boxd_sleep: SleepResult

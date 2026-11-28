@@ -124,7 +124,10 @@ const ENSURE_ITEM = {
   adopt: boolean("Adopt an existing oc-<id> that lacks the plugin's labels."),
 }
 
-export const ENSURE_INPUT = listable(ENSURE_ITEM, ["workId"], "an object like the single form")
+export const ENSURE_INPUT = listable(ENSURE_ITEM, ["workId"], "an object like the single form", {
+  select: choice(["orphans"], 'Adopt every actionable orphan that boxd_status lists, instead of naming works: it reads each guest\'s describe, records the work it finds and sets this ledger\'s labels, without setup, clone, upgrade or resize. Pass either select, works or workId.'),
+  dryRun: boolean("With select: list the orphans that match, and change nothing."),
+})
 
 export const SUBMIT_INPUT = listable(
   {
