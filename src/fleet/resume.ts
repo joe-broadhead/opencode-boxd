@@ -28,8 +28,10 @@ import type { CallContext } from "../call.js"
 import {
   adoptAt,
   checkBudget,
+  checkCreateBudget,
   claimRegion,
   createAt,
+  createsInFlight,
   guestStep,
   leaseAt,
   listSettings,
@@ -176,12 +178,17 @@ async function rebuild(
   const recorded = record.image.opencode === hostVersion && snapshots.some((row) => row.region === want && row.name === record.image.name)
   let image = recorded ? record.image.name : current
   // A picked region is reserved at once, and claimed in the record before anything is built or created, so a second
-  // call makes no second machine.
-  let reserved: ((landed: boolean) => void) | undefined = record.region === null ? machines.inFlight.reserve(want) : undefined
+  // call makes no second machine. A rebuild reserves even when the record names its region: it is a create either way.
+  let reserved: ((landed: boolean) => void) | undefined
   let landed: Landed
   let region: Region
   try {
-    const claim = await claimRegion(machines, record.workId, want, (where) => ({ ...record, region: where }), image, op)
+    const claim = await machines.starting.hold(async () => {
+      reserved = machines.inFlight.reserve(want)
+      // The reservation is this rebuild's own; every other create the listing cannot show counts against the cap.
+      await checkCreateBudget(machines, op, gone.listing, createsInFlight(machines, gone.asked) - 1)
+      return claimRegion(machines, record.workId, want, (where) => ({ ...record, region: where }), image, op)
+    })
     region = claim.region
     if (region !== want) {
       reserved?.(false)

@@ -5,6 +5,7 @@ import { createHash } from "node:crypto"
 import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { createCost } from "../../src/cost/index.js"
 import { boxdError } from "../../src/errors.js"
 import { createProvider, type PluginProvider } from "../../src/provider/index.js"
 import { machineRuns, type MachineSeam } from "../../src/fleet/machines.js"
@@ -60,6 +61,8 @@ export interface KitInput {
   readonly optionsFor?: (project: string) => Record<string, unknown>
   readonly seam?: MachineSeam
   readonly hostVersion?: string | null
+  /** Package E's own cost service over this kit's listing and ledger, for the machine caps; a fake by default. */
+  readonly realCost?: boolean
 }
 
 export async function startKit(input: KitInput = {}): Promise<Kit> {
@@ -85,12 +88,6 @@ export async function startKit(input: KitInput = {}): Promise<Kit> {
   }
   const ledger = createLedger({ ...host, ...runtime })
   const kit = {} as Kit
-  const cost: CostPort = {
-    ...notBuilt<CostPort>("cost"),
-    assertBudget: async () => {
-      if (kit.budgetReached) throw boxdError("BUDGET_REACHED", "Today's machine cost reached the budget.", { today: 51, daily: 50, currency: "EUR" })
-    },
-  }
   const stale = () => boxdError("BOXD_FAILED", "A guest read needs a machine listing at most 2 s old; this one is 2071 ms old.", { rule: "listing-age", kind: "listing-stale" })
   const refuse = () => {
     if (kit.staleReads <= 0) return
@@ -113,12 +110,24 @@ export async function startKit(input: KitInput = {}): Promise<Kit> {
       return { path: `/home/boxd/.boxd-plugin/warm/${key}` }
     },
   }
+  const watch = { subscribe: () => () => {}, snapshot: () => ({ asOf: new Date(0).toISOString(), works: [] }), sessionGone: () => {} }
+  const cost: CostPort = input.realCost
+    ? createCost({ ...host, ...runtime, ledger, watch })
+    : {
+        ...notBuilt<CostPort>("cost"),
+        assertBudget: async () => {
+          if (kit.budgetReached) throw boxdError("BUDGET_REACHED", "Today's machine cost reached the budget.", { today: 51, daily: 50, currency: "EUR" })
+        },
+        assertCreateBudget: async () => {
+          if (kit.budgetReached) throw boxdError("BUDGET_REACHED", "A machine cap was reached.", { scope: "machines", inUse: 51, cap: 50 })
+        },
+      }
   const services: FleetServices = {
     ...host,
     ...runtime,
     guest: guestPort,
     ledger,
-    watch: { subscribe: () => () => {}, snapshot: () => ({ asOf: new Date(0).toISOString(), works: [] }), sessionGone: () => {} },
+    watch,
     cost,
   }
   const op = (callId: string): OpContext => ({ call: { callId, source: "boxd_ensure" } })

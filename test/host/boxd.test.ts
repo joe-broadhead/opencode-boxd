@@ -348,4 +348,18 @@ describe("the plugin on OpenCode 2.4.1", () => {
       await host.close()
     }
   })
+
+  test("boxd_ensure at the organisation cap is refused before a machine is made", async () => {
+    const host = await startHost({ options: { budget: { orgMachines: 1, action: "refuse" } } })
+    try {
+      host.boxd.seed("oc-existing", { status: "running", labels: { owner: "boxd", role: "session", work: "existing" } })
+      const sessionID = await session(host, "build")
+      const answer = await attempt(host, sessionID, "build", "boxd_ensure", "reject", { workId: "one-more" })
+      expect(answer.ok).toBe(false)
+      expect(answer.error).toContain("BUDGET_EXCEEDED")
+      expect(host.boxd.machines().some((machine) => machine.name === "oc-one-more")).toBe(false)
+    } finally {
+      await host.close()
+    }
+  })
 })

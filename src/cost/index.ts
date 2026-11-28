@@ -2,17 +2,21 @@
  * Package E's cost service (design §C.4, §C.5): rates, the per-hour estimate, today, the cleanup suggestions, the
  * budget and the automation state, for D's status and C1's and C2's budget checks. Package E owns `src/cost/*`.
  *
- * Every figure but `today` comes from the watcher's snapshot, with no CLI call. `today` is one `manage usage --since
- * <local midnight>` read, shared by concurrent callers and kept for 10 minutes; while boxd has not marked the period
- * complete (up to 25 minutes), the estimate for the last 25 minutes is added. The rates come from the same read, and
- * are kept for a day; a member, who cannot read usage, gets boxd's public rates, marked `public`.
+ * Every figure but `today` and the machine counts comes from the watcher's snapshot, with no CLI call. `today` is one
+ * `manage usage --since <local midnight>` read, shared by concurrent callers and kept for 10 minutes; while boxd has not
+ * marked the period complete (up to 25 minutes), the estimate for the last 25 minutes is added. The rates come from the
+ * same read, and are kept for a day; a member, who cannot read usage, gets boxd's public rates, marked `public`. The
+ * machine counts reuse the all-region listing status already took; `budget.daily` alone never reads usage when it is
+ * unset, and the machine caps never need an owner's sign-in.
  */
 import { boxdError } from "../errors.js"
 import { asHours, hoursAt, localDay } from "../ledger/hours.js"
-import type { CallTag, FleetWatch, OpContext, Rates, Usage, WorkSnapshot } from "../ports.js"
+import type { Budget } from "../options.js"
+import { TIMEOUTS, type CallTag, type FleetWatch, type Listing, type OpContext, type Rates, type Usage, type WorkSnapshot } from "../ports.js"
 import type { BudgetState, CleanupAction, CostBlock, CostHours } from "../results.js"
 import type { CoreServices, CostPort } from "../services.js"
 import { figures, suggestions } from "./fleet.js"
+import { machineCounts, type MachineCounts } from "./machines.js"
 import { basis, money, PUBLIC_RATES } from "./rates.js"
 import { automationState, sharedOf } from "./shared.js"
 
@@ -44,8 +48,8 @@ export interface CostInternals extends CostPort {
    */
   today(context: CallTag): Promise<Today>
   /**
-   * The budget from the last usage read only, with no CLI call: what the report shows. Undefined with no `budget`
-   * option, or before any read today.
+   * The daily budget from the last usage read only, with no CLI call. Undefined with no `budget.daily`, before any read
+   * today, or when the option also has a machine cap, whose count this cached answer does not hold.
    */
   cachedBudget(): BudgetState | undefined
 }
@@ -106,16 +110,19 @@ export function createCost(core: CostCore): CostInternals {
   const shownHours = (value: number) => `${roundHours(value).toFixed(2)} h`
 
   /** The budget compares unrounded figures; the answer's figures are rounded for display only. */
-  function budgetOf(day: Today, hours: number): BudgetState | undefined {
-    const option = core.options.budget
-    if (!option) return undefined
-    const money = option.daily === undefined ? undefined : day.raw === null ? "unknown" : day.raw >= option.daily ? "reached" : "ok"
-    const hoursState = option.machineHours === undefined ? undefined : hours >= option.machineHours ? "reached" : "ok"
-    const state: BudgetState["state"] = money === "reached" || hoursState === "reached" ? "reached" : money === "unknown" ? "unknown" : "ok"
+  function budgetState(option: Budget, day: Today, hours: number, counts: MachineCounts | undefined): BudgetState {
+    const money = option.daily === undefined ? "ok" : day.raw === null ? "unknown" : day.raw >= option.daily ? "reached" : "ok"
+    const hoursState = option.machineHours === undefined ? "ok" : hours >= option.machineHours ? "reached" : "ok"
+    const machines = option.machines === undefined ? "ok" : counts === undefined ? "unknown" : counts.ledger >= option.machines ? "reached" : "ok"
+    const orgMachines = option.orgMachines === undefined ? "ok" : counts === undefined ? "unknown" : counts.org >= option.orgMachines ? "reached" : "ok"
+    const states = [money, hoursState, machines, orgMachines]
+    const state: BudgetState["state"] = states.includes("reached") ? "reached" : states.includes("unknown") ? "unknown" : "ok"
     return {
       ...(option.daily === undefined ? {} : { daily: option.daily }),
       today: option.daily === undefined ? null : day.machines,
       ...(option.machineHours === undefined ? {} : { machineHours: { today: roundHours(hours), cap: option.machineHours } }),
+      ...(option.machines !== undefined && counts !== undefined ? { machines: { inUse: counts.ledger, limit: option.machines } } : {}),
+      ...(option.orgMachines !== undefined && counts !== undefined ? { orgMachines: { inUse: counts.org, limit: option.orgMachines } } : {}),
       action: option.action,
       state,
     }
@@ -133,24 +140,31 @@ export function createCost(core: CostCore): CostInternals {
     }, 0)
   }
 
+  async function countsOf(listing: Listing | undefined, call: CallTag, inFlight = 0): Promise<MachineCounts> {
+    const current = listing ?? (await core.boxd.list({ maxAgeMs: TIMEOUTS.phaseListingMaxAgeMs }, op(call)))
+    return machineCounts(current, await core.ledger.id(op(call)), await core.ledger.list({}, op(call)), inFlight)
+  }
+
   const noUsage: Today = { machines: null, raw: null, currency: null, complete: false, estimated: false }
 
-  async function currentBudget(call: CallTag): Promise<{ readonly day: Today; readonly hours: number }> {
+  async function currentBudget(call: CallTag, facts?: { readonly listing?: Listing }): Promise<{ readonly day: Today; readonly hours: number; readonly counts: MachineCounts | undefined }> {
     const option = core.options.budget
     const hours = option?.machineHours === undefined ? 0 : await hoursToday(call)
     const day = option?.daily === undefined ? noUsage : await today(call)
-    return { day, hours }
+    const counts = option?.machines === undefined && option?.orgMachines === undefined ? undefined : await countsOf(facts?.listing, call)
+    return { day, hours, counts }
   }
 
-  const budget = async (call: CallTag) => {
-    if (!core.options.budget) return undefined
-    const { day, hours } = await currentBudget(call)
-    return budgetOf(day, hours)
+  const budget = async (call: CallTag, facts?: { readonly listing?: Listing }) => {
+    const option = core.options.budget
+    if (!option) return undefined
+    const { day, hours, counts } = await currentBudget(call, facts)
+    return budgetState(option, day, hours, counts)
   }
   const cachedBudget = () => {
     const option = core.options.budget
-    if (!option || option.machineHours !== undefined || !usage || usage.day !== localMidnight(now())) return undefined
-    return budgetOf(todayOf(usage.value), 0)
+    if (!option || option.machineHours !== undefined || option.machines !== undefined || option.orgMachines !== undefined || !usage || usage.day !== localMidnight(now())) return undefined
+    return budgetState(option, todayOf(usage.value), 0, undefined)
   }
 
   /** Machine cost per work since the oldest open work was created, matched by machine id; null for a member. */
@@ -241,9 +255,8 @@ export function createCost(core: CostCore): CostInternals {
     async assertBudget(call) {
       const option = core.options.budget
       if (!option) return
-      const { day, hours } = await currentBudget(call)
-      const state = budgetOf(day, hours)
-      if (state?.action !== "refuse" || state.state !== "reached") return
+      const hours = option.machineHours === undefined ? 0 : await hoursToday(call)
+      const day = option.daily === undefined ? noUsage : await today(call)
       const currency = day.currency ?? currentRates().currency
       const estimate = day.estimated ? " (boxd's estimate)" : ""
       const daily = option.daily
@@ -251,6 +264,7 @@ export function createCost(core: CostCore): CostInternals {
       const cost = day.machines
       const money = daily !== undefined && day.raw !== null && cost !== null && day.raw >= daily
       const machineHours = cap !== undefined && hours >= cap
+      if (option.action !== "refuse" || (!money && !machineHours)) return
       const clauses = [
         ...(money && daily !== undefined && cost !== null
           ? [`today's machine cost${estimate}, ${currency} ${cost.toFixed(2)}, has reached the budget's daily limit of ${currency} ${daily.toFixed(2)}`]
@@ -266,6 +280,22 @@ export function createCost(core: CostCore): CostInternals {
           ...(machineHours && cap !== undefined ? { machineHours: { today: roundHours(hours), cap } } : {}),
         },
       )
+    },
+    async assertCreateBudget(call, facts) {
+      const option = core.options.budget
+      if (!option || (option.machines === undefined && option.orgMachines === undefined)) return
+      const counts = await countsOf(facts?.listing, call, facts?.inFlight)
+      const ledger = option.machines !== undefined && counts.ledger >= option.machines
+      const org = option.orgMachines !== undefined && counts.org >= option.orgMachines
+      if ((!ledger && !org) || option.action !== "refuse") return
+      const scope = ledger ? "machines" : "orgMachines"
+      const inUse = ledger ? counts.ledger : counts.org
+      const cap = ledger ? option.machines! : option.orgMachines!
+      const what =
+        scope === "machines"
+          ? `This ledger holds ${inUse} machine${inUse === 1 ? "" : "s"}, at budget.machines ${cap}`
+          : `The organisation holds ${inUse} machine${inUse === 1 ? "" : "s"}, at budget.orgMachines ${cap}`
+      throw boxdError("BUDGET_REACHED", `${what}, and budget.action is refuse. A call that would create another machine is refused.`, { scope, inUse, cap })
     },
   }
   sharedOf(port)

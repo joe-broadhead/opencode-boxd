@@ -68,9 +68,14 @@ describe("plugin options", () => {
     expect(parseOptions({ allowedRoots: ["/srv/work"], allowUntestedHost: true })).toMatchObject({ allowedRoots: ["/srv/work"], allowUntestedHost: true })
     for (const automation of ["auto", "on", "off"]) expect(parseOptions({ automation })).toMatchObject({ automation })
     expect(parseOptions({ autoHibernateMinutes: 30, autoSleepMinutes: 0, orphanHours: 1, leaseDays: 3 })).toMatchObject({ autoHibernateMinutes: 30, autoSleepMinutes: 0, orphanHours: 1, leaseDays: 3 })
-    expect(parseOptions({ budget: { daily: 50, action: "refuse" } })).toMatchObject({ budget: { daily: 50, action: "refuse" } })
-    expect(parseOptions({ budget: { machineHours: 12, action: "warn" } })).toMatchObject({ budget: { machineHours: 12, action: "warn" } })
-    expect(parseOptions({ budget: { daily: 50, machineHours: 12, action: "refuse" } })).toMatchObject({ budget: { daily: 50, machineHours: 12, action: "refuse" } })
+    for (const budget of [
+      { daily: 50, action: "refuse" },
+      { machineHours: 12, action: "warn" },
+      { daily: 50, machineHours: 12, action: "refuse" },
+      { machines: 0, action: "warn" },
+      { orgMachines: 2, action: "refuse" },
+      { daily: 1, machineHours: 2, machines: 2, orgMachines: 3, action: "warn" },
+    ]) expect(parseOptions({ budget })).toMatchObject({ budget })
     expect(parseOptions({  })).toMatchObject({  })
   })
 
@@ -125,6 +130,8 @@ describe("plugin options", () => {
       { leaseDays: 1.5 },
       { budget: { action: "warn" } },
       { budget: { daily: 50 } },
+      { budget: { action: "warn" } },
+      { budget: { machines: 2 } },
       { budget: { daily: 0, action: "warn" } },
       { budget: { daily: 50, action: "block" } },
       { budget: { dailyUsd: 50, action: "warn" } },
@@ -133,7 +140,11 @@ describe("plugin options", () => {
       { budget: { machineHours: -1, action: "warn" } },
       { budget: { machineHours: "12", action: "warn" } },
       { budget: { machineHours: 12, action: "block" } },
-      { budget: { machineHours: 12, action: "warn", machines: 2 } },
+      { budget: { action: "warn", machines: -1 } },
+      { budget: { action: "warn", machines: 1.5 } },
+      { budget: { action: "warn", orgMachines: "2" } },
+      { budget: { action: "warn", orgMachines: -1 } },
+      { budget: { action: "warn", machines: 1, extra: 2 } },
       { idleCheck: 1 },
       { allowUntestedHost: "yes" },
       { access: "write" },

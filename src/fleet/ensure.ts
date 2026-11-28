@@ -51,6 +51,7 @@ import {
   type ChangeTarget,
   type DescribeAnswer,
   type FetchedMachine,
+  type Listing,
   type MachineId,
   type MachineInfo,
   type MachineName,
@@ -88,10 +89,34 @@ const ENV_LIMIT = 64
 const EMAIL = /^[^\s@<>]+@[^\s@<>]+$/
 const ITEM_KEYS = new Set(["workId", "machine", "region", "size", "model", "git", "repo", "ref", "directory", "title", "env", "wait", "repair", "adopt"])
 
+/**
+ * One create at a time: a create's reservation, budget check and record claim run before the next create checks. Without
+ * it, two calls starting at once could each pass a cap that allows only one of them.
+ */
+export class CreateGate {
+  #tail: Promise<void> = Promise.resolve()
+
+  async hold<T>(fn: () => Promise<T>): Promise<T> {
+    const previous = this.#tail
+    let release!: () => void
+    this.#tail = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    await previous
+    try {
+      return await fn()
+    } finally {
+      release()
+    }
+  }
+}
+
 /** What every C1 run shares: the services, this process's creates in flight, the golden builds, the recent changes. */
 export interface Machines {
   readonly services: FleetServices
   readonly inFlight: InFlight
+  /** Serialises the budget check and record claim of creates that start at once. */
+  readonly starting: CreateGate
   readonly golden: Golden
   /** When this process last created, resized or renamed each machine: the VM agent rule's window. */
   readonly changed: Map<MachineId, number>
@@ -468,6 +493,16 @@ export async function recordPhase(machines: Machines, workId: string, from: Phas
 /** The budget check before a call makes a machine run (§C.5): only with the `budget` option. */
 export async function checkBudget(machines: Machines, op: OpContext): Promise<void> {
   if (machines.services.options.budget) await machines.services.cost.assertBudget(op.call)
+}
+
+/** This process's creates a listing asked for at `since` cannot show: in flight, or landed after it was asked for. */
+export function createsInFlight(machines: Machines, since: number): number {
+  return REGIONS.reduce((sum, region) => sum + machines.inFlight.of(region, since), 0)
+}
+
+/** The machine caps before a create (§C.5); a wake is never checked here, because it makes no new machine. */
+export async function checkCreateBudget(machines: Machines, op: OpContext, listing: Listing, inFlight: number): Promise<void> {
+  if (machines.services.options.budget) await machines.services.cost.assertCreateBudget(op.call, { listing, inFlight })
 }
 
 /** A new record for a work, before its create or its adoption. */
@@ -864,11 +899,16 @@ async function createOrAdopt(machines: Machines, item: EnsureItem, context: Item
   const imageRegions = canWarm ? warmRegions : new Set(REGIONS.filter((region) => allowed.includes(region) && snapshots.some((row) => row.region === region && row.name === versionImage)))
   const imageAt = (region: Region) => (canWarm && warmRegions.has(region) ? warmImage! : versionImage)
   const limits = where ? [] : (await boxd.machineLimit(op)).regions
-  // The pick and its reservation in one step, with nothing awaited between: items picking at once count each other.
-  const want = where ?? pickRegion({ choice: item.region ?? options.region, limits, keepFree: options.keepFree, inFlight: machines.inFlight, used, withImage: imageRegions, allowed })
-  let reserved: ((landed: boolean) => void) | undefined = where ? undefined : machines.inFlight.reserve(want)
+  let reserved: ((landed: boolean) => void) | undefined
   try {
-    const claim = await claimRegion(machines, item.workId, want, (region) => fresh(region, imageAt(region), imageAt(region) === warmImage), imageAt(want), op)
+    // The pick, its reservation, the budget and the record claim are one step: items starting at once count each other.
+    const { claim, want } = await machines.starting.hold(async () => {
+      const picked = where ?? pickRegion({ choice: item.region ?? options.region, limits, keepFree: options.keepFree, inFlight: machines.inFlight, used, withImage: imageRegions, allowed })
+      reserved = machines.inFlight.reserve(picked)
+      // The reservation is this create's own; every other create the listing cannot show counts against the cap.
+      await checkCreateBudget(machines, op, listing, createsInFlight(machines, used.since) - 1)
+      return { claim: await claimRegion(machines, item.workId, picked, (region) => fresh(region, imageAt(region), imageAt(region) === warmImage), imageAt(picked), op), want: picked }
+    })
     const region = claim.region
     if (region !== want) {
       reserved?.(false)

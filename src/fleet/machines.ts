@@ -8,7 +8,7 @@
  */
 import { CALL_BOUND_MS, TIMEOUTS, type MachineId } from "../ports.js"
 import type { FleetServices, ToolRuns } from "../services.js"
-import { runEnsure, type Machines } from "./ensure.js"
+import { CreateGate, runEnsure, type Machines } from "./ensure.js"
 import { createGolden } from "./golden.js"
 import { finishRename, runReassign } from "./reassign.js"
 import { InFlight } from "./regions.js"
@@ -29,6 +29,7 @@ export function machineRuns(services: FleetServices, seam: MachineSeam = {}): Pi
   const machines: Machines = {
     services,
     inFlight: new InFlight(now),
+    starting: new CreateGate(),
     golden: createGolden(services, { bound, now }),
     changed: new Map<MachineId, number>(),
     now,

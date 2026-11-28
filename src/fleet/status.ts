@@ -247,7 +247,7 @@ function groupNext(why: AttentionReason, error: Code | undefined, ids: readonly 
 }
 
 /** The cost service's part, or a block that says it is not available: status never fails for it. */
-async function costParts(services: FleetServices, input: StatusInput, tag: CallTag): Promise<{ cost: CostBlock; cleanup: readonly CleanupAction[]; automation: AutomationState; budget?: BudgetState }> {
+async function costParts(services: FleetServices, input: StatusInput, tag: CallTag, listing: Listing | undefined): Promise<{ cost: CostBlock; cleanup: readonly CleanupAction[]; automation: AutomationState; budget?: BudgetState }> {
   const safely = async <T>(fn: () => Promise<T> | T): Promise<{ value: T } | { error: string }> => {
     try {
       return { value: await fn() }
@@ -259,7 +259,7 @@ async function costParts(services: FleetServices, input: StatusInput, tag: CallT
     safely(() => services.cost.block({ works: input.include.includes("cost"), limit: input.limit }, tag)),
     safely(() => services.cost.cleanup(tag)),
     safely(() => services.cost.automation()),
-    services.options.budget ? safely(() => services.cost.budget(tag)) : Promise.resolve({ value: undefined }),
+    services.options.budget ? safely(() => services.cost.budget(tag, listing ? { listing } : undefined)) : Promise.resolve({ value: undefined }),
   ])
   return {
     cost: "value" in block ? block.value : unavailableCost(block.error),
@@ -443,7 +443,7 @@ export async function fleetStatus(services: FleetServices, input: StatusInput, c
   const tag = call.tag
   const [limits, costs, secrets, snapshots] = await Promise.all([
     services.boxd.machineLimit(op()).catch(() => undefined),
-    costParts(services, input, tag),
+    costParts(services, input, tag, listing),
     input.include.includes("credentials") ? services.boxd.secrets(op()).then((value) => ({ value }), (error: unknown) => ({ error: reasonOf(error) })) : undefined,
     input.include.includes("images") ? services.boxd.snapshots(op()).catch(() => undefined) : undefined,
   ])

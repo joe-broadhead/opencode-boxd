@@ -226,8 +226,8 @@ export const CODES = {
   BUDGET_REACHED: {
     state: "refused",
     message:
-      "Today's machine cost or machine-hours have reached the budget's cap, and budget.action is refuse; the figures are in the result. A call that would make a machine run is refused.",
-    next: 'Lower the use first: boxd_sleep({ select: "idle" }), then boxd_drop({ select: "saved-finished" }); or raise budget.daily or budget.machineHours. It resets at local midnight.',
+      "Today's machine cost, machine-hours, this ledger's machines or the organisation's machines have reached a budget cap, and budget.action is refuse; the figures are in the result. A call that would make a machine run or create one is refused.",
+    next: 'Lower the use or count first: boxd_sleep({ select: "idle" }), then boxd_drop({ select: "saved-finished" }); or raise budget.daily, budget.machineHours, budget.machines or budget.orgMachines. The time caps reset at local midnight.',
   },
   SLOTS_FULL: {
     state: "refused",
@@ -262,13 +262,13 @@ export const WARNINGS = {
   },
   /** A budget cap is reached with `action: "warn"` (§C.5). */
   BUDGET_WARN: {
-    message: "Today's machine cost or machine-hours have reached the budget's cap.",
-    next: 'Lower the use: boxd_sleep({ select: "idle" }), then boxd_drop({ select: "saved-finished" }); or raise budget.daily or budget.machineHours.',
+    message: "A budget cap has been reached: today's machine cost, machine-hours, this ledger's machines, or the organisation's machines.",
+    next: 'Lower the use or count: boxd_sleep({ select: "idle" }), then boxd_drop({ select: "saved-finished" }); or raise the budget cap.',
   },
-  /** Usage cannot be read with this sign-in, so the budget is not measured and `refuse` acts as `warn` (§C.5). */
+  /** Usage cannot be read with this sign-in, so the money budget is not measured and `refuse` acts as `warn` (§C.5). */
   BUDGET_UNKNOWN: {
-    message: "boxd's machine usage is for organisation owners and admins, so this sign-in cannot measure the budget; refuse acts as warn.",
-    next: "Sign the boxd CLI in as an owner or admin to measure the budget, or remove the budget option.",
+    message: "boxd's machine usage is for organisation owners and admins, so this sign-in cannot measure the daily budget; refuse acts as warn.",
+    next: "Sign the boxd CLI in as an owner or admin to measure the daily budget, or remove budget.daily.",
   },
   /** A `leaseDays` timer ends within 24 hours; what is unsaved is named (§C.2). */
   LEASE_EXPIRING: {
