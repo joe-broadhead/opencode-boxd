@@ -53,6 +53,8 @@ describe("plugin options", () => {
     for (const automation of ["auto", "on", "off"]) expect(parseOptions({ automation })).toMatchObject({ automation })
     expect(parseOptions({ autoHibernateMinutes: 30, autoSleepMinutes: 0, orphanHours: 1, leaseDays: 3 })).toMatchObject({ autoHibernateMinutes: 30, autoSleepMinutes: 0, orphanHours: 1, leaseDays: 3 })
     expect(parseOptions({ budget: { daily: 50, action: "refuse" } })).toMatchObject({ budget: { daily: 50, action: "refuse" } })
+    expect(parseOptions({ budget: { machineHours: 12, action: "warn" } })).toMatchObject({ budget: { machineHours: 12, action: "warn" } })
+    expect(parseOptions({ budget: { daily: 50, machineHours: 12, action: "refuse" } })).toMatchObject({ budget: { daily: 50, machineHours: 12, action: "refuse" } })
     expect(parseOptions({  })).toMatchObject({  })
   })
 
@@ -96,10 +98,17 @@ describe("plugin options", () => {
       { autoSleepMinutes: -1 },
       { orphanHours: 0 },
       { leaseDays: 1.5 },
+      { budget: { action: "warn" } },
       { budget: { daily: 50 } },
       { budget: { daily: 0, action: "warn" } },
       { budget: { daily: 50, action: "block" } },
       { budget: { dailyUsd: 50, action: "warn" } },
+      { budget: { machineHours: 12 } },
+      { budget: { machineHours: 0, action: "warn" } },
+      { budget: { machineHours: -1, action: "warn" } },
+      { budget: { machineHours: "12", action: "warn" } },
+      { budget: { machineHours: 12, action: "block" } },
+      { budget: { machineHours: 12, action: "warn", machines: 2 } },
       { idleCheck: 1 },
       { allowUntestedHost: "yes" },
       { access: "write" },

@@ -32,6 +32,8 @@ export interface ErrorFacts {
   readonly today?: number
   readonly daily?: number
   readonly currency?: string
+  /** `BUDGET_REACHED`: today's running hours and the ledger's cap. */
+  readonly machineHours?: { readonly today: number; readonly cap: number }
 }
 
 /** A refusal or failure, in the shape of any answer. */
@@ -201,9 +203,14 @@ export interface OrphanResult {
 }
 
 export interface BudgetState {
-  readonly daily: number
+  /** The money cap, only with `budget.daily`. */
+  readonly daily?: number
+  /** Today's machine cost, or null when unreadable or when only `machineHours` is set. */
   readonly today: number | null
+  /** Today's running hours against the cap, only with `budget.machineHours`. */
+  readonly machineHours?: { readonly today: number; readonly cap: number }
   readonly action: "warn" | "refuse"
+  /** `reached` is either cap at or over its limit; `unknown` is a money cap this sign-in cannot measure. */
   readonly state: "ok" | "reached" | "unknown"
 }
 

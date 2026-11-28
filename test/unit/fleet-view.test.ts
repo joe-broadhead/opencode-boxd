@@ -165,6 +165,27 @@ describe("boxd_status", () => {
     expect((await answer({ daily: 5, today: null, action: "refuse", state: "unknown" })).warnings).toEqual(["BUDGET_UNKNOWN"])
   })
 
+  test("machine-hours reached with warn is BUDGET_WARN, and the block names the hours", async () => {
+    const cost = (budget: BudgetState): CostPort => ({
+      block: async () => ({
+        currency: "EUR",
+        perHour: { estimate: 0, running: 0, asleep: 0, basis: "x", ratesSource: "usage" },
+        today: { machines: null, complete: false },
+        hours: { ledger: { existed: 0, running: 0 }, today: { existed: 0, running: 0 }, since: { existed: 0, running: 0 } },
+      }),
+      cleanup: async () => [],
+      automation: () => "on",
+      budget: async () => budget,
+      assertBudget: async () => {},
+    })
+    await world.dispose()
+    const hours = { today: 3, cap: 2 }
+    world = await startWorld({ options: { budget: { machineHours: 2, action: "warn" } }, cost: cost({ machineHours: hours, today: null, action: "warn", state: "reached" }) })
+    const answer = await status()
+    expect(answer.warnings).toEqual(["BUDGET_WARN"])
+    expect(answer.budget).toEqual({ machineHours: hours, today: null, action: "warn", state: "reached" })
+  })
+
   test("a listing that fails keeps the cached phases, marks them stale, and says the CLI did not answer", async () => {
     await world.bulk([idle("a")])
     world.counter.fake.fault("machine list", { stderr: "error: not logged in", code: 1 })

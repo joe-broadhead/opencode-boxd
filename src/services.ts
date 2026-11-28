@@ -148,7 +148,8 @@ export interface CostPort {
   budget(context: CallTag): Promise<BudgetState | undefined>
   /**
    * For a call that would make a machine run (ensure, resume, a submit to a hibernated work, exec with `wake`): throws
-   * `BUDGET_REACHED` when `budget.action` is `refuse` and the budget is reached; never for a member, who cannot measure it.
+   * `BUDGET_REACHED` when `budget.action` is `refuse` and either cap is reached. Machine-hours are from the ledger, so
+   * they refuse for a member too; an unmeasurable money cap alone acts as warn.
    */
   assertBudget(context: CallTag): Promise<void>
 }

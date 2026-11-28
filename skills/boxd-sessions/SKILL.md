@@ -70,6 +70,12 @@ it. Drop only finished, saved work. The plugin's automation harvests and hiberna
 `tools.boxd.job({ cost: true })` or `/boxd`, never from a hook. Each answer also carries the work's machine-hours from the
 ledger, which need no owner's sign-in: `hours.existed` and `hours.running`.
 
+A `budget` may cap today's machine cost (`daily`) and today's running hours for this ledger's works (`machineHours`).
+With `action: "refuse"`, a call that would make a machine run answers `BUDGET_EXCEEDED` when either cap is reached;
+with `"warn"`, the call runs and `tools.boxd.status` carries `BUDGET_WARN`. The hours come from the ledger, so they work
+without an owner's sign-in. Both caps reset at local midnight: sleep what is idle and drop what is finished and saved to
+make room, or the owner raises the cap.
+
 ## Report the truth
 
 - Never report work as done when `outcome` is not `completed`, and read `lastText` even when it is: a run can complete
@@ -82,7 +88,8 @@ ledger, which need no owner's sign-in: `hours.existed` and `hours.running`.
 A failed call is `CODE: What happened. Next step: What to do.` Read the next step and make that call. `INPUT_INVALID`
 means the input or the work id is not what the method describes; `UNAVAILABLE` means the machine, the CLI or the guest
 could not answer now, and the sentence says which; `NEEDS_SIGN_IN` means the boxd CLI needs `boxd auth login`;
-`BUDGET_EXCEEDED` means today's budget refused the call; `PERMISSION_DENIED` means the access level or a rule refused it.
+`BUDGET_EXCEEDED` means today's machine cost or machine-hours reached the budget with `action: "refuse"`; sleep or drop
+unused works, or ask the owner to raise the cap. `PERMISSION_DENIED` means the access level or a rule refused it.
 A drop refused for commits on no remote is `UNAVAILABLE` with a push-first next step: push, then drop again.
 
 ## Do not

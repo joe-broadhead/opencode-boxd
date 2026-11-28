@@ -221,8 +221,8 @@ export const CODES = {
   BUDGET_REACHED: {
     state: "refused",
     message:
-      "Today's machine cost has reached the budget's daily limit, and budget.action is refuse; today, daily and currency are in the result. A call that would make a machine run is refused.",
-    next: 'Lower the cost first: boxd_sleep({ select: "idle" }), then boxd_drop({ select: "saved-finished" }); or raise budget.daily. It resets at local midnight.',
+      "Today's machine cost or machine-hours have reached the budget's cap, and budget.action is refuse; the figures are in the result. A call that would make a machine run is refused.",
+    next: 'Lower the use first: boxd_sleep({ select: "idle" }), then boxd_drop({ select: "saved-finished" }); or raise budget.daily or budget.machineHours. It resets at local midnight.',
   },
 
   // Setup.
@@ -245,10 +245,10 @@ export const WARNINGS = {
     message: "The machine was hibernated before its last prompt was harvested.",
     next: "boxd_resume({ workId }), then boxd_harvest({ workId }).",
   },
-  /** The budget is reached with `action: "warn"` (§C.5). */
+  /** A budget cap is reached with `action: "warn"` (§C.5). */
   BUDGET_WARN: {
-    message: "Today's machine cost has reached the budget's daily limit.",
-    next: 'Lower the cost: boxd_sleep({ select: "idle" }), then boxd_drop({ select: "saved-finished" }); or raise budget.daily.',
+    message: "Today's machine cost or machine-hours have reached the budget's cap.",
+    next: 'Lower the use: boxd_sleep({ select: "idle" }), then boxd_drop({ select: "saved-finished" }); or raise budget.daily or budget.machineHours.',
   },
   /** Usage cannot be read with this sign-in, so the budget is not measured and `refuse` acts as `warn` (§C.5). */
   BUDGET_UNKNOWN: {
