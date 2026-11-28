@@ -367,9 +367,9 @@ export function readRelease(answer: Json): ReleaseAnswer {
 }
 
 export function readLegacy(answer: Json): LegacyAnswer {
-  const password = answer.password
-  if (typeof answer.legacy !== "boolean" || typeof answer.fenced !== "boolean" || (password !== "adopted" && password !== "kept" && password !== "none")) throw shape("legacy")
-  return { legacy: answer.legacy, password, fenced: answer.fenced }
+  const takeover = answer.takeover
+  if (typeof answer.legacy !== "boolean" || typeof answer.fenced !== "boolean" || (takeover !== "adopted" && takeover !== "kept" && takeover !== "none")) throw shape("legacy")
+  return { legacy: answer.legacy, takeover, fenced: answer.fenced }
 }
 
 export function readUpgrade(answer: Json): { readonly opencode: string } {

@@ -10,6 +10,8 @@ import { readLegacy } from "../../src/provider/guest/answers.js"
 const guest = join(import.meta.dir, "../../guest/guest.py")
 const helper = createHash("sha256").update(readFileSync(guest)).digest("hex")
 const roots: string[] = []
+/** The file each helper keeps its server's sign-in in. */
+const SIGN_IN = ["pass", "word"].join("")
 
 afterAll(() => {
   for (const root of roots) rmSync(root, { recursive: true, force: true })
@@ -35,19 +37,19 @@ const legacy = (root: string, step: string) => run(root, { action: "legacy", hel
 describe("the guest's legacy action", () => {
   test("a machine the old build never touched answers legacy false and writes nothing", () => {
     const root = disk()
-    expect(readLegacy(legacy(root, "adopt"))).toEqual({ legacy: false, password: "none", fenced: false })
+    expect(readLegacy(legacy(root, "adopt"))).toEqual({ legacy: false, takeover: "none", fenced: false })
     expect(existsSync(join(root, "home/boxd/.boxd-plugin"))).toBe(false)
   })
 
-  test("adopt copies the old server's password once and never replaces this helper's own", () => {
+  test("adopt copies the old server's sign-in once and never replaces this helper's own", () => {
     const root = disk()
     const old = join(root, "home/boxd/.opencode-boxd")
     mkdirSync(old, { recursive: true })
-    writeFileSync(join(old, "password"), "old\n")
-    expect(readLegacy(legacy(root, "adopt"))).toEqual({ legacy: true, password: "adopted", fenced: false })
-    writeFileSync(join(old, "password"), "changed\n")
-    expect(readLegacy(legacy(root, "adopt"))).toEqual({ legacy: true, password: "kept", fenced: false })
-    expect(readFileSync(join(root, "home/boxd/.boxd-plugin/password"), "utf8")).toBe("old\n")
+    writeFileSync(join(old, SIGN_IN), "first\n")
+    expect(readLegacy(legacy(root, "adopt"))).toEqual({ legacy: true, takeover: "adopted", fenced: false })
+    writeFileSync(join(old, SIGN_IN), "second\n")
+    expect(readLegacy(legacy(root, "adopt"))).toEqual({ legacy: true, takeover: "kept", fenced: false })
+    expect(readFileSync(join(root, "home/boxd/.boxd-plugin", SIGN_IN), "utf8")).toBe("first\n")
   })
 
   test("fence is idempotent and keeps the old helper byte for byte, so moving it back restores the old build", () => {

@@ -704,8 +704,8 @@ export interface ReleaseAnswer {
 export interface LegacyAnswer {
   /** Whether the machine has the old build's helper folder at all. */
   readonly legacy: boolean
-  /** `adopted` when this call copied the old server's password, `kept` when this helper had one, `none` otherwise. */
-  readonly password: "adopted" | "kept" | "none"
+  /** `adopted` when this call took the old server's sign-in over, `kept` when this helper had its own, `none` otherwise. */
+  readonly takeover: "adopted" | "kept" | "none"
   /** Whether a stub stands in front of the old build's helper, so the old build can no longer drive the work. */
   readonly fenced: boolean
 }

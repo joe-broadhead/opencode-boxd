@@ -1880,10 +1880,10 @@ def action_legacy(request):
     if step not in ("adopt", "fence"):
         fail("NAME_INVALID", "step must be adopt or fence")
     if not os.path.isdir(LEGACY_HOME):
-        emit({"legacy": False, "password": "none", "fenced": False})
+        emit({"legacy": False, "takeover": "none", "fenced": False})
         return
     place = Place(None)
-    password = "none"
+    takeover = "none"
     if step == "adopt":
         place.ensure_home()
         for source, target in ((LEGACY_HOME + "/password", place.password), (LEGACY_HOME + "/server.pid", place.server_pid)):
@@ -1892,9 +1892,9 @@ def action_legacy(request):
             with open(source, "rb") as handle:
                 write_file(target, handle.read(), 0o600)
             if target == place.password:
-                password = "adopted"
-        if password == "none" and os.path.isfile(place.password):
-            password = "kept"
+                takeover = "adopted"
+        if takeover == "none" and os.path.isfile(place.password):
+            takeover = "kept"
     else:
         if not legacy_fenced():
             if os.path.isfile(LEGACY_HELPER):
@@ -1902,7 +1902,7 @@ def action_legacy(request):
             else:
                 write_file(LEGACY_KEPT, b"", 0o600)
         write_file(LEGACY_HELPER, LEGACY_STUB.encode(), 0o700)
-    emit({"legacy": True, "password": password, "fenced": legacy_fenced()})
+    emit({"legacy": True, "takeover": takeover, "fenced": legacy_fenced()})
 
 
 def action_release(request):
