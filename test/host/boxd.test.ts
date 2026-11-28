@@ -255,4 +255,42 @@ describe("the plugin on OpenCode 2.4.1", () => {
       await host.close()
     }
   })
+
+  test("the machine-hours budget refuses one boxd_ensure at the cap", async () => {
+    const host = await startHost({ options: { budget: { machineHours: 1, action: "refuse" } } })
+    try {
+      const sessionID = await session(host, "build")
+      const made = await attempt(host, sessionID, "build", "boxd_ensure", "reject", { workId: "capped" })
+      expect(made.ok).toBe(true)
+      const slept = await attempt(host, sessionID, "build", "boxd_sleep", "reject", { workId: "capped" })
+      expect(slept.ok).toBe(true)
+
+      // Two hours ran today, over the one-hour cap. The machine is asleep, so the counters do not move.
+      const path = join(host.ledger, "v1", "works", "capped", "work.json")
+      const record = JSON.parse(readFileSync(path, "utf8")) as { hours?: Record<string, unknown> }
+      const hours = record.hours
+      expect(hours).toBeDefined()
+      const now = new Date()
+      const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`
+      record.hours = {
+        ...hours,
+        at: now.toISOString(),
+        phase: "asleep",
+        day,
+        todayRunningSeconds: 2 * 3600,
+        todayExistedSeconds: Math.max(Number(hours?.todayExistedSeconds ?? 0), 2 * 3600),
+        runningSeconds: Math.max(Number(hours?.runningSeconds ?? 0), 2 * 3600),
+        existedSeconds: Math.max(Number(hours?.existedSeconds ?? 0), 2 * 3600),
+      }
+      writeFileSync(path, JSON.stringify(record))
+
+      const refused = await attempt(host, sessionID, "build", "boxd_ensure", "reject", { workId: "capped" })
+      expect(refused.ok).toBe(false)
+      expect(refused.error).toContain("BUDGET_EXCEEDED")
+      expect(refused.error).toContain("machine-hours")
+      expect(host.boxd.calls().some((call) => call.startsWith("machine wake"))).toBe(false)
+    } finally {
+      await host.close()
+    }
+  })
 })

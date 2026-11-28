@@ -15,6 +15,16 @@ import { fakes, minutesAgo, record, T0, work, type Fakes } from "../support/cost
 const EUR = PUBLIC_RATES.EUR
 const USD = PUBLIC_RATES.USD
 const tag = { callId: "t", source: "boxd_status" } as const
+/** A work that ran `hours` before `at`, asleep since, so the counters do not move with the test clock. */
+const ranHours = (hours: number, at = T0) => ({
+  existedSeconds: hours * 3600,
+  runningSeconds: hours * 3600,
+  todayExistedSeconds: hours * 3600,
+  todayRunningSeconds: hours * 3600,
+  day: localDay(at),
+  phase: "asleep" as const,
+  at: at.toISOString(),
+})
 let open: Fakes[] = []
 const make = (input: Parameters<typeof fakes>[0] = {}) => {
   const value = fakes(input)
@@ -234,6 +244,87 @@ describe("the budget (§C.5)", () => {
     expect(await f.services.cost.budget(tag)).toBeUndefined()
     await f.services.cost.assertBudget(tag)
     expect(f.calls).toEqual([])
+  })
+
+  test("machine-hours alone: reached, refused with the hours and the cap, and no usage read", async () => {
+    const f = make({ options: { budget: { machineHours: 2, action: "refuse" } }, records: [record("a", { hours: ranHours(3) })] })
+    expect(await f.services.cost.budget(tag)).toEqual({
+      today: null,
+      machineHours: { today: 3, cap: 2 },
+      action: "refuse",
+      state: "reached",
+    })
+    expect(f.calls.filter((call) => call.startsWith("usage"))).toEqual([])
+    const error = (await f.services.cost.assertBudget(tag).catch((caught: unknown) => caught)) as BoxdError
+    expect(error.code).toBe("BUDGET_REACHED")
+    expect(error.what).toContain("Today's machine-hours, 3.00 h, have reached the budget's limit of 2.00 h")
+    expect(error.details).toEqual({ machineHours: { today: 3, cap: 2 } })
+  })
+
+  test("a member with usage unavailable is still refused at the machine-hours cap", async () => {
+    const f = make({
+      options: { budget: { daily: 50, machineHours: 2, action: "refuse" } },
+      usage: { available: false, reason: "owners and admins" },
+      records: [record("a", { hours: ranHours(3) })],
+    })
+    expect(await f.services.cost.budget(tag)).toMatchObject({ today: null, machineHours: { today: 3, cap: 2 }, state: "reached" })
+    const error = (await f.services.cost.assertBudget(tag).catch((caught: unknown) => caught)) as BoxdError
+    expect(error.code).toBe("BUDGET_REACHED")
+    expect(error.details).toEqual({ machineHours: { today: 3, cap: 2 } })
+  })
+
+  test("machine-hours below the cap pass, and yesterday's hours do not count", async () => {
+    const yesterday = new Date(T0)
+    yesterday.setDate(yesterday.getDate() - 1)
+    const f = make({
+      options: { budget: { machineHours: 1, action: "refuse" } },
+      records: [record("a", { hours: ranHours(2, yesterday) }), record("b", { hours: ranHours(0.5) })],
+    })
+    expect(await f.services.cost.budget(tag)).toMatchObject({ machineHours: { today: 0.5, cap: 1 }, state: "ok" })
+    await f.services.cost.assertBudget(tag)
+  })
+
+  test("machine-hours with warn report reached and refuse nothing", async () => {
+    const f = make({ options: { budget: { machineHours: 1, action: "warn" } }, records: [record("a", { hours: ranHours(2) })] })
+    expect(await f.services.cost.budget(tag)).toMatchObject({ machineHours: { today: 2, cap: 1 }, action: "warn", state: "reached" })
+    await f.services.cost.assertBudget(tag)
+  })
+
+  test("a work closed on an earlier day adds nothing to today's hours", async () => {
+    const startedAt = new Date(T0.getTime() - 37 * 60 * 60_000)
+    const closedAt = new Date(T0.getTime() - 25 * 60 * 60_000)
+    const f = make({
+      options: { budget: { machineHours: 2, action: "refuse" } },
+      // No closed event: the record's own close stops the counters, and they belong to the closing day.
+      records: [
+        record("old", {
+          state: "closed",
+          closed: { at: closedAt.toISOString(), how: "dropped" },
+          hours: { existedSeconds: 0, runningSeconds: 0, todayExistedSeconds: 0, todayRunningSeconds: 0, day: localDay(startedAt), phase: "busy", at: startedAt.toISOString() },
+        }),
+      ],
+    })
+    expect(await f.services.cost.budget(tag)).toMatchObject({ machineHours: { today: 0, cap: 2 }, state: "ok" })
+    await f.services.cost.assertBudget(tag)
+  })
+
+  test("the day boundary splits a running interval at local midnight", async () => {
+    const before = new Date(2026, 10, 16, 23, 30)
+    const after = new Date(2026, 10, 17, 0, 30)
+    const f = make({
+      options: { budget: { machineHours: 0.75, action: "refuse" } },
+      records: [
+        record("a", {
+          hours: { existedSeconds: 0, runningSeconds: 0, todayExistedSeconds: 0, todayRunningSeconds: 0, day: localDay(before), phase: "idle", at: before.toISOString() },
+        }),
+      ],
+    })
+    f.clock.now = after
+    expect(await f.services.cost.budget(tag)).toMatchObject({ machineHours: { today: 0.5, cap: 0.75 }, state: "ok" })
+    await f.services.cost.assertBudget(tag)
+    f.clock.now = new Date(2026, 10, 17, 1, 30)
+    expect(await f.services.cost.budget(tag)).toMatchObject({ machineHours: { today: 1.5, cap: 0.75 }, state: "reached" })
+    await expect(f.services.cost.assertBudget(tag)).rejects.toMatchObject({ code: "BUDGET_REACHED" })
   })
 })
 

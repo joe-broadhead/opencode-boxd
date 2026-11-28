@@ -122,7 +122,7 @@ is the contract's whole set.
 | `PERMISSION_DENIED` | The access level or a session rule refused the call; change `access`, or ask the person to allow it. |
 | `UNAVAILABLE` | The machine, the CLI or the guest could not answer; read the sentence and its next step, then retry. A drop refused for unpushed commits says to push first. |
 | `INPUT_INVALID` | The input or the work id is not what the method describes; read the field the message names. |
-| `BUDGET_EXCEEDED` | Today's machine cost reached `budget.daily` with `action: "refuse"`; sleep or drop unused works, or raise the budget. |
+| `BUDGET_EXCEEDED` | Today's machine cost or machine-hours reached `budget.daily` or `budget.machineHours` with `action: "refuse"`; sleep or drop unused works, or raise the cap. |
 
 Run `/boxd` for the fleet, the cost and the one next step, and `boxd_status` from an agent session for the contract
 status.

@@ -243,6 +243,10 @@
               "type": "number",
               "exclusiveMinimum": 0
             },
+            "machineHours": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
             "action": {
               "type": "string",
               "enum": [
@@ -252,11 +256,22 @@
             }
           },
           "required": [
-            "daily",
             "action"
           ],
+          "anyOf": [
+            {
+              "required": [
+                "daily"
+              ]
+            },
+            {
+              "required": [
+                "machineHours"
+              ]
+            }
+          ],
           "additionalProperties": false,
-          "description": "Machine cost per day, warned about or refused at, in the organisation's billing currency."
+          "description": "Machine cost per day in the organisation's billing currency, or machine-hours this ledger's works may run per local day, warned about or refused at."
         }
       },
       "additionalProperties": false

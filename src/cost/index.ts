@@ -101,15 +101,57 @@ export function createCost(core: CostCore): CostInternals {
   }
   const today = async (call: CallTag) => todayOf(await todayUsage(call))
 
-  /** The budget compares the unrounded figure; `today` in the answer is rounded for display only. */
-  function budgetOf(day: Today): BudgetState | undefined {
+  /** Hours rounded to 3 decimals, a second of machine time, for the answer; the comparison uses the unrounded figure. */
+  const roundHours = (value: number) => Math.round(value * 1000) / 1000
+  const shownHours = (value: number) => `${roundHours(value).toFixed(2)} h`
+
+  /** The budget compares unrounded figures; the answer's figures are rounded for display only. */
+  function budgetOf(day: Today, hours: number): BudgetState | undefined {
     const option = core.options.budget
     if (!option) return undefined
-    const state = day.raw === null ? "unknown" : day.raw >= option.daily ? "reached" : "ok"
-    return { daily: option.daily, today: day.machines, action: option.action, state }
+    const money = option.daily === undefined ? undefined : day.raw === null ? "unknown" : day.raw >= option.daily ? "reached" : "ok"
+    const hoursState = option.machineHours === undefined ? undefined : hours >= option.machineHours ? "reached" : "ok"
+    const state: BudgetState["state"] = money === "reached" || hoursState === "reached" ? "reached" : money === "unknown" ? "unknown" : "ok"
+    return {
+      ...(option.daily === undefined ? {} : { daily: option.daily }),
+      today: option.daily === undefined ? null : day.machines,
+      ...(option.machineHours === undefined ? {} : { machineHours: { today: roundHours(hours), cap: option.machineHours } }),
+      action: option.action,
+      state,
+    }
   }
-  const budget = async (call: CallTag) => (core.options.budget ? budgetOf(await today(call)) : undefined)
-  const cachedBudget = () => (core.options.budget && usage && usage.day === localMidnight(now()) ? budgetOf(todayOf(usage.value)) : undefined)
+
+  /** Today's running hours over every work the ledger holds, closed ones included: a machine dropped today still ran. */
+  async function hoursToday(call: CallTag): Promise<number> {
+    const records = await core.ledger.list({ closed: true }, op(call))
+    const at = now()
+    const day = localDay(at)
+    return records.reduce((sum, record) => {
+      const hours = hoursAt(record, at)
+      // A work closed on an earlier day keeps that day's counters; they are not today's.
+      return hours.day === day ? sum + Math.max(0, hours.todayRunningSeconds) / 3600 : sum
+    }, 0)
+  }
+
+  const noUsage: Today = { machines: null, raw: null, currency: null, complete: false, estimated: false }
+
+  async function currentBudget(call: CallTag): Promise<{ readonly day: Today; readonly hours: number }> {
+    const option = core.options.budget
+    const hours = option?.machineHours === undefined ? 0 : await hoursToday(call)
+    const day = option?.daily === undefined ? noUsage : await today(call)
+    return { day, hours }
+  }
+
+  const budget = async (call: CallTag) => {
+    if (!core.options.budget) return undefined
+    const { day, hours } = await currentBudget(call)
+    return budgetOf(day, hours)
+  }
+  const cachedBudget = () => {
+    const option = core.options.budget
+    if (!option || option.machineHours !== undefined || !usage || usage.day !== localMidnight(now())) return undefined
+    return budgetOf(todayOf(usage.value), 0)
+  }
 
   /** Machine cost per work since the oldest open work was created, matched by machine id; null for a member. */
   async function perWork(works: readonly WorkSnapshot[], call: CallTag): Promise<Map<string, number> | null> {
@@ -197,16 +239,32 @@ export function createCost(core: CostCore): CostInternals {
     automation: () => automationState(core.options, sharedOf(port)),
     budget,
     async assertBudget(call) {
-      if (!core.options.budget) return
-      const day = await today(call)
-      const state = budgetOf(day)
-      if (!state || state.action !== "refuse" || state.state !== "reached") return
+      const option = core.options.budget
+      if (!option) return
+      const { day, hours } = await currentBudget(call)
+      const state = budgetOf(day, hours)
+      if (state?.action !== "refuse" || state.state !== "reached") return
       const currency = day.currency ?? currentRates().currency
       const estimate = day.estimated ? " (boxd's estimate)" : ""
+      const daily = option.daily
+      const cap = option.machineHours
+      const cost = day.machines
+      const money = daily !== undefined && day.raw !== null && cost !== null && day.raw >= daily
+      const machineHours = cap !== undefined && hours >= cap
+      const clauses = [
+        ...(money && daily !== undefined && cost !== null
+          ? [`today's machine cost${estimate}, ${currency} ${cost.toFixed(2)}, has reached the budget's daily limit of ${currency} ${daily.toFixed(2)}`]
+          : []),
+        ...(machineHours && cap !== undefined ? [`today's machine-hours, ${shownHours(hours)}, have reached the budget's limit of ${shownHours(cap)}`] : []),
+      ]
+      const sentence = clauses.join(", and ")
       throw boxdError(
         "BUDGET_REACHED",
-        `Today's machine cost${estimate}, ${currency} ${state.today!.toFixed(2)}, has reached the budget's daily limit of ${currency} ${state.daily.toFixed(2)}, and budget.action is refuse. A call that would make a machine run is refused.`,
-        { today: state.today, daily: state.daily, currency },
+        `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}, and budget.action is refuse. A call that would make a machine run is refused.`,
+        {
+          ...(money && daily !== undefined ? { today: cost, daily, currency } : {}),
+          ...(machineHours && cap !== undefined ? { machineHours: { today: roundHours(hours), cap } } : {}),
+        },
       )
     },
   }
