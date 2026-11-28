@@ -12,6 +12,7 @@ const DEFAULTS: Options = {
   keepFree: { fra: 0, nyc: 0 },
   keep: [],
   size: "2x8",
+  slotsPerMachine: 4,
   goldenPrefix: "oc-golden",
   goldenBase: "stock",
   warm: [],
@@ -38,6 +39,7 @@ describe("plugin options", () => {
     expect(parseOptions({ regions: ["fra"], region: "fra" })).toMatchObject({ regions: ["fra"], region: "fra" })
     expect(parseOptions({ regions: ["nyc"], region: "auto" })).toMatchObject({ regions: ["nyc"], region: "auto" })
     for (const size of ["1x4", "2x8", "4x16", "8x32"]) expect(parseOptions({ size })).toMatchObject({ size })
+    for (const slotsPerMachine of [1, 2, 12]) expect(parseOptions({ slotsPerMachine })).toMatchObject({ slotsPerMachine })
     for (const notices of ["wake", "queue", "off"]) expect(parseOptions({ notices })).toMatchObject({ notices })
     for (const buildGolden of ["auto", "never"]) expect(parseOptions({ buildGolden })).toMatchObject({ buildGolden })
     expect(parseOptions({ keepFree: { fra: 4 } })).toMatchObject({ keepFree: { fra: 4, nyc: 0 } })
@@ -84,6 +86,9 @@ describe("plugin options", () => {
       { regions: ["fra"], region: "nyc" },
       { size: "16x64" },
       { size: 4 },
+      { slotsPerMachine: 0 },
+      { slotsPerMachine: 1.5 },
+      { slotsPerMachine: "2" },
       { keepFree: { ams: 1 } },
       { keepFree: { fra: -1 } },
       { keepFree: { fra: 1.5 } },

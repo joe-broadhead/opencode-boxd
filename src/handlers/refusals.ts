@@ -75,6 +75,8 @@ export const CONTRACT_CODE: Readonly<Record<Code, ErrorCode>> = {
   LEDGER_LOCKED: "UNAVAILABLE",
   // Cost and cleanup.
   BUDGET_REACHED: "BUDGET_EXCEEDED",
+  SLOTS_FULL: "BUDGET_EXCEEDED",
+  SLOT_UNSUPPORTED: "UNAVAILABLE",
 }
 
 /** The contract code for a boxd code, or `UNAVAILABLE` for one the table above does not hold. */

@@ -13,6 +13,7 @@ Every option is optional. Set them under the plugin entry in `opencode.json`.
 | `keepFree` | object | `{"fra":0,"nyc":0}` | Machines auto leaves free in each region for the organisation's CI pool. |
 | `keep` | array | `[]` | Label selectors ("key=value", or a bare key) for machines owned elsewhere: a match is kept, never an orphan. |
 | `size` | `1x4` \| `2x8` \| `4x16` \| `8x32` | `"2x8"` | A new work's machine size, vCPU x GiB. |
+| `slotsPerMachine` | integer | `4` | The most open works one shared machine may hold. |
 | `git` | object | — | The guest's git identity for every new work. Never a token. |
 | `goldenPrefix` | string | `"oc-golden"` | Golden image names are <goldenPrefix>-<opencode version>-<size>. |
 | `goldenBase` | string | `"stock"` | What a golden build starts from: stock, or a snapshot name in the region it lives in. |
@@ -85,6 +86,9 @@ A project with a git identity and a machine budget that refuses rather than warn
 }
 ```
 
+- `slotsPerMachine` caps how many open works one shared machine may hold, 4 by default. A work joins a shared machine
+  with `boxd_ensure({ machine: "<name>" })`: the first work that names it creates `oc-shared-<name>` at that work's
+  region and size, later works join it, and a differing size or region is refused rather than resizing the machine.
 - `regions` is the placement allowlist for a new machine and a new golden image; a work that already lives in another
   region still converges, resumes and drops there.
 - `automation` is the plugin's own harvest-and-hibernate of finished works. `auto` means on at `access: "all"` and off

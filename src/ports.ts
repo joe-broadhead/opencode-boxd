@@ -47,6 +47,8 @@ export type MachineName = `oc-${string}`
 export const WORK_LABELS = { role: "session", owner: "boxd" } as const
 /** The label key that names the ledger that registered a work's machine; its value is `LedgerPort.id`. */
 export const LEDGER_LABEL = "ledger"
+/** The label key that names a shared machine; its value is the short name its works give in `machine`. */
+export const SHARED_LABEL = "shared"
 /** The label a golden builder carries; restores inherit it under the work's own `role=session`. */
 export const BUILDER_LABELS = { role: "golden-builder" } as const
 
@@ -353,6 +355,11 @@ export interface CreateWork {
   readonly region: Region
   readonly name: MachineName
   readonly workId: string
+  /**
+   * Set when the work takes a slot on a shared machine: the short name, so the machine is `oc-shared-<name>` and carries
+   * `owner=boxd`, `shared=<name>` and the ledger label instead of `work=<id>`.
+   */
+  readonly shared?: string
   /** The id of the ledger that registers this work, set as the `ledger` label. */
   readonly ledger: string
   readonly image: string
