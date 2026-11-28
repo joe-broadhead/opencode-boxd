@@ -50,8 +50,8 @@ labels. Any other orphan is listed with the next step "label it, or add a select
 `boxd_ensure({ select: "orphans" })` adopts every actionable orphan: it reads the guest's `describe`, writes a record
 from the machine's own folder, repository and root session, and sets this ledger's labels. It changes nothing on the
 machine's tree, OpenCode or sessions: no setup, clone, upgrade or resize. A busy orphan, or one waiting on a person, is
-adopted and left running. An orphan whose `describe` fails is skipped with its error, and no record is written from a
-guess.
+adopted and left running. A hibernated orphan is woken for the read and left running. An orphan whose `describe` fails is
+skipped with its error, and no record is written from a guess.
 
 ## What is cached
 

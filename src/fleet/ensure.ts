@@ -1040,7 +1040,11 @@ async function adoptOrphan(machines: Machines, item: Classified, context: ItemCo
   }
   if (row.sharing === "shared") return skippedOrphan(item, "it is shared with the organisation", "leave it: a shared machine loses its guest sign-in when shared")
   if (row.isolated) return skippedOrphan(item, "it is isolated", "leave it: an isolated machine has no git integration or in-VM CLI")
-  const id = row.id ?? (await boxd.get(row.region, row.name, op)).id
+  // The listing carries sharing but not isolation (U14): read the machine itself before taking it over.
+  const found = await boxd.get(row.region, row.name, op)
+  const id = found.id
+  if (found.sharing === "shared") return skippedOrphan(item, "it is shared with the organisation", "leave it: a shared machine loses its guest sign-in when shared")
+  if (found.isolated) return skippedOrphan(item, "it is isolated", "leave it: an isolated machine has no git integration or in-VM CLI")
   const holder = records.find((record) => record.machineId === id)
   if (holder) return skippedOrphan(item, `machine ${id} is what the open work ${holder.workId} records`, `boxd_ensure({ workId: ${JSON.stringify(holder.workId)} }) converges it`)
 
@@ -1112,7 +1116,7 @@ async function adoptOrphans(machines: Machines, input: Record<string, unknown>, 
   const orphans = classifyMachines(listing.machines, records, ledgerId, options.keep).filter((item) => item.machineClass === "orphan")
   const dryRun = input.dryRun === true
   if (dryRun) {
-    const results = orphans.map((item) => skippedOrphan(item, item.actionable && item.workId ? "an actionable orphan; it would be adopted" : classReason(item), item.actionable ? undefined : "label it, or add a selector to keep"))
+    const results = orphans.map((item) => skippedOrphan(item, item.actionable && item.workId ? "an actionable orphan; the call checks its machine and record before adopting" : classReason(item), item.actionable ? undefined : "label it, or add a selector to keep"))
     const counts: Record<string, number> = {}
     for (const result of results) counts[result.state] = (counts[result.state] ?? 0) + 1
     return { state: "done", counts, results, select: "orphans", dryRun: true }
