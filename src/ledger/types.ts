@@ -28,6 +28,8 @@ export const LEDGER_PATHS = {
   index: "v1/index.json",
   /** The automation owner's lock (design §C.3): only its holder auto-harvests, auto-sleeps and renews leases. */
   automationLock: "automation.lock",
+  /** One process copies the ledger to its registry at a time. */
+  registryLock: "registry.lock",
   /** The ledger's own id, made once; every work's machine carries it as its `ledger` label. */
   id: "ledger-id",
 } as const

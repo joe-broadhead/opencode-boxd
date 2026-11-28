@@ -6,8 +6,8 @@
  */
 import { boxdError } from "../../errors.js"
 import { machineWorkLabels } from "../../names.js"
-import type { ChangeTarget, CreateBuilder, CreateWork, MachineId, MachineName, Region, Size } from "../../ports.js"
-import { LABEL_VALUE, LEDGER_LABEL, SHARED_LABEL, SIZE_VCPU, WORK_LABELS } from "../../ports.js"
+import type { ChangeTarget, CreateBuilder, CreateRegistry, CreateWork, MachineId, MachineName, Region, Size } from "../../ports.js"
+import { LABEL_VALUE, LEDGER_LABEL, REGISTRY_LABELS, REGISTRY_PREFIX, SHARED_LABEL, SIZE_VCPU, WORK_LABELS } from "../../ports.js"
 
 const WORK_ID = /^[a-z][a-z0-9-]{0,24}$/
 const SNAPSHOT = /^[a-z0-9][a-z0-9._-]{0,63}$/
@@ -105,6 +105,14 @@ export function createBuilderArgs(input: CreateBuilder): string[] {
   ]
 }
 
+/** The registry machine: no image, no size and no delete timer, so boxd's own auto-hibernate default stays. */
+export function createRegistryArgs(input: CreateRegistry): string[] {
+  if (!/^[0-9a-f]{10}$/.test(input.ledger) || input.name !== `${REGISTRY_PREFIX}${input.ledger}`) {
+    throw invalid(`A registry machine is ${REGISTRY_PREFIX}<ledger id>, not ${input.name}.`)
+  }
+  return ["machine", "new", machineArg(input.name), "--region", input.region, ...labelArgs({ ...REGISTRY_LABELS, [LEDGER_LABEL]: input.ledger }), "--json"]
+}
+
 const byId = (verb: string, target: ChangeTarget, ...rest: string[]) => ["machine", verb, idArg(target.machineId), ...rest, "--region", target.region]
 
 export const wakeArgs = (target: ChangeTarget) => [...byId("wake", target), "--json"]
@@ -127,6 +135,12 @@ export function leaseArgs(target: ChangeTarget, days: number): string[] {
   return ["machine", "config", "set", idArg(target.machineId), "delete-after", `${days}d`, "--region", target.region]
 }
 
+/** A backup period is a boxd duration such as 24h; off is not a period this plugin sets. */
+export function backupsArgs(target: ChangeTarget, period: string): string[] {
+  if (!/^\d+[smhd]$|^\d+h\d+m$/.test(period)) throw invalid(`"${period}" is not a boxd duration such as 24h.`)
+  return ["machine", "config", "set", idArg(target.machineId), "backups.period", period, "--region", target.region]
+}
+
 /**
  * `machine exec` with boxd's own timeout, so boxd kills the remote side too. The command is one argument after `--`:
  * the remote side runs it through a shell. `--json` merges stdout and stderr into one `output`, so `boxd_exec` leaves
@@ -141,6 +155,16 @@ export function execArgs(region: Region, machine: MachineName, command: string, 
 export const copyToArgs = (region: Region, machine: MachineName, localPath: string, guestPath: string) => [
   "machine",
   "cp",
+  localPath,
+  `${machineArg(machine)}:${guestPathArg(guestPath)}`,
+  "--region",
+  region,
+]
+
+export const copyTreeArgs = (region: Region, machine: MachineName, localPath: string, guestPath: string) => [
+  "machine",
+  "cp",
+  "-r",
   localPath,
   `${machineArg(machine)}:${guestPathArg(guestPath)}`,
   "--region",

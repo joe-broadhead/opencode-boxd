@@ -5,9 +5,12 @@ import { describe, expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import {
+  backupsArgs,
   copyFromArgs,
   copyToArgs,
+  copyTreeArgs,
   createBuilderArgs,
+  createRegistryArgs,
   createWorkArgs,
   envListArgs,
   execArgs,
@@ -47,6 +50,7 @@ const CASES: ReadonlyArray<readonly [string, string, readonly string[]]> = [
   ["new work with a lease", "machine new", createWorkArgs({ ...work, leaseDays: 3 })],
   ["new builder from stock", "machine new", createBuilderArgs(builder)],
   ["new builder from a snapshot", "machine new", createBuilderArgs({ ...builder, base: { snapshot: "my-base" } })],
+  ["new registry", "machine new", createRegistryArgs({ kind: "registry", region: "fra", name: "oc-reg-0a1b2c3d4e", ledger: "0a1b2c3d4e" })],
   ["wake", "machine wake", wakeArgs(target)],
   ["hibernate", "machine hibernate", hibernateArgs(target)],
   ["remove", "machine remove", removeArgs(target)],
@@ -55,9 +59,11 @@ const CASES: ReadonlyArray<readonly [string, string, readonly string[]]> = [
   ["rename", "machine rename", renameArgs(target, "oc-renamed")],
   ["label set", "machine label set", labelSetArgs(target, "team", "data")],
   ["lease", "machine config set", leaseArgs(target, 2)],
+  ["backups", "machine config set", backupsArgs(target, "24h")],
   ["exec", "machine exec", execArgs("fra", "oc-review-api", "git status --short", 60, true)],
   ["exec without json", "machine exec", execArgs("fra", "oc-review-api", "echo hi", 30, false)],
   ["copy to", "machine cp", copyToArgs("fra", "oc-review-api", "guest.py", "/home/boxd/.boxd-plugin-upload.py")],
+  ["copy tree", "machine cp", copyTreeArgs("fra", "oc-review-api", "untracked", "/home/boxd/.boxd-plugin/registry/untracked")],
   ["copy from", "machine cp", copyFromArgs("fra", "oc-review-api", "/home/boxd/.boxd-plugin/exports/ses_a.json", "x.tmp")],
   ["machine limit", "manage machine-limit", machineLimitArgs()],
   ["usage", "manage usage", usageArgs("24h")],

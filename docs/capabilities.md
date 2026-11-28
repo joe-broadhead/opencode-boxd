@@ -95,8 +95,13 @@ None.
   a slot on a shared machine records them in the ledger only. A rebuild through `boxd_resume` keeps them on the new
   machine. `boxd_job` and the status works list return them, and an adopted orphan's `work.*` labels are read back into
   its record.
-- **Orphans.** The fleet status classifies every machine as a work here, another ledger's work, kept by a `keep` selector,
-  a golden builder, or an orphan with its reason and whether the plugin may act on it. `ensure` with
+- **The registry.** The watcher keeps a durable copy of the ledger on `oc-reg-<ledgerId>`, made on first need in the
+  first work's region with daily disk backups. It copies the `ledger-id` file, records, exports, patches and
+  `untracked/` sets whose digest changed, never locks. `/boxd` shows the machine, the time of the last complete copy,
+  the works it holds and a warning when the copy failed or is more than one sweep behind.
+- **Orphans.** The fleet status classifies every machine as a work here, this ledger's registry, another ledger's work,
+  kept by a `keep` selector, a golden builder, or an orphan with its reason and whether the plugin may act on it.
+  `ensure` with
   `{ select: "orphans" }` adopts every actionable orphan: it reads the guest's `describe`, writes a record and sets this
   ledger's labels, without setup, clone, upgrade or resize. A busy or waiting orphan is adopted and left running; a
   hibernated orphan is woken for the read and left running. One whose `describe` fails is skipped with its error.
@@ -104,8 +109,9 @@ None.
   can print a secret that is not host-bound.
 - **`drop`** is class `delete`. It refuses unless the work is saved, its git tree is known, every untracked or ignored
   path was harvested, and every commit on a local branch, tag, stash or detached HEAD is on a remote ref.
-- **The budget.** `budget.daily` caps today's machine cost; `budget.machines` caps this ledger's machines and
-  `budget.orgMachines` caps the organisation's count, both from the all-region listing and without an owner's sign-in.
+- **The budget.** `budget.daily` caps today's machine cost; `budget.machines` caps this ledger's works (not its
+  registry machine) and `budget.orgMachines` caps the organisation's count, both from the all-region listing and without
+  an owner's sign-in.
   `ensure`, and `resume` when it rebuilds, refuse before a create at a reached cap under `action: "refuse"`, and warn
   `BUDGET_WARN` under `"warn"`. A wake never counts as a new machine. `budget.labels` holds one entry per label,
   `{ match, machines?, machineHours?, daily? }`, where `match` is one `product`, `role`, `feature` or `task` label. A
@@ -124,6 +130,7 @@ ledger:
 | Class | What it means |
 |---|---|
 | a work in this ledger | an open record names the machine, by its id or its `oc-<work id>` name |
+| a registry machine | its `role` is `registry`, or its name starts with `oc-reg-`; never an orphan and never adoptable |
 | a work in another ledger | its `ledger=` label names a ledger other than this one |
 | kept | it matches a selector in the `keep` option |
 | a golden builder | its `role` is `golden-builder`, or its name starts with `oc-gb-` |

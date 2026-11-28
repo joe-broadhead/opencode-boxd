@@ -28,6 +28,7 @@ import { checkTarget, NoticeQueue, type DroppedNotice, type GoneCause } from "./
 import type { DoneReport, FleetSnapshot, FleetWatch, Listing, OpContext, WorkEvent, WorkSnapshot } from "./ports.js"
 import { TIMEOUTS } from "./ports.js"
 import { reasonOf } from "./redact.js"
+import { createRegistry, type Registry } from "./registry/index.js"
 import type { CoreServices, Dispose } from "./services.js"
 
 /** The sweep's interval, and the local tick's. */
@@ -52,6 +53,8 @@ export interface WatchHandle {
   health(): { readonly notices: readonly DroppedNotice[]; readonly watcher?: string }
   /** Why a work is an orphan: its coordinator session is gone, archived or under another session (§3.13, §C.3). */
   orphaned(workId: string): WorkSnapshot["orphaned"]
+  /** The ledger's durable copy on its registry machine, once a copy was attempted. */
+  registry(): ReturnType<Registry["status"]>
 }
 
 const handles = new WeakMap<FleetWatch, WatchHandle>()
@@ -71,6 +74,7 @@ export interface Watcher {
   readonly watch: FleetWatch
   readonly dispose: Dispose
   readonly handle: WatchHandle
+  readonly registry: Registry
   /** One tick now: the local read, and a sweep when there is something to watch. */
   tick(): Promise<void>
   /** Posts the notices that are due now. */
@@ -112,8 +116,11 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
   let stopped = !auto
   let disposed = false
   let lastSweepMs = 0
+  /** Whether the sweep that just ran saw its listing and finished: a failed one leaves the registry copy for the next. */
+  let sweepSucceeded = true
   let current: Promise<void> | undefined
   let calls = 0
+  const registry = createRegistry(core)
 
   const notices = new NoticeQueue({
     mode: () => core.options.notices,
@@ -332,6 +339,7 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
 
   async function sweep(open: readonly WorkRecord[], op: OpContext): Promise<number> {
     const started = Date.now()
+    sweepSucceeded = false
     let listing: Listing
     try {
       listing = await core.boxd.list({ maxAgeMs: TIMEOUTS.readListingMaxAgeMs }, op)
@@ -400,6 +408,7 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
     }
     await checkTargets(open)
     lastSweepMs = Date.now() - started
+    sweepSucceeded = true
     return appended
   }
 
@@ -444,6 +453,7 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
         clearOrphans()
         events += await sync(op)
         const open = list.filter((record) => record.state === "open")
+        sweepSucceeded = true
         if (!(auto && stopped) && wantsSweep(open)) {
           notices.hold()
           try {
@@ -452,6 +462,8 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
             notices.release()
           }
         }
+        // A failed listing leaves the registry copy for the next sweep: one failure does not become two.
+        if (sweepSucceeded) await registry.sync(op)
       } catch (error) {
         if (!abort.signal.aborted) core.report("watch", `The watcher's tick failed: ${reasonOf(error)}.`)
       } finally {
@@ -494,6 +506,7 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
     },
     health: () => ({ notices: notices.dropped(), ...(problem ? { watcher: problem } : {}) }),
     orphaned: (workId) => orphans.get(workId),
+    registry: () => registry.status(),
   }
 
   const watch: FleetWatch = {
@@ -540,6 +553,7 @@ export function createWatch(core: CoreServices, options: WatchOptions = {}): Wat
   return {
     watch,
     handle,
+    registry,
     tick,
     flushNotices: () => notices.flushDue(),
     dispose: async () => {
