@@ -284,6 +284,36 @@
               "type": "integer",
               "minimum": 0
             },
+            "labels": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "match": {
+                    "type": "string",
+                    "pattern": "^(product|role|feature|task)=[A-Za-z0-9._/@:-]{1,63}$"
+                  },
+                  "machines": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "machineHours": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "daily": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  }
+                },
+                "required": [
+                  "match"
+                ],
+                "additionalProperties": false
+              },
+              "description": "Caps for the works that carry one label, each { match, machines?, machineHours?, daily? }, where match is \"product=value\", \"role=value\", \"feature=value\" or \"task=value\". A work is held to every entry its labels match."
+            },
             "action": {
               "type": "string",
               "enum": [
@@ -315,10 +345,15 @@
               "required": [
                 "orgMachines"
               ]
+            },
+            {
+              "required": [
+                "labels"
+              ]
             }
           ],
           "additionalProperties": false,
-          "description": "Machine cost per day, machine-hours and machine caps, warned about or refused at: daily in the organisation's billing currency, machine-hours this ledger's works may run per local day, machines this ledger may hold, and the organisation's machine count."
+          "description": "Machine cost per day, machine-hours and machine caps, warned about or refused at: daily in the organisation's billing currency, machine-hours this ledger's works may run per local day, machines this ledger may hold, the organisation's machine count, and caps by work label."
         }
       },
       "additionalProperties": false

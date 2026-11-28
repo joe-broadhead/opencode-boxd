@@ -18,7 +18,7 @@
 import type { Plugin } from "@opencode/plugin"
 import type { Phase, SavedState } from "./ledger/types.js"
 import type { Options } from "./options.js"
-import type { BoxdPort, CallTag, FleetWatch, GuestPort, LaptopPort, LedgerPort, Listing, Runner } from "./ports.js"
+import type { BoxdPort, CallTag, FleetWatch, GuestPort, LaptopPort, LedgerPort, Listing, Runner, WorkLabels } from "./ports.js"
 import type { AutomationState, BudgetState, CleanupAction, CostBlock, HarvestResult, ListResult, Refusal, SleepResult, ToolResults } from "./results.js"
 import type { CallContext } from "./call.js"
 
@@ -157,7 +157,17 @@ export interface CostPort {
    * `budget.action` is `refuse` and either machine cap is reached. `inFlight` counts this process's creates the listing
    * cannot show yet. Waking an existing machine never calls this.
    */
-  assertCreateBudget(context: CallTag, facts?: { readonly listing?: Listing; readonly inFlight?: number }): Promise<void>
+  assertCreateBudget(
+    context: CallTag,
+    facts?: {
+      readonly listing?: Listing
+      readonly inFlight?: number
+      /** The work's labels, so a `budget.labels` entry that matches it is checked beside the ledger's caps. */
+      readonly labels?: WorkLabels
+      /** Whether this create makes a new machine; a slot work joining a shared one does not. */
+      readonly createsMachine?: boolean
+    },
+  ): Promise<void>
 }
 
 // A phase and a saved state are part of the status report's vocabulary; re-exported so a handler needs one import.

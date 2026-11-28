@@ -145,6 +145,25 @@ function orphansText(machines: StatusResult["machines"]): string {
   return `${items.join("; ")}${machines.more ? `; and ${machines.more} more` : ""}`
 }
 
+/** The budget's caps and their use, including each `budget.labels` entry. */
+function budgetText(budget: StatusResult["budget"], currency: string): string | undefined {
+  if (!budget) return undefined
+  const parts: string[] = []
+  if (budget.daily !== undefined) parts.push(`today ${budget.today === null ? "unknown" : money(budget.today, currency)} of ${money(budget.daily, currency)}`)
+  if (budget.machineHours) parts.push(`${budget.machineHours.today.toFixed(2)} of ${budget.machineHours.cap.toFixed(2)} h today`)
+  if (budget.machines) parts.push(`${budget.machines.inUse} of ${budget.machines.limit} machines`)
+  if (budget.orgMachines) parts.push(`${budget.orgMachines.inUse} of ${budget.orgMachines.limit} organisation machines`)
+  for (const label of budget.labels ?? []) {
+    const uses = [
+      ...(label.machines ? [`${label.machines.inUse} of ${label.machines.limit} machines`] : []),
+      ...(label.machineHours ? [`${label.machineHours.today.toFixed(2)} of ${label.machineHours.cap.toFixed(2)} h today`] : []),
+      ...(label.daily ? [`${money(label.daily.perDay, currency)} of ${money(label.daily.cap, currency)} per day`] : []),
+    ]
+    parts.push(`${label.match}: ${uses.join(", ")}`)
+  }
+  return `${parts.join("; ")}${budget.state === "reached" ? " (reached)" : budget.state === "unknown" ? " (partly unknown)" : ""}`
+}
+
 function automationText(automation: AutomationState | undefined, notices: Options["notices"]): string {
   const what =
     automation === "on"
@@ -196,6 +215,7 @@ function reportText(input: ReportInput): string {
     `- Machine classes: ${value ? (value.cli.signedIn ? machineClassesText(value.machines.counts) : "not read: the machine listing failed") : "not read"}`,
     `- Orphans: ${value ? (value.cli.signedIn ? orphansText(value.machines) : "not read: the machine listing failed") : "not read"}`,
     `- Cost: ${costText(value?.cost)}`,
+    ...(value?.budget ? [`- Budget: ${budgetText(value.budget, value.cost.currency) ?? "not read"}`] : []),
     `- Automation: ${automationText(value?.automation, sources.options.notices)}`,
     `- Health: event-loop delay at most ${value?.health.loopLagMaxMs ?? 0} ms; ${value?.health.children.now ?? 0} of ${value?.health.children.cap ?? CAPS.shared} boxd processes`,
     `- Agents without default rules: ${agents}`,

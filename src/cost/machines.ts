@@ -6,7 +6,8 @@
  * one create seen by both is never counted twice. Package E owns this file.
  */
 import type { WorkRecord } from "../ledger/types.js"
-import type { Listing } from "../ports.js"
+import type { BudgetLabelMatch } from "../options.js"
+import { LEDGER_LABEL, type Listing, type WorkLabels } from "../ports.js"
 
 export interface MachineCounts {
   /** The machines this ledger holds: its labelled machines and its creates not in the listing yet. */
@@ -47,4 +48,26 @@ export function machineCounts(listing: Listing, ledgerId: string, pending: reado
   const creating = Math.max(inFlight, pendingCreates)
   // A pending create is already in `ledgerNames`; only an in-flight create without a record yet is still missing.
   return { ledger: ledgerNames.size + (creating - pendingCreates), org: listed.length + creating }
+}
+
+/** Whether a work's labels carry the cap's one label. */
+export const matchesLabel = (labels: WorkLabels | undefined, match: BudgetLabelMatch): boolean => labels?.[match.key] === match.value
+
+/**
+ * The machines this ledger's works with one label hold now, from its open records and a listed machine that carries
+ * both this ledger's `ledger` label and the work label. A machine several slot works share is counted once, and another
+ * ledger's matching machine is not counted.
+ */
+export function labelMachineCount(listing: Listing, records: readonly WorkRecord[], ledgerId: string, match: BudgetLabelMatch): number {
+  const keys = new Set<string>()
+  for (const record of records) {
+    if (record.state !== "open" || record.region === null || !matchesLabel(record.labels, match)) continue
+    keys.add(`${record.region}/${record.machine}`)
+  }
+  const label = `work.${match.key}`
+  for (const machine of listing.machines) {
+    if (machine.status === "destroyed" || machine.labels[LEDGER_LABEL] !== ledgerId || machine.labels[label] !== match.value) continue
+    keys.add(`${machine.region}/${machine.name}`)
+  }
+  return keys.size
 }

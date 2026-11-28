@@ -35,9 +35,11 @@ export interface ErrorFacts {
   /** `BUDGET_REACHED`: today's running hours and the ledger's cap. */
   readonly machineHours?: { readonly today: number; readonly cap: number }
   /** `BUDGET_REACHED` for a machine cap: which cap, the count and the cap. */
-  readonly scope?: "machines" | "orgMachines"
+  readonly scope?: "machines" | "orgMachines" | "labels"
   readonly inUse?: number
   readonly cap?: number
+  /** `BUDGET_REACHED` for a label cap: the `budget.labels` match it names. */
+  readonly match?: string
 }
 
 /** A refusal or failure, in the shape of any answer. */
@@ -232,6 +234,18 @@ export interface BudgetMachineCount {
   readonly limit: number
 }
 
+/** One `budget.labels` cap with the figures it is measured against. */
+export interface BudgetLabelState {
+  readonly match: string
+  /** The matching works' machines against the cap. */
+  readonly machines?: BudgetMachineCount
+  /** The matching works' today's running hours against the cap. */
+  readonly machineHours?: { readonly today: number; readonly cap: number }
+  /** The matching works' estimated cost per day against the cap. */
+  readonly daily?: { readonly perDay: number; readonly cap: number }
+  readonly state: "ok" | "reached" | "unknown"
+}
+
 export interface BudgetState {
   /** The money cap, only with `budget.daily`. */
   readonly daily?: number
@@ -243,6 +257,8 @@ export interface BudgetState {
   readonly machines?: BudgetMachineCount
   /** `budget.orgMachines` and the organisation's machine count; absent when `budget.orgMachines` is not set. */
   readonly orgMachines?: BudgetMachineCount
+  /** Each `budget.labels` cap with its use; absent when the option sets none. */
+  readonly labels?: readonly BudgetLabelState[]
   readonly action: "warn" | "refuse"
   /** `reached` when any configured cap is at its value, `unknown` when a configured cap cannot be measured. */
   readonly state: "ok" | "reached" | "unknown"

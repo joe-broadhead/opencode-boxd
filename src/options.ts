@@ -1,6 +1,6 @@
 import { boxdError } from "./errors.js"
 import { assertRef, assertSnapshot, normaliseRepo } from "./names.js"
-import { REGIONS, SIZES, type Region, type Size } from "./ports.js"
+import { LABEL_VALUE, REGIONS, SIZES, WORK_LABEL_KEYS, type Region, type Size, type WorkLabelKey } from "./ports.js"
 
 export type Access = "all" | "ask-changes" | "read-only"
 export const ACCESS_VALUES: readonly Access[] = ["all", "ask-changes", "read-only"]
@@ -11,6 +11,17 @@ export type BuildGolden = "auto" | "never"
 export type Notices = "wake" | "queue" | "off"
 /** `auto`: on at `access: "all"`, off otherwise; `on`: the person's standing consent at every level; `off`: never. */
 export type Automation = "auto" | "on" | "off"
+/** One budget cap for the works that carry one label, such as `{ match: "product=alpha", machines: 6 }`. */
+export interface BudgetLabel {
+  /** One label as `key=value`, with a key of product, role, feature or task. */
+  readonly match: string
+  /** The most machines the matching works may hold. */
+  readonly machines?: number
+  /** The machine-hours the matching works may run in one local day. */
+  readonly machineHours?: number
+  /** The matching works' estimated cost per day, in the organisation's billing currency. */
+  readonly daily?: number
+}
 export interface Budget {
   /** Machine cost per day, in the organisation's billing currency, when set. */
   readonly daily?: number
@@ -20,7 +31,25 @@ export interface Budget {
   readonly machines?: number
   /** The organisation's machine count at which this plugin stops creating, below boxd's own limit. */
   readonly orgMachines?: number
+  /** Caps for the works that carry a label, each checked beside the ledger's own caps. */
+  readonly labels?: readonly BudgetLabel[]
   readonly action: "warn" | "refuse"
+}
+
+/** A parsed `budget.labels` match: the label's key and value. */
+export interface BudgetLabelMatch {
+  readonly key: WorkLabelKey
+  readonly value: string
+}
+
+/** Parses `key=value` for a label cap; undefined when it is not one of the four work labels. */
+export function budgetLabelMatch(match: string): BudgetLabelMatch | undefined {
+  const at = match.indexOf("=")
+  if (at <= 0) return undefined
+  const key = match.slice(0, at)
+  const value = match.slice(at + 1)
+  if (!(WORK_LABEL_KEYS as readonly string[]).includes(key) || value === "" || !LABEL_VALUE.test(value)) return undefined
+  return { key: key as WorkLabelKey, value }
 }
 
 /** A repository whose checkout, toolchain and dependencies a warm image carries. */
@@ -137,7 +166,7 @@ const ACCEPTED = {
   orphanHours: "a whole number of hours, 1 or more (12 by default)",
   leaseDays: "a whole number of days, 0 or more (0, off, by default)",
   budget:
-    'an object with "action" ("warn" or "refuse") and at least one positive cap: "daily" in the organisation\'s billing currency, "machineHours" in this ledger\'s running hours per local day, "machines" this ledger may hold, or "orgMachines", the organisation\'s machine count',
+    'an object with "action" ("warn" or "refuse") and at least one positive cap: "daily" in the organisation\'s billing currency, "machineHours" in this ledger\'s running hours per local day, "machines" this ledger may hold, "orgMachines", the organisation\'s machine count, or "labels", an array of { match, machines?, machineHours?, daily? } with match one "product=value", "role=value", "feature=value" or "task=value" label',
 } as const satisfies Record<keyof Options, string>
 
 const EXAMPLE = `"plugins": [{ "package": "github:we-the-rebel-alliance/boxd-plugin#v<version>", "options": { "region": "auto", "size": "2x8" } }]`
@@ -249,21 +278,57 @@ export function parseOptions(raw: unknown): Options {
   if (input.budget !== undefined) {
     const raw = input.budget
     if (!isObject(raw)) throw wrong("budget", raw)
-    const keys = ["action", "daily", "machineHours", "machines", "orgMachines"]
+    const keys = ["action", "daily", "machineHours", "machines", "orgMachines", "labels"]
     if (Object.keys(raw).some((key) => !keys.includes(key))) throw wrong("budget", raw)
     if (raw.daily !== undefined && (typeof raw.daily !== "number" || !Number.isFinite(raw.daily) || raw.daily <= 0)) throw wrong("budget", raw)
     if (raw.machineHours !== undefined && (typeof raw.machineHours !== "number" || !Number.isFinite(raw.machineHours) || raw.machineHours <= 0)) throw wrong("budget", raw)
-    if (raw.daily === undefined && raw.machineHours === undefined && raw.machines === undefined && raw.orgMachines === undefined) {
-      throw invalid('The option "budget" must set at least one of "daily", "machineHours", "machines" or "orgMachines"')
-    }
     if (typeof raw.action !== "string" || !(BUDGET_ACTIONS as readonly string[]).includes(raw.action)) throw wrong("budget", raw)
     const count = (value: unknown) => value === undefined || (typeof value === "number" && Number.isInteger(value) && value >= 0)
     if (!count(raw.machines) || !count(raw.orgMachines)) throw wrong("budget", raw)
+    let labelCaps: BudgetLabel[] | undefined
+    if (raw.labels !== undefined) {
+      if (!Array.isArray(raw.labels) || raw.labels.length === 0) {
+        throw invalid('The option "budget.labels" must be a non-empty array of { match, machines?, machineHours?, daily? } caps')
+      }
+      const seen = new Set<string>()
+      labelCaps = raw.labels.map((entry, index) => {
+        const at = `The option "budget.labels" item ${index + 1}`
+        if (!isObject(entry) || Object.keys(entry).some((key) => !["match", "machines", "machineHours", "daily"].includes(key))) {
+          throw invalid(`${at} must be an object with "match" and any of "machines", "machineHours" or "daily"`)
+        }
+        const match = entry.match
+        if (typeof match !== "string" || budgetLabelMatch(match) === undefined) {
+          throw invalid(`${at} "match" must be one label as "key=value", with a key of "product", "role", "feature" or "task" and a boxd label value, found ${describe(match)}`)
+        }
+        if (seen.has(match)) throw invalid(`${at} repeats the label "${match}"; name each label once`)
+        seen.add(match)
+        if (entry.machines !== undefined && (typeof entry.machines !== "number" || !Number.isInteger(entry.machines) || entry.machines < 0)) throw invalid(`${at} "machines" must be a whole number of machines, 0 or more`)
+        if (entry.machineHours !== undefined && (typeof entry.machineHours !== "number" || !Number.isFinite(entry.machineHours) || entry.machineHours <= 0)) {
+          throw invalid(`${at} "machineHours" must be a positive number of hours`)
+        }
+        if (entry.daily !== undefined && (typeof entry.daily !== "number" || !Number.isFinite(entry.daily) || entry.daily <= 0)) {
+          throw invalid(`${at} "daily" must be a positive amount in the organisation's billing currency`)
+        }
+        if (entry.machines === undefined && entry.machineHours === undefined && entry.daily === undefined) {
+          throw invalid(`${at} must set at least one of "machines", "machineHours" or "daily"`)
+        }
+        return {
+          match,
+          ...(entry.machines !== undefined ? { machines: entry.machines as number } : {}),
+          ...(entry.machineHours !== undefined ? { machineHours: entry.machineHours as number } : {}),
+          ...(entry.daily !== undefined ? { daily: entry.daily as number } : {}),
+        }
+      })
+    }
+    if (raw.daily === undefined && raw.machineHours === undefined && raw.machines === undefined && raw.orgMachines === undefined && labelCaps === undefined) {
+      throw invalid('The option "budget" must set at least one of "daily", "machineHours", "machines", "orgMachines" or "labels"')
+    }
     budget = {
       ...(raw.daily !== undefined ? { daily: raw.daily as number } : {}),
       ...(raw.machineHours !== undefined ? { machineHours: raw.machineHours as number } : {}),
       ...(raw.machines !== undefined ? { machines: raw.machines as number } : {}),
       ...(raw.orgMachines !== undefined ? { orgMachines: raw.orgMachines as number } : {}),
+      ...(labelCaps ? { labels: labelCaps } : {}),
       action: raw.action as Budget["action"],
     }
   }

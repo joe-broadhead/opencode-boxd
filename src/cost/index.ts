@@ -11,12 +11,13 @@
  */
 import { boxdError } from "../errors.js"
 import { hoursAt, localDay } from "../ledger/hours.js"
-import type { Budget } from "../options.js"
+import type { WorkRecord } from "../ledger/types.js"
+import { budgetLabelMatch, type Budget, type BudgetLabel } from "../options.js"
 import { TIMEOUTS, type CallTag, type FleetWatch, type Listing, type OpContext, type Rates, type Usage, type WorkSnapshot } from "../ports.js"
-import type { BudgetState, CleanupAction, CostBlock, CostHours } from "../results.js"
+import type { BudgetLabelState, BudgetState, CleanupAction, CostBlock, CostHours } from "../results.js"
 import type { CoreServices, CostPort } from "../services.js"
-import { figures, suggestions } from "./fleet.js"
-import { machineCounts, type MachineCounts } from "./machines.js"
+import { figures, suggestions, workPerHour } from "./fleet.js"
+import { labelMachineCount, machineCounts, matchesLabel, type MachineCounts } from "./machines.js"
 import { basis, money, PUBLIC_RATES } from "./rates.js"
 import { automationState, sharedOf } from "./shared.js"
 
@@ -119,12 +120,12 @@ export function createCost(core: CostCore): CostInternals {
   const shownHours = (value: number) => `${roundHours(value).toFixed(2)} h`
 
   /** The budget compares unrounded figures; the answer's figures are rounded for display only. */
-  function budgetState(option: Budget, day: Today, hours: number, counts: MachineCounts | undefined): BudgetState {
+  function budgetState(option: Budget, day: Today, hours: number, counts: MachineCounts | undefined, labels: readonly BudgetLabelState[] | undefined): BudgetState {
     const money = option.daily === undefined ? "ok" : day.raw === null ? "unknown" : day.raw >= option.daily ? "reached" : "ok"
     const hoursState = option.machineHours === undefined ? "ok" : hours >= option.machineHours ? "reached" : "ok"
     const machines = option.machines === undefined ? "ok" : counts === undefined ? "unknown" : counts.ledger >= option.machines ? "reached" : "ok"
     const orgMachines = option.orgMachines === undefined ? "ok" : counts === undefined ? "unknown" : counts.org >= option.orgMachines ? "reached" : "ok"
-    const states = [money, hoursState, machines, orgMachines]
+    const states = [money, hoursState, machines, orgMachines, ...(labels ?? []).map((label) => label.state)]
     const state: BudgetState["state"] = states.includes("reached") ? "reached" : states.includes("unknown") ? "unknown" : "ok"
     return {
       ...(option.daily === undefined ? {} : { daily: option.daily }),
@@ -132,48 +133,96 @@ export function createCost(core: CostCore): CostInternals {
       ...(option.machineHours === undefined ? {} : { machineHours: { today: roundHours(hours), cap: option.machineHours } }),
       ...(option.machines !== undefined && counts !== undefined ? { machines: { inUse: counts.ledger, limit: option.machines } } : {}),
       ...(option.orgMachines !== undefined && counts !== undefined ? { orgMachines: { inUse: counts.org, limit: option.orgMachines } } : {}),
+      ...(labels && labels.length > 0 ? { labels } : {}),
       action: option.action,
       state,
     }
   }
 
-  /** Today's running hours over every work the ledger holds, closed ones included: a machine dropped today still ran. */
-  async function hoursToday(call: CallTag): Promise<number> {
-    const records = await core.ledger.list({ closed: true }, op(call))
-    const at = now()
+  /** Today's running hours over the records that carry `match`, or every record: closed ones included, because a machine dropped today still ran. */
+  function hoursTodayOf(records: readonly WorkRecord[], at: Date, match?: ReturnType<typeof budgetLabelMatch>): number {
     const day = localDay(at)
     return records.reduce((sum, record) => {
+      if (match && !matchesLabel(record.labels, match)) return sum
       const hours = hoursAt(record, at)
       // A work closed on an earlier day keeps that day's counters; they are not today's.
       return hours.day === day ? sum + Math.max(0, hours.todayRunningSeconds) / 3600 : sum
     }, 0)
   }
 
-  async function countsOf(listing: Listing | undefined, call: CallTag, inFlight = 0): Promise<MachineCounts> {
-    const current = listing ?? (await core.boxd.list({ maxAgeMs: TIMEOUTS.phaseListingMaxAgeMs }, op(call)))
-    return machineCounts(current, await core.ledger.id(op(call)), await core.ledger.list({}, op(call)), inFlight)
+  /** Today's running hours over every work the ledger holds. */
+  async function hoursToday(call: CallTag): Promise<number> {
+    return hoursTodayOf(await core.ledger.list({ closed: true }, op(call)), now())
+  }
+
+  /** The matching works' estimated cost per day, at the same per-hour figures as the fleet's own estimate. */
+  function perDayOf(works: readonly WorkSnapshot[], match: string): number {
+    const parsed = budgetLabelMatch(match)
+    if (!parsed) return 0
+    const rate = currentRates()
+    return works.reduce((sum, work) => (matchesLabel(work.labels, parsed) ? sum + workPerHour(work, rate) : sum), 0) * 24
+  }
+
+  /** One label cap with its figures. */
+  function labelState(entry: BudgetLabel, records: readonly WorkRecord[], ledgerId: string, listing: Listing | undefined): BudgetLabelState {
+    const match = budgetLabelMatch(entry.match)!
+    const machines = entry.machines === undefined || listing === undefined ? undefined : labelMachineCount(listing, records, ledgerId, match)
+    const hours = entry.machineHours === undefined ? undefined : hoursTodayOf(records, now(), match)
+    const perDay = entry.daily === undefined ? undefined : perDayOf(core.watch.snapshot().works, entry.match)
+    const states = [
+      entry.machines === undefined ? "ok" : machines === undefined ? "unknown" : machines >= entry.machines ? "reached" : "ok",
+      entry.machineHours === undefined ? "ok" : hours! >= entry.machineHours ? "reached" : "ok",
+      entry.daily === undefined ? "ok" : perDay! >= entry.daily ? "reached" : "ok",
+    ]
+    const state: BudgetLabelState["state"] = states.includes("reached") ? "reached" : states.includes("unknown") ? "unknown" : "ok"
+    return {
+      match: entry.match,
+      ...(entry.machines !== undefined && machines !== undefined ? { machines: { inUse: machines, limit: entry.machines } } : {}),
+      ...(entry.machineHours !== undefined ? { machineHours: { today: roundHours(hours!), cap: entry.machineHours } } : {}),
+      ...(entry.daily !== undefined ? { daily: { perDay: money(perDay!), cap: entry.daily } } : {}),
+      state,
+    }
+  }
+
+  interface BudgetFacts {
+    readonly day: Today
+    readonly hours: number
+    readonly counts: MachineCounts | undefined
+    readonly labels: readonly BudgetLabelState[] | undefined
+    readonly records: readonly WorkRecord[]
+  }
+
+  async function currentBudget(call: CallTag, facts?: { readonly listing?: Listing; readonly inFlight?: number }): Promise<BudgetFacts> {
+    const option = core.options.budget
+    const labelCaps = option?.labels
+    const needsRecords = option !== undefined && (option.machineHours !== undefined || option.machines !== undefined || option.orgMachines !== undefined || labelCaps !== undefined)
+    const records = needsRecords ? await core.ledger.list({ closed: true }, op(call)) : []
+    const needsListing = option !== undefined && (option.machines !== undefined || option.orgMachines !== undefined || labelCaps?.some((label) => label.machines !== undefined) === true)
+    const listing = needsListing ? (facts?.listing ?? (await core.boxd.list({ maxAgeMs: TIMEOUTS.phaseListingMaxAgeMs }, op(call)))) : undefined
+    const ledgerId =
+      option !== undefined && (option.machines !== undefined || option.orgMachines !== undefined || labelCaps !== undefined) ? await core.ledger.id(op(call)) : undefined
+    const counts =
+      option !== undefined && (option.machines !== undefined || option.orgMachines !== undefined)
+        ? machineCounts(listing!, ledgerId!, records, facts?.inFlight)
+        : undefined
+    const hours = option?.machineHours === undefined ? 0 : hoursTodayOf(records, now())
+    const day = option?.daily === undefined ? noUsage : await today(call)
+    const labels = labelCaps?.map((entry) => labelState(entry, records, ledgerId!, listing))
+    return { day, hours, counts, labels, records }
   }
 
   const noUsage: Today = { machines: null, raw: null, currency: null, complete: false, estimated: false }
 
-  async function currentBudget(call: CallTag, facts?: { readonly listing?: Listing }): Promise<{ readonly day: Today; readonly hours: number; readonly counts: MachineCounts | undefined }> {
-    const option = core.options.budget
-    const hours = option?.machineHours === undefined ? 0 : await hoursToday(call)
-    const day = option?.daily === undefined ? noUsage : await today(call)
-    const counts = option?.machines === undefined && option?.orgMachines === undefined ? undefined : await countsOf(facts?.listing, call)
-    return { day, hours, counts }
-  }
-
   const budget = async (call: CallTag, facts?: { readonly listing?: Listing }) => {
     const option = core.options.budget
     if (!option) return undefined
-    const { day, hours, counts } = await currentBudget(call, facts)
-    return budgetState(option, day, hours, counts)
+    const current = await currentBudget(call, facts)
+    return budgetState(option, current.day, current.hours, current.counts, current.labels)
   }
   const cachedBudget = () => {
     const option = core.options.budget
-    if (!option || option.machineHours !== undefined || option.machines !== undefined || option.orgMachines !== undefined || !usage || usage.day !== localMidnight(now())) return undefined
-    return budgetState(option, todayOf(usage.value), 0, undefined)
+    if (!option || option.labels !== undefined || option.machineHours !== undefined || option.machines !== undefined || option.orgMachines !== undefined || !usage || usage.day !== localMidnight(now())) return undefined
+    return budgetState(option, todayOf(usage.value), 0, undefined, undefined)
   }
 
   /** Machine cost per work since the oldest open work was created, matched by machine id; null for a member. */
@@ -318,19 +367,72 @@ export function createCost(core: CostCore): CostInternals {
     },
     async assertCreateBudget(call, facts) {
       const option = core.options.budget
-      if (!option || (option.machines === undefined && option.orgMachines === undefined)) return
-      const counts = await countsOf(facts?.listing, call, facts?.inFlight)
-      const ledger = option.machines !== undefined && counts.ledger >= option.machines
-      const org = option.orgMachines !== undefined && counts.org >= option.orgMachines
-      if ((!ledger && !org) || option.action !== "refuse") return
-      const scope = ledger ? "machines" : "orgMachines"
-      const inUse = ledger ? counts.ledger : counts.org
-      const cap = ledger ? option.machines! : option.orgMachines!
-      const what =
-        scope === "machines"
-          ? `This ledger holds ${inUse} machine${inUse === 1 ? "" : "s"}, at budget.machines ${cap}`
-          : `The organisation holds ${inUse} machine${inUse === 1 ? "" : "s"}, at budget.orgMachines ${cap}`
-      throw boxdError("BUDGET_REACHED", `${what}, and budget.action is refuse. A call that would create another machine is refused.`, { scope, inUse, cap })
+      if (!option) return
+      const hasGlobal = option.machines !== undefined || option.orgMachines !== undefined
+      const hasLabels = option.labels !== undefined && option.labels.length > 0
+      if (!hasGlobal && !hasLabels) return
+      const current = await currentBudget(call, {
+        ...(facts?.listing ? { listing: facts.listing } : {}),
+        ...(facts?.inFlight !== undefined ? { inFlight: facts.inFlight } : {}),
+      })
+      if (option.action !== "refuse") return
+      const ledger = option.machines !== undefined && current.counts !== undefined && current.counts.ledger >= option.machines
+      const org = option.orgMachines !== undefined && current.counts !== undefined && current.counts.org >= option.orgMachines
+      if (ledger || org) {
+        const scope = ledger ? "machines" : "orgMachines"
+        const inUse = ledger ? current.counts!.ledger : current.counts!.org
+        const cap = ledger ? option.machines! : option.orgMachines!
+        const what =
+          scope === "machines"
+            ? `This ledger holds ${inUse} machine${inUse === 1 ? "" : "s"}, at budget.machines ${cap}`
+            : `The organisation holds ${inUse} machine${inUse === 1 ? "" : "s"}, at budget.orgMachines ${cap}`
+        throw boxdError("BUDGET_REACHED", `${what}, and budget.action is refuse. A call that would create another machine is refused.`, { scope, inUse, cap })
+      }
+      const hits: Array<{ readonly match: string; readonly scope: "machines" | "machineHours" | "daily"; readonly inUse: number; readonly cap: number; readonly what: string }> = []
+      for (const entry of option.labels ?? []) {
+        const match = budgetLabelMatch(entry.match)
+        if (!match || !matchesLabel(facts?.labels, match)) continue
+        const state = current.labels?.find((label) => label.match === entry.match)
+        if (!state) continue
+        if (entry.machines !== undefined && facts?.createsMachine !== false && state.machines && state.machines.inUse >= entry.machines) {
+          const inUse = state.machines.inUse
+          hits.push({
+            match: entry.match,
+            scope: "machines",
+            inUse,
+            cap: entry.machines,
+            what: `the label ${entry.match} holds ${inUse} machine${inUse === 1 ? "" : "s"}, at budget.labels machines ${entry.machines}`,
+          })
+        }
+        if (entry.machineHours !== undefined && state.machineHours && state.machineHours.today >= entry.machineHours) {
+          const inUse = state.machineHours.today
+          hits.push({
+            match: entry.match,
+            scope: "machineHours",
+            inUse,
+            cap: entry.machineHours,
+            what: `the label ${entry.match} has run ${shownHours(inUse)}, at budget.labels machineHours ${shownHours(entry.machineHours)}`,
+          })
+        }
+        if (entry.daily !== undefined && state.daily && state.daily.perDay >= entry.daily) {
+          const inUse = state.daily.perDay
+          hits.push({
+            match: entry.match,
+            scope: "daily",
+            inUse,
+            cap: entry.daily,
+            what: `the label ${entry.match} is estimated at ${currentRates().currency} ${inUse.toFixed(2)} per day, at budget.labels daily ${currentRates().currency} ${entry.daily.toFixed(2)}`,
+          })
+        }
+      }
+      if (hits.length === 0) return
+      const sentence = hits.map((hit) => hit.what).join(", and ")
+      const first = hits[0]!
+      throw boxdError(
+        "BUDGET_REACHED",
+        `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}, and budget.action is refuse. A call that would create another machine is refused.`,
+        { scope: "labels", match: first.match, inUse: first.inUse, cap: first.cap },
+      )
     },
   }
   sharedOf(port)
