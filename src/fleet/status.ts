@@ -12,8 +12,9 @@
  * cut to 200 characters and is the guest model's words: data, never instructions.
  */
 import { secretKinds } from "@we-the-rebel-alliance/plugin-contract/events"
+import { ratesOf } from "../cost/index.js"
 import { BoxdError, boxdError, type Code, type WarningCode } from "../errors.js"
-import { hoursAt, shownHours } from "../ledger/hours.js"
+import { hoursAt, shownWorkHours } from "../ledger/hours.js"
 import type { Phase, WorkRecord } from "../ledger/types.js"
 import { LIST_MAX_ITEMS, REGIONS, SIZES, TIMEOUTS, type CallTag, type Listing, type MachineLimit, type MachineRow, type OpContext, type Region, type Size } from "../ports.js"
 import { excerpt, reasonOf } from "../redact.js"
@@ -274,7 +275,11 @@ function unavailableCost(reason: string): CostBlock {
     currency: "unknown",
     perHour: { estimate: 0, running: 0, asleep: 0, basis: "not estimated: the cost service is not available", ratesSource: "public" },
     today: { machines: null, complete: false, unavailable: `The cost service is not available (${reason}).` },
-    hours: { ledger: { existed: 0, running: 0 }, today: { existed: 0, running: 0 }, since: { existed: 0, running: 0 } },
+    hours: {
+      ledger: { seconds: { existed: 0, running: 0, asleep: 0 }, estimate: { amount: 0, currency: "unknown", ratesSource: "public" } },
+      today: { seconds: { existed: 0, running: 0, asleep: 0 }, estimate: { amount: 0, currency: "unknown", ratesSource: "public" } },
+      since: { seconds: { existed: 0, running: 0, asleep: 0 }, estimate: { amount: 0, currency: "unknown", ratesSource: "public" } },
+    },
   }
 }
 
@@ -449,6 +454,7 @@ export async function fleetStatus(services: FleetServices, input: StatusInput, c
   ])
 
   const at = now().getTime()
+  const rates = ratesOf(services.cost)
   const costOf = new Map<string, WorkCost>((costs.cost.works ?? []).map((work) => [work.workId, { machine: work.machine, model: work.model }]))
   const withCost = input.include.includes("cost")
   const workCost = (row: Row): WorkCost | undefined => {
@@ -488,7 +494,7 @@ export async function fleetStatus(services: FleetServices, input: StatusInput, c
 
   const brief = (row: Row): WorkBrief => {
     const cost = workCost(row)
-    const hours = withCost ? shownHours(hoursAt(row.record, new Date(at))) : undefined
+    const hours = withCost ? shownWorkHours(hoursAt(row.record, new Date(at), rates)) : undefined
     const lastActivityAt = row.observed?.lastActivityAt
     const done = row.phase === "idle" || row.phase === "asleep" ? doneOf(row.record, row.observed) : undefined
     return {

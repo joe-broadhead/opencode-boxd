@@ -36,7 +36,11 @@ export function fleet(overrides: Partial<StatusResult> = {}): StatusResult {
       currency: "EUR",
       perHour: { estimate: 0, running: 0, asleep: 0, basis: "rates x resident GiB", ratesSource: "usage" },
       today: { machines: 0, complete: true },
-      hours: { ledger: { existed: 0, running: 0 }, today: { existed: 0, running: 0 }, since: { existed: 0, running: 0 } },
+      hours: {
+        ledger: { seconds: { existed: 0, running: 0, asleep: 0 }, estimate: { amount: 0, currency: "EUR", ratesSource: "usage" } },
+        today: { seconds: { existed: 0, running: 0, asleep: 0 }, estimate: { amount: 0, currency: "EUR", ratesSource: "usage" } },
+        since: { seconds: { existed: 0, running: 0, asleep: 0 }, estimate: { amount: 0, currency: "EUR", ratesSource: "usage" } },
+      },
     },
     cleanup: [],
     automation: "on",

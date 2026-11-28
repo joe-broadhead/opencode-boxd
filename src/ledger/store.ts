@@ -13,10 +13,11 @@ import { AsyncLocalStorage } from "node:async_hooks"
 import { randomBytes } from "node:crypto"
 import { link, lstat, mkdir, open, readdir, readFile, rename, rmdir, stat, unlink } from "node:fs/promises"
 import { basename, dirname, join, resolve, sep } from "node:path"
+import { PUBLIC_RATES } from "../cost/rates.js"
 import { boxdError, BoxdError } from "../errors.js"
 import { EventLog } from "./events.js"
 import { countHours } from "./hours.js"
-import type { Expected, LedgerFile, StagedFile, StagedFolder } from "../ports.js"
+import type { Expected, LedgerFile, Rates, Reading, StagedFile, StagedFolder } from "../ports.js"
 import { commitFile, copyFileAtomic, type Digest, digestFile, ensureDir, errnoOf, exists, FILE_MODE, fsyncDir, randomPart, remove, tempBeside, writeFileAtomic, writeJsonAtomic } from "./fsx.js"
 import { alive, LockSet, type LockHandle } from "./lock.js"
 import {
@@ -76,6 +77,8 @@ export interface LedgerOptions {
   readonly lockWaitMs?: number
   /** Rotation size for the event log; tests make it small. */
   readonly eventsRotateBytes?: number
+  /** The rates current when an interval is counted: the organisation's when known, else boxd's public ones. */
+  readonly rates?: () => Rates
   /** The locks' timing; tests make the heartbeat fast. */
   readonly lock?: { readonly heartbeatMs?: number; readonly staleMs?: number }
 }
@@ -90,6 +93,7 @@ export class Ledger {
   /** Every lock this ledger holds, for `dispose`. */
   readonly locks = new LockSet()
   private readonly lockTiming: { readonly heartbeatMs?: number; readonly staleMs?: number }
+  private readonly currentRates: () => Rates
   private readonly cache = new Map<string, Cached>()
   private indexLoaded = false
   private ledgerId: string | undefined
@@ -103,6 +107,7 @@ export class Ledger {
     this.dir = join(root, LEDGER_PATHS.v1)
     this.lockWaitMs = options.lockWaitMs ?? WORK_LOCK_WAIT_MS
     this.lockTiming = options.lock ?? {}
+    this.currentRates = options.rates ?? (() => PUBLIC_RATES.EUR)
     this.events = new EventLog(this.dir, {
       locks: this.locks,
       ...(options.now ? { now: options.now } : {}),
@@ -333,16 +338,24 @@ export class Ledger {
 
   /**
    * Counts one phase change into the work's record, under its lock: the interval since the record's last change goes to
-   * the phase that was current before (design §C.4). A work with no record, or an event at the same instant and phase,
-   * writes nothing.
+   * the phase that was current before, at the rates current now (design §C.4). A slot work is charged one divided by the
+   * open works on its shared machine, so the slots on one machine add up to the machine once. A work with no record, or
+   * an event at the same instant and phase, writes nothing.
    */
-  async countPhase(workId: string, phase: Phase, at: Date, signal?: AbortSignal): Promise<void> {
+  async countPhase(workId: string, phase: Phase, at: Date, reading?: Reading, signal?: AbortSignal): Promise<void> {
     await this.withWork(
       workId,
       async () => {
         const record = await this.get(workId)
         if (!record) return
-        const hours = countHours(record.hours, phase, at)
+        const share =
+          record.slot === true ? 1 / Math.max(1, (await this.list({})).filter((open) => open.machine === record.machine && open.region === record.region).length) : 1
+        const hours = countHours(record.hours, phase, at, {
+          size: record.size,
+          rates: this.currentRates(),
+          ...(reading ? { reading } : {}),
+          share,
+        })
         if (record.hours && record.hours.phase === hours.phase && record.hours.at === hours.at) return
         await this.write(workId, { ...record, hours })
       },

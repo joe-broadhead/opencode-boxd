@@ -29,6 +29,8 @@ const job = (input: Record<string, unknown>, callId = "call_job") => jobRun(worl
 const row = (call: string) => SPAWN_BUDGETS.find((entry) => entry.call === call)!
 /** An idle work by its record: its last run ended after its last prompt. */
 const idle = (workId: string, over: Partial<WorkRecord> = {}) => ({ workId, run: { outcome: "completed" as const, at: "2026-11-16T10:00:01.000Z" }, ...over })
+/** A cost block's empty ledger figures. */
+const noWorkHours = { seconds: { existed: 0, running: 0, asleep: 0 }, estimate: { amount: 0, currency: "EUR", ratesSource: "usage" as const } }
 
 describe("boxd_status", () => {
   test("170 open works, none busy: one listing and the cached machine limit, and no guest read", async () => {
@@ -143,18 +145,36 @@ describe("boxd_status", () => {
     expect(answer.automation).toBe("on")
   })
 
-  test("machine-hours show from the ledger with no owner's sign-in, in status and job", async () => {
+  test("machine-seconds and their estimate show from the ledger with no owner's sign-in, in status and job", async () => {
     await world.bulk([{ workId: "metered", status: "hibernated" }])
     const at = world.clock.now
     await world.record("metered", (record) => ({
       ...record,
-      hours: { existedSeconds: 7_200, runningSeconds: 3_600, todayExistedSeconds: 1_800, todayRunningSeconds: 900, day: localDay(at), phase: "asleep", at: at.toISOString() },
+      hours: {
+        existedSeconds: 7_200,
+        runningSeconds: 3_600,
+        asleepSeconds: 1_800,
+        todayExistedSeconds: 1_800,
+        todayRunningSeconds: 900,
+        todayAsleepSeconds: 300,
+        cost: 0.5,
+        todayCost: 0.1,
+        currency: "USD",
+        ratesSource: "usage",
+        day: localDay(at),
+        phase: "asleep",
+        at: at.toISOString(),
+      },
     }))
     const answer = await status({ view: "all", include: ["cost"] })
-    // The cost service is not built here, so the money figure is null; the hours still come from the record.
+    // The cost service is not built here, so boxd's own figure is null; the ledger's still come from the record.
     expect(answer.cost.today.machines).toBeNull()
-    expect(answer.works?.find((work) => work.workId === "metered")?.hours).toEqual({ existed: 2, running: 1 })
-    expect(((await job({ workId: "metered" })) as JobResult).hours).toEqual({ existed: 2, running: 1 })
+    const hours = {
+      seconds: { existed: 7_200, running: 3_600, asleep: 1_800 },
+      estimate: { amount: 0.5, currency: "USD", ratesSource: "usage" as const },
+    }
+    expect(answer.works?.find((work) => work.workId === "metered")?.hours).toEqual(hours)
+    expect(((await job({ workId: "metered" })) as JobResult).hours).toEqual(hours)
   })
 
   test("the budget: reached with warn is BUDGET_WARN, reached with refuse is only the budget block, unmeasurable is BUDGET_UNKNOWN", async () => {
@@ -163,7 +183,7 @@ describe("boxd_status", () => {
         currency: "EUR",
         perHour: { estimate: 0, running: 0, asleep: 0, basis: "x", ratesSource: "usage" },
         today: { machines: 6, complete: true },
-        hours: { ledger: { existed: 0, running: 0 }, today: { existed: 0, running: 0 }, since: { existed: 0, running: 0 } },
+        hours: { ledger: noWorkHours, today: noWorkHours, since: noWorkHours },
       }),
       cleanup: async () => [],
       automation: () => "on",
@@ -196,7 +216,7 @@ describe("boxd_status", () => {
         currency: "EUR",
         perHour: { estimate: 0, running: 0, asleep: 0, basis: "x", ratesSource: "usage" },
         today: { machines: null, complete: false },
-        hours: { ledger: { existed: 0, running: 0 }, today: { existed: 0, running: 0 }, since: { existed: 0, running: 0 } },
+        hours: { ledger: noWorkHours, today: noWorkHours, since: noWorkHours },
       }),
       cleanup: async () => [],
       automation: () => "on",

@@ -52,13 +52,19 @@ None.
   `asleep` or `closed`, carries no `change:` label. The existing `phase:`, `outcome:`, `needs:` and `done` labels stay.
 - **The works list.** `status` with `{ list: "works" }` answers the `boxd.works.list` snapshot: at most 50 works, newest
   activity first, as the contract's `list` output.
-- **Machine-hours.** Each work's record carries the time its machine existed and the time it ran, in seconds, counted by
-  the ledger at every phase change from the record's last change: every phase but `gone` and `closed` adds to
-  `existedSeconds`, and the running phases add to `runningSeconds`. `boxd_status` with `include: ["cost"]` shows
-  `hours: { existed, running }` on each work row beside the money figures, and `boxd_job` shows the same on every answer.
-  The cost block sums them for this ledger, for today from local midnight, and since the oldest open work was created.
-  The hours are computed from the ledger alone, so they show without an owner's sign-in; the money figures stay `null`
-  without one.
+- **Machine-seconds and their cost.** Each work's record carries the time its machine existed, ran and was asleep, in
+  seconds, counted by the ledger at every phase change from the record's last change: every phase but `gone` and
+  `closed` adds to `existedSeconds`, the running phases add to `runningSeconds`, and `asleep` adds to `asleepSeconds`.
+  The same interval is priced at `perHour(previous phase, size, last reading, rates)` with the rates current at that
+  change: the organisation's when a usage read has them, else boxd's public ones, with `currency` and `ratesSource`
+  recorded. A change of currency starts `cost` again in the new currency rather than adding two currencies, and an
+  interval across local midnight puts only its part after midnight into `todayCost`. A slot work on a shared machine is
+  charged its share, the machine's figure divided by the open works on it, so the slots on one machine add up to the
+  machine once. `boxd_status` with `include: ["cost"]` shows
+  `hours: { seconds: { existed, running, asleep }, estimate: { amount, currency, ratesSource } }` on each work row beside
+  the money figures, and `boxd_job` shows the same on every answer. The cost block sums them for this ledger, for today
+  from local midnight, and since the oldest open work was created. The seconds and their estimate are computed from the
+  ledger alone, so they show without an owner's sign-in; boxd's own `today.machines` figure still needs one.
 - **Machines against the limit.** The `/boxd` report counts the organisation's machines against boxd's limit from the
   all-region listing and the machine limit the fleet read already takes, with no usage read and no owner's sign-in. Its
   `Machines:` line reads, for example, `1,180 of 1,250 in use (40 running, 12 standby, 1,128 hibernated); 31 are this

@@ -8,7 +8,7 @@ import { machineCounts } from "../../src/cost/machines.js"
 import { perHour, PUBLIC_RATES } from "../../src/cost/rates.js"
 import { automationState, consent } from "../../src/cost/shared.js"
 import { BoxdError } from "../../src/errors.js"
-import { asHours, localDay } from "../../src/ledger/hours.js"
+import { localDay } from "../../src/ledger/hours.js"
 import type { Phase } from "../../src/ledger/types.js"
 import type { Usage } from "../../src/ports.js"
 import { fakes, LEDGER_ID, minutesAgo, record, T0, work, type Fakes } from "../support/cost-fakes.js"
@@ -20,8 +20,14 @@ const tag = { callId: "t", source: "boxd_status" } as const
 const ranHours = (hours: number, at = T0) => ({
   existedSeconds: hours * 3600,
   runningSeconds: hours * 3600,
+  asleepSeconds: 0,
   todayExistedSeconds: hours * 3600,
   todayRunningSeconds: hours * 3600,
+  todayAsleepSeconds: 0,
+  cost: 0,
+  todayCost: 0,
+  currency: "EUR",
+  ratesSource: "usage" as const,
   day: localDay(at),
   phase: "asleep" as const,
   at: at.toISOString(),
@@ -123,35 +129,61 @@ describe("the per-hour estimate (§C.1)", () => {
     expect(block.works?.find((row) => row.workId === "b")?.machine).toBeNull()
   })
 
-  test("machine-hours from the ledger: this ledger, today and since the oldest open work, with usage unavailable", async () => {
+  test("machine-seconds and their cost from the ledger: this ledger, today and since the oldest open work, with usage unavailable", async () => {
     const day = localDay(T0)
     const yesterday = minutesAgo(T0, 1_500)
-    const hours = (existedSeconds: number, runningSeconds: number, todayExistedSeconds: number, todayRunningSeconds: number, at: string, phase: Phase) => ({
+    const hours = (
+      existedSeconds: number,
+      runningSeconds: number,
+      asleepSeconds: number,
+      todayExistedSeconds: number,
+      todayRunningSeconds: number,
+      todayAsleepSeconds: number,
+      cost: number,
+      todayCost: number,
+      at: string,
+      phase: Phase,
+    ) => ({
       existedSeconds,
       runningSeconds,
+      asleepSeconds,
       todayExistedSeconds,
       todayRunningSeconds,
+      todayAsleepSeconds,
+      cost,
+      todayCost,
+      currency: "EUR",
+      ratesSource: "usage" as const,
       day: localDay(new Date(at)),
       phase,
       at,
     })
-    const old = record("old", { createdAt: minutesAgo(T0, 300), hours: hours(7_200, 3_600, 1_800, 900, T0.toISOString(), "idle") })
-    const young = record("young", { createdAt: minutesAgo(T0, 60), hours: hours(1_800, 900, 600, 300, T0.toISOString(), "idle") })
+    const old = record("old", { createdAt: minutesAgo(T0, 300), hours: hours(7_200, 3_600, 1_800, 1_800, 900, 300, 3.5, 1.5, T0.toISOString(), "idle") })
+    const young = record("young", { createdAt: minutesAgo(T0, 60), hours: hours(1_800, 900, 300, 600, 300, 100, 0.75, 0.25, T0.toISOString(), "idle") })
     const closed = record("closed", {
       state: "closed",
       closed: { at: yesterday, how: "dropped" },
       createdAt: yesterday,
-      hours: hours(3_600, 1_800, 0, 0, yesterday, "closed"),
+      hours: hours(3_600, 1_800, 600, 0, 0, 0, 1, 0, yesterday, "closed"),
     })
     const f = make({ works: [work("old"), work("young")], records: [old, young, closed], usage: { available: false, reason: "boxd's machine usage is for organisation owners and admins." } })
     const block = await f.services.cost.block({ works: true, limit: 10 }, tag)
 
-    // The money figure keeps boxd's reason; the hours need no owner's sign-in.
+    // boxd's own figure keeps its reason; the ledger's seconds and estimate need no owner's sign-in.
     expect(block.today.machines).toBeNull()
     expect(block.hours).toEqual({
-      ledger: { existed: asHours(7_200 + 1_800 + 3_600), running: asHours(3_600 + 900 + 1_800) },
-      today: { existed: asHours(1_800 + 600), running: asHours(900 + 300) },
-      since: { existed: asHours(7_200 + 1_800), running: asHours(3_600 + 900) },
+      ledger: {
+        seconds: { existed: 7_200 + 1_800 + 3_600, running: 3_600 + 900 + 1_800, asleep: 1_800 + 300 + 600 },
+        estimate: { amount: 5.25, currency: "EUR", ratesSource: "usage" },
+      },
+      today: {
+        seconds: { existed: 1_800 + 600, running: 900 + 300, asleep: 300 + 100 },
+        estimate: { amount: 1.75, currency: "EUR", ratesSource: "usage" },
+      },
+      since: {
+        seconds: { existed: 7_200 + 1_800, running: 3_600 + 900, asleep: 1_800 + 300 },
+        estimate: { amount: 4.25, currency: "EUR", ratesSource: "usage" },
+      },
     })
     expect(day).toBe(localDay(T0))
   })
@@ -302,7 +334,7 @@ describe("the budget (§C.5)", () => {
         record("old", {
           state: "closed",
           closed: { at: closedAt.toISOString(), how: "dropped" },
-          hours: { existedSeconds: 0, runningSeconds: 0, todayExistedSeconds: 0, todayRunningSeconds: 0, day: localDay(startedAt), phase: "busy", at: startedAt.toISOString() },
+          hours: { existedSeconds: 0, runningSeconds: 0, asleepSeconds: 0, todayExistedSeconds: 0, todayRunningSeconds: 0, todayAsleepSeconds: 0, cost: 0, todayCost: 0, currency: "EUR", ratesSource: "usage", day: localDay(startedAt), phase: "busy", at: startedAt.toISOString() },
         }),
       ],
     })
@@ -317,7 +349,7 @@ describe("the budget (§C.5)", () => {
       options: { budget: { machineHours: 0.75, action: "refuse" } },
       records: [
         record("a", {
-          hours: { existedSeconds: 0, runningSeconds: 0, todayExistedSeconds: 0, todayRunningSeconds: 0, day: localDay(before), phase: "idle", at: before.toISOString() },
+          hours: { existedSeconds: 0, runningSeconds: 0, asleepSeconds: 0, todayExistedSeconds: 0, todayRunningSeconds: 0, todayAsleepSeconds: 0, cost: 0, todayCost: 0, currency: "EUR", ratesSource: "usage", day: localDay(before), phase: "idle", at: before.toISOString() },
         }),
       ],
     })
