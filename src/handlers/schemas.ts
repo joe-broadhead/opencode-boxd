@@ -193,6 +193,7 @@ export const GOLDEN_INPUT = object({
   size: SIZE,
   from: string('"stock", or a base snapshot name in that region; the goldenBase option by default. A warm build always starts from its version\'s image.'),
   repo: string('An https://github.com/owner/repo URL listed in the plugin option "warm": build that repository\'s warm image, with its checkout and setup script, from its OpenCode version\'s golden image.'),
+  warm: choice(["all"], 'Rebuild every repository in the plugin option "warm", in every region that option "regions" allows and at the option "size"; answers one image or failure for each repository and region. Pass either warm or repo, not both.'),
   rebuild: boolean("Rebuild an image that exists, under the same name."),
   prune: boolean("Remove the images that no open work records and that are not the current version's, and list them."),
 })

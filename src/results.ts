@@ -376,10 +376,20 @@ export interface GoldenImage {
   readonly seconds?: number
 }
 
+/** A warm image that did not build, with the repository and region it was for. */
+export interface GoldenFailure extends Refusal {
+  readonly region: Region
+  readonly repo: string
+}
+
 export interface GoldenResult {
-  readonly state: "built" | "present" | "pruned"
+  readonly state: "built" | "present" | "pruned" | "partial" | "failed" | "building"
   readonly images: readonly GoldenImage[]
   readonly removed?: readonly GoldenImage[]
+  /** A warm rebuild's failed repositories and regions; one failure does not stop the others. */
+  readonly failures?: readonly GoldenFailure[]
+  /** Warm images still building when the call's bound came; they go on, and the next call joins them. */
+  readonly building?: readonly GoldenImage[]
   readonly warning?: WarningCode
   readonly next?: string
 }

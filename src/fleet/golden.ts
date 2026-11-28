@@ -26,7 +26,7 @@
  */
 import { randomBytes } from "node:crypto"
 import { BoxdError, boxdError } from "../errors.js"
-import { assertSnapshot, normaliseRepo } from "../names.js"
+import { assertSnapshot, normaliseRepo, repositoryHash } from "../names.js"
 import { resolveLaptopPath, rootsOf } from "../paths.js"
 import type { WarmRepository } from "../options.js"
 import { shortReason } from "../redact.js"
@@ -43,9 +43,9 @@ import {
   type Size,
   type SnapshotRow,
 } from "../ports.js"
-import type { GoldenImage, GoldenResult } from "../results.js"
+import type { GoldenFailure, GoldenImage, GoldenResult } from "../results.js"
 import type { FleetServices } from "../services.js"
-import type { CallContext } from "../call.js"
+import { refusalResult, type CallContext } from "../call.js"
 import { runOne, type ItemContext } from "./list.js"
 import { regionsText } from "./regions.js"
 import { parseWarmImageName, warmImageName } from "./warm.js"
@@ -58,6 +58,8 @@ const WARM_SETUP_FILE = ".boxd-plugin-warm-setup.sh"
 const WARM_SETUP_PATH = `/home/boxd/${WARM_SETUP_FILE}`
 /** The builder's safety net, whatever happens to the laptop. */
 const BUILDER_LEASE = "2h"
+/** How many warm builders one region runs at once: enough to make progress, inside the machine limit beside the lanes. */
+export const WARM_BUILD_CONCURRENCY = 2
 
 /**
  * The environment names OpenCode reads as a model provider's key. A sealed secret with one of these names is the
@@ -277,22 +279,105 @@ export function createGolden(services: FleetServices, settings: { readonly bound
     })
   }
 
+  interface WarmOutcome {
+    readonly image: GoldenImage
+    readonly state: "built" | "present" | "building"
+  }
+
+  /** Settles `items` with at most `limit` running at once, in input order. */
+  async function settleLimit<T, R>(items: readonly T[], limit: number, run: (item: T) => Promise<R>): Promise<Array<PromiseSettledResult<R>>> {
+    const settled: Array<PromiseSettledResult<R> | undefined> = new Array(items.length)
+    let next = 0
+    const worker = async () => {
+      for (;;) {
+        const index = next
+        next += 1
+        const item = items[index]
+        if (index >= items.length || item === undefined) return
+        try {
+          settled[index] = { status: "fulfilled", value: await run(item) }
+        } catch (reason) {
+          settled[index] = { status: "rejected", reason }
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+    return settled.map((result) => {
+      if (!result) throw new Error("a warm build target has no result")
+      return result
+    })
+  }
+
+  /** Settles every repository and region, with at most `WARM_BUILD_CONCURRENCY` builders in each region at once. */
+  async function settleWarmTargets(
+    targets: ReadonlyArray<{ readonly repo: WarmRepository; readonly region: Region }>,
+    size: Size,
+    from: string,
+    rebuild: boolean,
+    signal: AbortSignal,
+    until: number,
+    context: OpContext,
+  ): Promise<Array<PromiseSettledResult<WarmOutcome>>> {
+    const settled: Array<PromiseSettledResult<WarmOutcome> | undefined> = new Array(targets.length)
+    const regions = [...new Set(targets.map((target) => target.region))]
+    await Promise.all(
+      regions.map(async (region) => {
+        const group = targets.map((target, index) => ({ target, index })).filter(({ target }) => target.region === region)
+        const results = await settleLimit(group, WARM_BUILD_CONCURRENCY, ({ target }) => buildWarm(target.repo, target.region, size, from, rebuild, signal, until, context))
+        results.forEach((result, index) => {
+          const entry = group[index]
+          if (entry) settled[entry.index] = result
+        })
+      }),
+    )
+    return settled.map((result) => {
+      if (!result) throw new Error("a warm build target has no result")
+      return result
+    })
+  }
+
+  /** Builds one repository's warm image in one region, first its version's image when that is missing. */
+  async function buildWarm(warm: WarmRepository, region: Region, size: Size, from: string, rebuild: boolean, signal: AbortSignal, until: number, context: OpContext): Promise<WarmOutcome> {
+    const version = services.hostVersion
+    if (version === null) throw boxdError("GOLDEN_MISSING", "The OpenCode here reports no version, so no warm image can be built.")
+    const versionName = imageName(options.goldenPrefix, version, size)
+    const name = warmImageName(options.goldenPrefix, warm.repo, version, size)
+    const image: GoldenImage = { region, name, opencode: version, size, repo: warm.repo }
+    const present = await images(context)
+    if (!rebuild && present.some((row) => row.region === region && row.name === name)) return { image, state: "present" }
+    if (!present.some((row) => row.region === region && row.name === versionName)) {
+      const base = await build({ region, size, base: from, name: versionName }, { signal, until })
+      // The version image is still building: this warm image has not started, and the next call joins both.
+      if (base === STILL_BUILDING) return { image, state: "building" }
+    }
+    const built = await build({ region, size, base: versionName, name, warm }, { signal, until })
+    if (built === STILL_BUILDING) return { image, state: "building" }
+    return { image: built, state: "built" }
+  }
+
   async function prune(regions: readonly Region[], context: OpContext): Promise<GoldenResult> {
     const open = await services.ledger.list({}, context)
     const inUse = new Set(open.map((record) => `${record.region}:${record.image.name}`))
+    const listed = new Map(options.warm.map((entry) => [repositoryHash(entry.repo), entry.repo]))
     const all = (await images(context)).flatMap((row) => {
       const parsed = parseImageName(options.goldenPrefix, row.name)
-      return parsed && regions.includes(row.region) ? [{ region: row.region, name: row.name, opencode: parsed.opencode, size: parsed.size }] : []
+      return parsed && regions.includes(row.region) ? [{ region: row.region, name: row.name, ...parsed }] : []
     })
     const removed: GoldenImage[] = []
     const kept: GoldenImage[] = []
     for (const image of all) {
-      // Never an image an open work records (boxd_resume rebuilds from it), and never the current version's.
+      // Never an image an open work records (boxd_resume rebuilds from it).
       const used = inUse.has(`${image.region}:${image.name}`) || open.some((record) => record.region === null && record.image.name === image.name)
-      if (used || image.opencode === services.hostVersion) kept.push(image)
+      // A version image stays while it is the current version. A warm image stays only while its repository is still
+      // in the option "warm" and its version is current.
+      const current = image.opencode === services.hostVersion
+      const wanted = image.repo ? listed.has(image.repo.hash) : true
+      const repo = image.repo ? listed.get(image.repo.hash) : undefined
+      const result: GoldenImage = { region: image.region, name: image.name, opencode: image.opencode, size: image.size, ...(repo ? { repo } : {}) }
+      if (used || (current && wanted)) kept.push(result)
       else {
         await boxd.removeSnapshot(image.region, image.name, context)
-        removed.push(image)
+        removed.push(result)
       }
     }
     return { state: "pruned", images: kept, removed }
@@ -316,6 +401,16 @@ export function createGolden(services: FleetServices, settings: { readonly bound
     const from = input.from ?? options.goldenBase
     if (typeof from !== "string" || (from !== "stock" && !safeSnapshot(from))) throw boxdError("NAME_INVALID", 'from must be "stock" or a boxd snapshot name.', { field: "from" })
     for (const flag of ["rebuild", "prune"] as const) if (input[flag] !== undefined && typeof input[flag] !== "boolean") throw boxdError("NAME_INVALID", `${flag} must be true or false.`, { field: flag })
+    const warmAll = input.warm !== undefined
+    if (warmAll) {
+      if (input.warm !== "all") throw boxdError("NAME_INVALID", 'warm must be "all".', { field: "warm" })
+      if (input.repo !== undefined) throw boxdError("NAME_INVALID", 'a warm rebuild takes no repo: it covers every repository in the plugin option "warm".', { field: "warm" })
+      if (pruning) throw boxdError("NAME_INVALID", 'prune removes images by name; it cannot be combined with "warm".', { field: "warm" })
+      if (region !== "all") throw boxdError("NAME_INVALID", 'a warm rebuild covers every region the plugin option "regions" allows, so "region" cannot name one.', { field: "warm" })
+      if (input.size !== undefined) throw boxdError("NAME_INVALID", 'a warm rebuild uses the plugin option "size", so "size" cannot be passed.', { field: "warm" })
+      if (input.from !== undefined) throw boxdError("NAME_INVALID", 'a warm rebuild starts from its version\'s golden image, so "from" cannot be passed.', { field: "warm" })
+      if (options.warm.length === 0) throw boxdError("NAME_INVALID", 'The plugin option "warm" lists no repository, so there is no warm image to rebuild. Add { repo, setup } entries to "warm" and restart OpenCode.', { field: "warm" })
+    }
     let warm: WarmRepository | undefined
     if (input.repo !== undefined) {
       if (typeof input.repo !== "string") throw boxdError("NAME_INVALID", "repo must be an https://github.com/owner/repo URL listed in the plugin option \"warm\".", { field: "repo" })
@@ -337,22 +432,85 @@ export function createGolden(services: FleetServices, settings: { readonly bound
     const context: OpContext = { call: { callId: call.id, source: "boxd_golden" }, signal: call.signal }
     if (input.prune === true) return prune(regions, context)
 
+    if (warmAll) {
+      return runOne({ signal: call.signal, ...(settings.bound ? { boundMs: settings.bound() } : {}), now }, async (item: ItemContext) => {
+        const targets = options.warm.flatMap((repo) => allowed.map((region) => ({ repo, region })))
+        const settled = await settleWarmTargets(targets, size as Size, from, input.rebuild === true, call.signal, item.deadline, context)
+        const images: GoldenImage[] = []
+        const building: GoldenImage[] = []
+        const failures: GoldenFailure[] = []
+        let built = 0
+        let bug: unknown
+        for (const [index, outcome] of settled.entries()) {
+          const target = targets[index]
+          if (!target) continue
+          if (outcome.status === "fulfilled") {
+            if (outcome.value.state === "building") building.push(outcome.value.image)
+            else {
+              images.push(outcome.value.image)
+              if (outcome.value.state === "built") built += 1
+            }
+          } else if (outcome.reason instanceof BoxdError) {
+            failures.push({ ...refusalResult(outcome.reason), region: target.region, repo: target.repo.repo })
+          } else {
+            bug = outcome.reason
+          }
+        }
+        if (bug !== undefined) throw bug
+        const warning = built > 0 && !(await secretsKnown(context)) ? ("NO_MODEL_CREDENTIAL" as const) : undefined
+        const state =
+          failures.length > 0
+            ? images.length > 0 || building.length > 0
+              ? "partial"
+              : "failed"
+            : images.length > 0
+              ? built > 0
+                ? "built"
+                : "present"
+              : building.length > 0
+                ? "building"
+                : "present"
+        return {
+          state,
+          images,
+          ...(building.length ? { building, next: 'The builds in building are still running; call boxd_golden({ warm: "all", rebuild: true }) again to join them.' } : {}),
+          ...(warning ? { warning, next: "Give works a model key: a sealed, host-bound boxd env secret, a separately named secret per provider, or opencode auth login on one work's own machine." } : {}),
+          ...(failures.length ? { failures, next: 'Read each failure, fix its setup script, then call boxd_golden({ warm: "all", rebuild: true }) again.' } : {}),
+        }
+      })
+    }
+
     return runOne({ signal: call.signal, ...(settings.bound ? { boundMs: settings.bound() } : {}), now }, async (item: ItemContext) => {
-      const versionName = imageName(options.goldenPrefix, services.hostVersion, size as Size)
-      const name = warm ? warmImageName(options.goldenPrefix, warm.repo, services.hostVersion, size as Size) : versionName
+      if (warm) {
+        const settled = await settleWarmTargets(
+          regions.map((region) => ({ repo: warm, region })),
+          size as Size,
+          from,
+          input.rebuild === true,
+          call.signal,
+          item.deadline,
+          context,
+        )
+        const failure = settled.find((entry): entry is PromiseRejectedResult => entry.status === "rejected")
+        if (failure) throw failure.reason
+        const results = settled.map((entry) => (entry as PromiseFulfilledResult<WarmOutcome>).value)
+        const images = results.filter((entry) => entry.state !== "building").map((entry) => entry.image)
+        const building = results.filter((entry) => entry.state === "building").map((entry) => entry.image)
+        const built = results.filter((entry) => entry.state === "built").length
+        const warning = built > 0 && !(await secretsKnown(context)) ? ("NO_MODEL_CREDENTIAL" as const) : undefined
+        return {
+          state: images.length > 0 ? (built > 0 ? "built" : "present") : building.length > 0 ? "building" : "present",
+          images,
+          ...(building.length ? { building, next: "The builds in building are still running; call the same boxd_golden call again to join them." } : {}),
+          ...(warning ? { warning, next: "Give works a model key: a sealed, host-bound boxd env secret, a separately named secret per provider, or opencode auth login on one work's own machine." } : {}),
+        }
+      }
+      const name = imageName(options.goldenPrefix, services.hostVersion, size as Size)
       const present = await images(context)
       const wanted = regions.map((where) => ({ region: where, exists: present.some((row) => row.region === where && row.name === name) }))
       const toBuild = wanted.filter((entry) => input.rebuild === true || !entry.exists)
       const settled = await Promise.allSettled(
-        toBuild.map(async (entry) => {
-          if (warm && !present.some((row) => row.region === entry.region && row.name === versionName)) {
-            const base = await build({ region: entry.region, size: size as Size, base: from, name: versionName }, { signal: call.signal, until: item.deadline })
-            if (base === STILL_BUILDING) {
-              throw boxdError("TIMEOUT", `The golden image ${versionName} that ${name} starts from is still building after this call's bound; it goes on, and the same boxd_golden call joins it.`, { step: "golden build" })
-            }
-          }
-          return build({ region: entry.region, size: size as Size, base: warm ? versionName : from, name, ...(warm ? { warm } : {}) }, { signal: call.signal, until: item.deadline })
-        }),
+        toBuild.map((entry) => build({ region: entry.region, size: size as Size, base: from, name }, { signal: call.signal, until: item.deadline })),
       )
       const failure = settled.find((entry): entry is PromiseRejectedResult => entry.status === "rejected")
       if (failure) throw failure.reason
@@ -362,13 +520,7 @@ export function createGolden(services: FleetServices, settings: { readonly bound
       }
       const result = wanted.map(
         (entry) =>
-          (built as GoldenImage[]).find((image) => image.region === entry.region) ?? {
-            region: entry.region,
-            name,
-            opencode: services.hostVersion!,
-            size: size as Size,
-            ...(warm ? { repo: warm.repo } : {}),
-          },
+          (built as GoldenImage[]).find((image) => image.region === entry.region) ?? { region: entry.region, name, opencode: services.hostVersion!, size: size as Size },
       )
       const warning = built.length > 0 && !(await secretsKnown(context)) ? ("NO_MODEL_CREDENTIAL" as const) : undefined
       return {

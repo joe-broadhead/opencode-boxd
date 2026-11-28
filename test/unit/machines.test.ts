@@ -7,7 +7,7 @@ import { Database } from "bun:sqlite"
 import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { parseImageName } from "../../src/fleet/golden.js"
+import { parseImageName, WARM_BUILD_CONCURRENCY } from "../../src/fleet/golden.js"
 import { warmImageName } from "../../src/fleet/warm.js"
 import type { WorkRecord } from "../../src/ledger/types.js"
 import { repositoryHash } from "../../src/names.js"
@@ -794,6 +794,111 @@ describe("boxd_golden (design §2.3, §3.11)", () => {
     expect(result.state).toBe("pruned")
     expect(result.removed?.map((image) => image.name)).toEqual(["oc-golden-2.4.2-2x8"])
     expect(k.counter.fake.read().snapshots.map((snapshot) => snapshot.name).sort()).toEqual(["oc-golden-2.4.3-2x8", IMAGE, "someone-elses"].sort())
+  })
+
+  test("warm all rebuilds every listed repository in every allowed region, and one failed setup does not stop the others", async () => {
+    const one = "https://github.com/we-the-rebel-alliance/one"
+    const two = "https://github.com/we-the-rebel-alliance/two"
+    const three = "https://github.com/we-the-rebel-alliance/three"
+    const k = await kit({
+      optionsFor: (project) => {
+        writeFileSync(join(project, "ok.sh"), 'echo setup >> "$HOME/order.log"\n')
+        writeFileSync(join(project, "fail.sh"), "exit 9\n")
+        return {
+          warm: [
+            { repo: one, setup: join(project, "ok.sh") },
+            { repo: two, setup: join(project, "ok.sh") },
+            { repo: three, setup: join(project, "fail.sh") },
+          ],
+        }
+      },
+    })
+    const result = (await k.runs.boxd_golden({ warm: "all", rebuild: true }, k.call())) as GoldenResult
+    expect(result.state).toBe("partial")
+    expect(result.images.map((image) => `${image.repo} ${image.region}`).sort()).toEqual([`${one} fra`, `${one} nyc`, `${two} fra`, `${two} nyc`].sort())
+    expect(result.failures?.map((failure) => `${failure.repo} ${failure.region} ${failure.error}`).sort()).toEqual([`${three} fra GOLDEN_BUILD_FAILED`, `${three} nyc GOLDEN_BUILD_FAILED`].sort())
+    expect(result.failures?.[0]?.message).toContain(`The setup for ${three} exited with 9`)
+    const state = k.counter.fake.read()
+    const namesIn = (name: string) => state.snapshots.filter((snapshot) => snapshot.name === name).map((snapshot) => snapshot.region).sort()
+    expect(namesIn(warmImageName("oc-golden", one, VERSION, "2x8"))).toEqual(["fra", "nyc"])
+    expect(namesIn(warmImageName("oc-golden", two, VERSION, "2x8"))).toEqual(["fra", "nyc"])
+    expect(namesIn(warmImageName("oc-golden", three, VERSION, "2x8"))).toEqual([])
+    expect(namesIn(IMAGE)).toEqual(["fra", "nyc"])
+    expect(state.machines.filter((machine) => machine.status !== "destroyed")).toEqual([])
+  })
+
+  test("warm all runs at most WARM_BUILD_CONCURRENCY builders in one region at once, and builds every target", async () => {
+    const repos = ["one", "two", "three", "four", "five"].map((name) => `https://github.com/we-the-rebel-alliance/${name}`)
+    const k = await kit({
+      warmDelayMs: 100,
+      options: { regions: ["fra"] },
+      optionsFor: () => ({ warm: repos.map((repo) => ({ repo })) }),
+    })
+    k.counter.fake.snapshot({ region: "fra", name: IMAGE })
+    const result = (await k.runs.boxd_golden({ warm: "all", rebuild: true }, k.call())) as GoldenResult
+    expect(result.state).toBe("built")
+    expect(result.images).toHaveLength(repos.length)
+    expect(k.warmPeak()).toBe(WARM_BUILD_CONCURRENCY)
+  })
+
+  test("a warm build still running at the bound is building, not a failure, and the next call joins it", async () => {
+    let bound = 300
+    const repos = ["one", "two"].map((name) => `https://github.com/we-the-rebel-alliance/${name}`)
+    const k = await kit({
+      warmDelayMs: 1000,
+      seam: { boundMs: () => bound },
+      options: { regions: ["fra"] },
+      optionsFor: () => ({ warm: repos.map((repo) => ({ repo })) }),
+    })
+    k.counter.fake.snapshot({ region: "fra", name: IMAGE })
+    const first = (await k.runs.boxd_golden({ warm: "all", rebuild: true }, k.call())) as GoldenResult
+    expect(first.state).toBe("building")
+    expect(first.failures).toBeUndefined()
+    expect(first.building?.map((image) => image.repo).sort()).toEqual([...repos].sort())
+    bound = 10_000
+    const second = (await k.runs.boxd_golden({ warm: "all", rebuild: true }, k.call())) as GoldenResult
+    expect(second.state).toBe("built")
+    expect(second.images).toHaveLength(repos.length)
+  })
+
+  test("prune removes warm images of unlisted repositories and other versions, but keeps one an open work records", async () => {
+    const listed = "https://github.com/we-the-rebel-alliance/listed"
+    const unlisted = "https://github.com/we-the-rebel-alliance/unlisted"
+    const recorded = "https://github.com/we-the-rebel-alliance/recorded"
+    const k = await kit({ optionsFor: () => ({ warm: [{ repo: listed }] }) })
+    const listedName = warmImageName("oc-golden", listed, VERSION, "2x8")
+    const unlistedName = warmImageName("oc-golden", unlisted, VERSION, "2x8")
+    const recordedName = warmImageName("oc-golden", recorded, VERSION, "2x8")
+    const oldName = warmImageName("oc-golden", listed, "2.4.0", "2x8")
+    k.counter.fake.snapshot({ region: "fra", name: listedName })
+    k.counter.fake.snapshot({ region: "fra", name: unlistedName })
+    k.counter.fake.snapshot({ region: "fra", name: recordedName })
+    k.counter.fake.snapshot({ region: "fra", name: oldName })
+    await k.write(workRecord("keeper", { image: { name: recordedName, opencode: VERSION } }))
+    const result = (await k.runs.boxd_golden({ prune: true }, k.call())) as GoldenResult
+    expect(result.state).toBe("pruned")
+    expect(result.removed?.map((image) => image.name).sort()).toEqual([oldName, unlistedName].sort())
+    const left = k.counter.fake.read().snapshots.map((snapshot) => snapshot.name)
+    expect(left).toContain(listedName)
+    expect(left).toContain(recordedName)
+    expect(left).not.toContain(unlistedName)
+    expect(left).not.toContain(oldName)
+  })
+
+  test("warm all takes no repo, region, size, from or prune, and needs a listed repository", async () => {
+    const k = await kit({ optionsFor: () => ({ warm: [{ repo: REPO }] }) })
+    for (const input of [
+      { warm: "all", repo: REPO },
+      { warm: "all", region: "fra" },
+      { warm: "all", size: "2x8" },
+      { warm: "all", from: "stock" },
+      { warm: "all", prune: true },
+    ]) {
+      expect(await errorOf(k.runs.boxd_golden(input, k.call()))).toMatchObject({ code: "NAME_INVALID", details: { field: "warm" } })
+    }
+    expect(k.calls()).toEqual([])
+    const empty = await kit()
+    expect(await errorOf(empty.runs.boxd_golden({ warm: "all" }, empty.call()))).toMatchObject({ code: "NAME_INVALID", details: { field: "warm" } })
   })
 
   test("ensure picks only <prefix>-<version>-<size>: another snapshot is never a work's image", async () => {

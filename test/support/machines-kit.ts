@@ -49,6 +49,8 @@ export interface Kit {
   install(region: Region, name: string, id: string): Promise<void>
   /** A golden image of the plugin's own recipe, built through boxd_golden. */
   golden(region?: Region | "all", size?: string): Promise<unknown>
+  /** The most fake guest `warm` calls that ran at once. */
+  warmPeak(): number
   dispose(): Promise<void>
 }
 
@@ -60,6 +62,8 @@ export interface KitInput {
   readonly optionsFor?: (project: string) => Record<string, unknown>
   readonly seam?: MachineSeam
   readonly hostVersion?: string | null
+  /** How long the fake guest's `warm` holds its checkout, to make overlapping builds visible. */
+  readonly warmDelayMs?: number
 }
 
 export async function startKit(input: KitInput = {}): Promise<Kit> {
@@ -97,20 +101,30 @@ export async function startKit(input: KitInput = {}): Promise<Kit> {
     kit.staleReads -= 1
     throw stale()
   }
+  let warmActive = 0
+  let warmPeak = 0
+  const warmDelayMs = input.warmDelayMs
   const guestPort = {
     ...runtime.guest,
     serve: async (...args: Parameters<typeof runtime.guest.serve>) => (refuse(), runtime.guest.serve(...args)),
     phase: async (...args: Parameters<typeof runtime.guest.phase>) => (refuse(), runtime.guest.phase(...args)),
     // The real helper's `warm` (issue #72) is a clone; the kit's fake leaves its checkout on the machine's disk so a
     // golden build can run the repository's setup inside it, and records the order the build ran its steps in.
-    warm: async (target: ChangeTarget, input: { readonly repo: { readonly url: string; readonly ref?: string } }) => {
-      const key = createHash("sha256").update(input.repo.url).digest("hex").slice(0, 16)
-      const home = join(counter.fake.disk(target.machineId), "home/boxd")
-      const directory = join(home, ".boxd-plugin/warm", key)
-      mkdirSync(join(directory, ".git"), { recursive: true })
-      writeFileSync(join(directory, "warm.txt"), `${input.repo.url}\n${input.repo.ref ?? ""}\n`)
-      appendFileSync(join(home, "order.log"), "warm\n")
-      return { path: `/home/boxd/.boxd-plugin/warm/${key}` }
+    warm: async (target: ChangeTarget, request: { readonly repo: { readonly url: string; readonly ref?: string } }) => {
+      warmActive += 1
+      warmPeak = Math.max(warmPeak, warmActive)
+      try {
+        if (warmDelayMs) await Bun.sleep(warmDelayMs)
+        const key = createHash("sha256").update(request.repo.url).digest("hex").slice(0, 16)
+        const home = join(counter.fake.disk(target.machineId), "home/boxd")
+        const directory = join(home, ".boxd-plugin/warm", key)
+        mkdirSync(join(directory, ".git"), { recursive: true })
+        writeFileSync(join(directory, "warm.txt"), `${request.repo.url}\n${request.repo.ref ?? ""}\n`)
+        appendFileSync(join(home, "order.log"), "warm\n")
+        return { path: `/home/boxd/.boxd-plugin/warm/${key}` }
+      } finally {
+        warmActive -= 1
+      }
     },
   }
   const services: FleetServices = {
@@ -145,6 +159,7 @@ export async function startKit(input: KitInput = {}): Promise<Kit> {
       await kit.change(region, name, id, (target) => runtime.guest.setup(target, { directory: `/home/boxd/work/${name.slice(3)}`, opencode: VERSION }, op("kit")))
     },
     golden: (region: Region | "all" = "all", size = "2x8") => runs.boxd_golden({ region, size }, kit.call()),
+    warmPeak: () => warmPeak,
     dispose: async () => {
       await runtime.dispose()
       await ledger.dispose()
