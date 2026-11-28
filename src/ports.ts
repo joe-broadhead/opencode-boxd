@@ -700,6 +700,16 @@ export interface ReleaseAnswer {
   readonly removed: readonly string[]
 }
 
+/** `legacy`: what the old build left on the machine, whether its server's password is this helper's now, and the fence. */
+export interface LegacyAnswer {
+  /** Whether the machine has the old build's helper folder at all. */
+  readonly legacy: boolean
+  /** `adopted` when this call copied the old server's password, `kept` when this helper had one, `none` otherwise. */
+  readonly password: "adopted" | "kept" | "none"
+  /** Whether a stub stands in front of the old build's helper, so the old build can no longer drive the work. */
+  readonly fenced: boolean
+}
+
 export interface GuestPort {
   // Reads: the read rule, the helper already on the machine, no upload, no ledger write.
   /** With `directory`, also the detached clone's progress for that work folder, so a wait needs no second `setup`. */
@@ -735,6 +745,8 @@ export interface GuestPort {
   release(target: ChangeTarget, input: { readonly slot: string }, context: OpContext): Promise<ReleaseAnswer>
   /** The golden build's last step on the builder (design §2.3). */
   scrub(target: ChangeTarget, context: OpContext): Promise<ScrubAnswer>
+  /** Takes the machine's one home over from the build before the rebuild: adopt its server, then fence the old helper off. */
+  legacy(target: ChangeTarget, input: { readonly step: "adopt" | "fence" }, context: OpContext): Promise<LegacyAnswer>
 }
 
 /** The laptop's own OpenCode, which harvest imports into: delete, then import (F1). Runs in the import pool. */

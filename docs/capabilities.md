@@ -112,7 +112,10 @@ None.
   `ensure` with
   `{ select: "orphans" }` adopts every actionable orphan: it reads the guest's `describe`, writes a record and sets this
   ledger's labels, without setup, clone, upgrade or resize. A busy or waiting orphan is adopted and left running; a
-  hibernated orphan is woken for the read and left running. One whose `describe` fails is skipped with its error.
+  hibernated orphan is woken for the read and left running. One whose `describe` fails is skipped with its error. A
+  machine the build before the rebuild started (a session with another `owner` and no `ledger` label) is taken over
+  first: the plugin's helper adopts its running server's password, so the same session continues, and a stub fences
+  the old build off before the labels and the record are written.
 - **`exec`** is class `admin` with `effect: "ask"`: it asks even at `access: "all"`. It runs one command on the guest and
   can print a secret that is not host-bound.
 - **`drop`** is class `delete`. It refuses unless the work is saved, its git tree is known, every untracked or ignored

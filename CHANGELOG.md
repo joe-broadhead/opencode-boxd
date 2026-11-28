@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **The works of a build before the rebuild are taken over in place.** `boxd_ensure({ select: "orphans" })` adopts a
+  machine the old build started with its running OpenCode server and its root session, so the same conversation
+  continues, and fences the old build off with a stub that answers `WORK_MOVED`. The guest helper gains the `legacy`
+  change action. See [docs/upgrading.md](docs/upgrading.md).
+
 ## 0.1.0 (2026-11-28)
 
 Warm images, slots on shared machines, the done signal, labelled work events, machine-hours and cost in the ledger, a

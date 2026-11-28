@@ -72,7 +72,7 @@ import type { FleetServices } from "../services.js"
 import type { CallContext } from "../call.js"
 import { imageName, STILL_BUILDING, type Golden } from "./golden.js"
 import { runList, runOne, type ItemContext } from "./list.js"
-import { classReason, classifyMachines, type Classified } from "./orphans.js"
+import { beforeRebuild, classReason, classifyMachines, type Classified } from "./orphans.js"
 import { mintWorkSecrets } from "./secrets.js"
 import { pause } from "./sessions-common.js"
 import { inUseOf, limitAtCreate, pickRegion, regionsText, type InFlight, type InUse } from "./regions.js"
@@ -1306,6 +1306,23 @@ function adoptedRecord(
   }
 }
 
+/** One `legacy` step on an orphan the old build started, under its machine's lock; a failure skips the orphan. */
+async function legacyStep(machines: Machines, item: Classified, id: NonNullable<Classified["row"]["id"]>, step: "adopt" | "fence", op: OpContext): Promise<OrphanResult | undefined> {
+  const { boxd, guest, runner } = machines.services
+  try {
+    await runner.withMachineLock({ id }, op, async () => {
+      const owned = await boxd.checkOwned(item.row.region, item.row.name as MachineName, id, op)
+      await guest.legacy(owned.target, { step }, op)
+    })
+    return undefined
+  } catch (error) {
+    const code = error instanceof BoxdError ? error.code : "GUEST_FAILED"
+    const why = error instanceof BoxdError ? error.what : String(error)
+    const doing = step === "adopt" ? "its old server was not taken over" : "the old build was not fenced off"
+    return skippedOrphan(item, `${doing}: ${why}`, 'boxd_ensure({ select: "orphans" }) tries again', code)
+  }
+}
+
 /**
  * One orphan: read its guest's describe, set this ledger's labels and write a record. It changes nothing on the
  * machine's tree, OpenCode or sessions: no setup, clone, upgrade or resize runs. A busy or waiting orphan is adopted
@@ -1344,6 +1361,14 @@ async function adoptOrphan(machines: Machines, item: Classified, context: ItemCo
     return skippedOrphan(item, `the machine is ${row.status}`, `boxd machine wake ${row.name} --region ${row.region}, then boxd_ensure({ select: "orphans" })`)
   }
 
+  // A machine the build before the rebuild started: its server's password moves to this helper first, so describe and
+  // every later call speak to the same server and the same session continues.
+  const legacy = beforeRebuild(row.labels)
+  if (legacy) {
+    const skipped = await legacyStep(machines, item, id, "adopt", op)
+    if (skipped) return skipped
+  }
+
   let described: DescribeAnswer | undefined
   try {
     const read = await readTarget(machines, row.region, row.name as MachineName, id, op)
@@ -1354,6 +1379,12 @@ async function adoptOrphan(machines: Machines, item: Classified, context: ItemCo
     return skippedOrphan(item, `the guest's describe failed: ${why}`, 'boxd_ensure({ select: "orphans" }) tries again', code)
   }
   if (!described) return skippedOrphan(item, "the guest's describe was not made: the machine did not become readable", 'boxd_ensure({ select: "orphans" }) tries again', "MACHINE_STARTING")
+
+  // The old build is fenced off before this ledger claims the machine, so the work never has two drivers.
+  if (legacy) {
+    const skipped = await legacyStep(machines, item, id, "fence", op)
+    if (skipped) return skipped
+  }
 
   // Labels first: a record that failed after them is found again as this ledger's orphan, and adopted next call.
   try {
