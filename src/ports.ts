@@ -674,6 +674,8 @@ export interface WorkEvent {
   readonly to: Phase
   /** With `to: "idle"`: how the last run ended. A failed run is `outcome: "failed"` with its `code`. */
   readonly outcome?: RunOutcome | null
+  /** With `to: "idle"`: the guest declared the whole task finished. The report stays in the ledger record. */
+  readonly done?: true
   /** A §5 code only; any other string is `RUN_FAILED` before it is written (L-f). */
   readonly code?: string
   /** With `to: "asleep"`: who put it to sleep, when the plugin knows. */

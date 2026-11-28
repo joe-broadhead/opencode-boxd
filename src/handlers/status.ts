@@ -48,7 +48,7 @@ const LIST: JsonSchema = {
 const OUTPUT: JsonSchema = { anyOf: [STATUS_SCHEMA, LIST] }
 
 const DESCRIPTION =
-  "The plugin's own state: its host range, its problems, the agents that lack its access rules, and the one next step. It holds no account or credential; sign in with the boxd CLI, and use probe for the local machine identity. It never reads a guest, so it never wakes a machine. Pass list: \"works\" for the works list (id and phase) a consumer binds as the boxd.works.list snapshot. For the fleet's counts, cost and per-work next calls, a person runs /boxd and an agent uses boxd_job or boxd_events_list."
+  "The plugin's own state: its host range, its problems, the agents that lack its access rules, and the one next step. It holds no account or credential; sign in with the boxd CLI, and use probe for the local machine identity. It never reads a guest, so it never wakes a machine. Pass list: \"works\" for the works list (id, phase and whether the work is done) a consumer binds as the boxd.works.list snapshot. For the fleet's counts, cost and per-work next calls, a person runs /boxd and an agent uses boxd_job or boxd_events_list."
 
 /** The status handler. */
 export function statusHandler(deps: StatusDeps): MethodHandler {

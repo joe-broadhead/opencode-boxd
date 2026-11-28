@@ -25,6 +25,7 @@ import {
   listed,
   machineOf,
   nowIso,
+  omit,
   oneOf,
   openRecord,
   optionalString,
@@ -157,8 +158,9 @@ export async function submitWork(services: Services, item: SubmitItem, context: 
       const moved: MovedFile[] = files.map((file) => ({ path: file.to, bytes: file.bytes, sha256: file.sha256, at }))
       const session = { ...record.session, rootId: answer.sessionId, ...(notify.value ? { notify: notify.value } : {}) }
       if (notify.clear) delete (session as { notify?: string }).notify
+      // A new prompt is a new task: the previous done report no longer describes the work.
       const next: WorkRecord = {
-        ...record,
+        ...omit(record, "done"),
         machineId: machine.machineId,
         session,
         lastSubmit,

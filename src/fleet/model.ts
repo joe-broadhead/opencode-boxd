@@ -19,7 +19,7 @@
  */
 import { BoxdError, isCode, type Code } from "../errors.js"
 import type { Phase, WorkRecord } from "../ledger/types.js"
-import type { Listing, MachineRow, OpContext, PhaseAnswer, Reading, ReadTarget, RunOutcome } from "../ports.js"
+import type { DoneReport, Listing, MachineRow, OpContext, PhaseAnswer, Reading, ReadTarget, RunOutcome } from "../ports.js"
 import { excerpt } from "../redact.js"
 import { failureCode } from "../outcome.js"
 import type { CoreServices } from "../services.js"
@@ -38,6 +38,8 @@ export interface Observed {
   readonly since: string
   readonly lastText?: string
   readonly lastActivityAt?: string
+  /** The guest's done report from the newest read; a read without one clears it. */
+  readonly done?: DoneReport
   readonly waiting?: { readonly steer: number; readonly queue: number }
   readonly guestVersion?: string | null
   readonly modelCost?: number
@@ -157,6 +159,7 @@ export function observe(answer: PhaseAnswer, previous: Observed | undefined, at:
     since: previous && previous.phase === phase ? previous.since : at.toISOString(),
     ...(lastText ? { lastText } : {}),
     ...(answer.lastActivityAt ? { lastActivityAt: answer.lastActivityAt } : {}),
+    ...(answer.done ? { done: answer.done } : {}),
     waiting: answer.waiting,
     guestVersion: answer.guestVersion,
     ...(answer.modelCost !== undefined ? { modelCost: answer.modelCost } : {}),
@@ -203,4 +206,17 @@ export function codeOf(record: WorkRecord, observed: Observed | undefined): Code
   if (observed?.code) return observed.code
   if (record.run?.outcome === "failed") return failureCode({ outcome: "failed", ...(record.run.error ? { error: record.run.error } : {}) })
   return undefined
+}
+
+/**
+ * The work's done report: the newest of the last read's and the record's, or undefined when neither has one. A prompt
+ * after the report clears it, whether the read is older than the prompt or the record's report predates the submit.
+ */
+export function doneOf(record: WorkRecord, observed: Observed | undefined): DoneReport | undefined {
+  const live = observed && !promptedSince(record, observed) ? observed.done : undefined
+  const candidates = [live, record.done].filter((report): report is DoneReport => report !== undefined)
+  const report = candidates.sort((left, right) => Date.parse(right.at) - Date.parse(left.at))[0]
+  if (!report) return undefined
+  const submitted = time(record.lastSubmit?.at)
+  return !Number.isNaN(submitted) && submitted > Date.parse(report.at) ? undefined : report
 }

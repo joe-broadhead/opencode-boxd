@@ -15,7 +15,7 @@
  * - **Remotes** are stored without their userinfo.
  * - The folder is 0700 and its files 0600.
  */
-import type { Delivery, MachineId, MachineName, Region, RunOutcome, Size, WorkEvent } from "../ports.js"
+import type { Delivery, DoneReport, MachineId, MachineName, Region, RunOutcome, Size, WorkEvent } from "../ports.js"
 import type { WarningCode } from "../errors.js"
 
 export const LEDGER_FORMAT = 1
@@ -167,6 +167,8 @@ export interface WorkRecord {
   readonly lastSubmit?: { readonly at: string; readonly delivery: Delivery; readonly by?: string }
   readonly saved?: Saved
   readonly run?: { readonly outcome: RunOutcome; readonly error?: string; readonly at: string }
+  /** The guest's done report, kept across sleep and harvest; a new submit clears it. */
+  readonly done?: DoneReport
   readonly gitState?: GitState
   readonly files?: { readonly in: readonly MovedFile[]; readonly out: readonly MovedFile[] }
   readonly slept?: { readonly at: string; readonly by: SleptBy }

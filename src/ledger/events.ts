@@ -62,6 +62,7 @@ export class EventLog {
         from: event.from,
         to: event.to,
         ...(event.outcome !== undefined ? { outcome: event.outcome } : {}),
+        ...(event.done !== undefined ? { done: true as const } : {}),
         ...(event.code !== undefined ? { code: isCode(event.code) ? event.code : "RUN_FAILED" } : {}),
         ...(event.asleepBy !== undefined ? { asleepBy: event.asleepBy } : {}),
         ...(event.needsInput !== undefined ? { needsInput: event.needsInput } : {}),

@@ -8,6 +8,8 @@ import { BoxdError } from "../errors.js"
 import type { SleptBy, WorkRecord } from "../ledger/types.js"
 import type { ChangeTarget, OpContext } from "../ports.js"
 import type { SleepResult } from "../results.js"
+import { watchHandle } from "../watch.js"
+import { doneOf } from "./model.js"
 import { machineOf, nowIso, openRecord, withTarget, withWarning, type WorkContext, type Services } from "./sessions-common.js"
 
 export interface SleepItem {
@@ -26,11 +28,14 @@ export async function sleepWork(services: Services, item: SleepItem, context: Wo
       await withTarget(services, record, machine, op, async (owned) => (owned.status === "hibernated" ? undefined : hibernate(services, owned.target, op)))
       const at = nowIso(services)
       const unsaved = record.lastSubmit !== undefined && services.ledger.saved(record) !== "fresh"
+      // A done report a read has seen but no write has kept yet rides along, so it survives the sleep.
+      const done = doneOf(record, watchHandle(services.watch)?.observed(record.workId))
       const next: WorkRecord = {
         ...record,
         machineId: machine.machineId,
         slept: { at, by },
         touchedAt: at,
+        ...(done ? { done } : {}),
         ...(unsaved ? { warnings: withWarning(record.warnings, "UNHARVESTED_SLEEP", at) } : {}),
       }
       const result: SleepResult = {
