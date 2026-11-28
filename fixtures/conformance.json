@@ -33,9 +33,10 @@
                 "text": "",
                 "url": null,
                 "labels": [
+                  "change:idle",
                   "phase:ready"
                 ],
-                "hash": "sha256:800516442e020da43c00d60c3a3e6768eab09e9683a2579014b00b79a12f7118"
+                "hash": "sha256:a592c4d7ca574dd0ab8af54bc18e22301132133266d71429f156ed0490cf7ba6"
               },
               {
                 "source": "works",
@@ -49,9 +50,10 @@
                 "text": "",
                 "url": null,
                 "labels": [
+                  "change:started",
                   "phase:busy"
                 ],
-                "hash": "sha256:0af97c4d8d05fc485083b6fb97a04ba5f48ab78a6222f75023be74863b5838eb"
+                "hash": "sha256:f18a7f5391b26b8bb3e652cd4ed1ecb0cdafb896c088b54fc06f6cd006688abc"
               },
               {
                 "source": "works",
@@ -65,10 +67,11 @@
                 "text": "",
                 "url": null,
                 "labels": [
+                  "change:finished",
                   "phase:idle",
                   "outcome:completed"
                 ],
-                "hash": "sha256:a37ee68e8220e11cb06fe115d752a3555d8887f5b74e015996b42fbae4c2a63c"
+                "hash": "sha256:174a99fc661578d162923cafd14fa4ec3b2595d422ab23a6324f552e7add713d"
               }
             ],
             "cursor": "eyJ2IjoyLCJzIjoid29ya3MiLCJiIjoiNmYxYzlmZWFiOWIzNjgwYSIsInEiOjMsInQiOiIyMDI2LTExLTE2VDAwOjAwOjAwLjAwMFoifQ",

@@ -36,3 +36,38 @@ export default {
 - `events_list` never calls boxd and never wakes a machine. A change that needs a decision is a `boxd_job` or `/boxd`
   read, not an event's text.
 - A write method emits `changed`, so an app can also re-read on the bus event instead of polling.
+
+## The event recipe
+
+An app that must react at once waits on `rpc.boxd.changed`, reads `events_list` from the cursor in its state, and acts
+on the event's `change:` label. It never reads `status` or `job` to learn a work's state: the nudge only says to read
+the log again.
+
+| Label | The change |
+|---|---|
+| `change:started` | the work went `busy` from another phase |
+| `change:waiting` | the work waits on a person; `needs:permission` or `needs:form` says which |
+| `change:finished` | the work is `idle` with `outcome:completed`, or the guest declared it `done` |
+| `change:failed` | the work is `unreachable` or `gone`, or it is `idle` with `outcome:failed` or `outcome:aborted` |
+| `change:idle` | the work is `idle` with no outcome, or `ready` |
+
+Every event carries at most one `change:` label. An event that fits none of the five, such as `creating`, `starting`,
+`asleep` or `closed`, carries no label. A `busy` to `busy` event also carries none: it exists only to start or clear a
+wait, and the event that starts the wait carries `change:waiting`.
+
+```ts
+// The automation's durable state holds the cursor between runs.
+const input = state.cursor === undefined ? { since: new Date(Date.now() - 60_000).toISOString() } : { cursor: state.cursor }
+const page = await tools.boxd.events_list(input)
+const next = { cursor: page.cursor }
+for (const event of page.events) {
+  const change = event.labels.find((label) => label.startsWith("change:"))
+  if (change === "change:waiting") await answerThePerson(event.thread)
+  if (change === "change:finished") await harvestTheWork(event.thread)
+  if (change === "change:failed") await reportTheFailure(event)
+}
+return { state: next }
+```
+
+The thread is `boxd-work:<workId>`, so one label names both the work and what happened to it. The existing `phase:`,
+`outcome:`, `needs:` and `done` labels stay for a reader that needs the detail.

@@ -126,8 +126,28 @@ export function titleOf(event: WorkEvent): string {
   return `Work ${event.workId}: ${said}${done}${code}${needs}`
 }
 
+/**
+ * The one label an automation keys on: what the change means for the work, not the phase it landed in. A work waiting
+ * for an answer is `waiting` whatever its phase, a phase change to `busy` that is not a wait is `started`, and a first
+ * sight of `busy` counts too. A `busy` to `busy` event only happens when a wait starts or clears, so it is `waiting` or
+ * no change at all. Every phase the vocabulary does not name gets no label.
+ */
+function changeOf(event: WorkEvent): string | undefined {
+  if (event.needsInput !== undefined) return "waiting"
+  if (event.to === "busy") return event.from === "busy" ? undefined : "started"
+  if (event.to === "idle") {
+    if (event.done || event.outcome === "completed") return "finished"
+    if (event.outcome === "failed" || event.outcome === "aborted") return "failed"
+    return event.outcome === null || event.outcome === undefined ? "idle" : undefined
+  }
+  if (event.to === "ready") return "idle"
+  if (event.to === "unreachable" || event.to === "gone") return "failed"
+  return undefined
+}
+
 /** One work event as a contract event. */
 export function eventOf(event: WorkEvent): SourceEvent {
+  const change = changeOf(event)
   return makeEvent({
     source: SOURCE,
     account: "default",
@@ -137,6 +157,7 @@ export function eventOf(event: WorkEvent): SourceEvent {
     thread: `boxd-work:${event.workId}`,
     title: titleOf(event),
     labels: [
+      ...(change ? [`change:${change}`] : []),
       `phase:${event.to}`,
       ...(event.outcome ? [`outcome:${event.outcome}`] : []),
       ...(event.code ? [`code:${event.code}`] : []),
