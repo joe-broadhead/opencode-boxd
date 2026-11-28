@@ -135,7 +135,7 @@ export interface MeteredHours {
   readonly ratesSource: Rates["source"]
   /** The last guest reading, which prices the interval after `at`. */
   readonly reading?: Reading
-  /** The share of its machine a slot work is charged: one divided by the open works on it; 1 for its own machine. */
+  /** The share of its machine the interval after `at` is charged: one divided by the open works on it; 1 for its own machine. */
   readonly share?: number
   /** `YYYY-MM-DD` in this machine's local day, which the `today*` counters cover. */
   readonly day: string

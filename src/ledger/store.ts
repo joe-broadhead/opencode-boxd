@@ -17,7 +17,7 @@ import { PUBLIC_RATES } from "../cost/rates.js"
 import { boxdError, BoxdError } from "../errors.js"
 import { EventLog } from "./events.js"
 import { countHours } from "./hours.js"
-import type { Expected, LedgerFile, Rates, Reading, StagedFile, StagedFolder } from "../ports.js"
+import type { Expected, LedgerFile, MachineName, Rates, Reading, Region, StagedFile, StagedFolder } from "../ports.js"
 import { commitFile, copyFileAtomic, type Digest, digestFile, ensureDir, errnoOf, exists, FILE_MODE, fsyncDir, randomPart, remove, tempBeside, writeFileAtomic, writeJsonAtomic } from "./fsx.js"
 import { alive, LockSet, type LockHandle } from "./lock.js"
 import {
@@ -94,6 +94,7 @@ export class Ledger {
   readonly locks = new LockSet()
   private readonly lockTiming: { readonly heartbeatMs?: number; readonly staleMs?: number }
   private readonly currentRates: () => Rates
+  private readonly now: () => Date
   private readonly cache = new Map<string, Cached>()
   private indexLoaded = false
   private ledgerId: string | undefined
@@ -108,9 +109,10 @@ export class Ledger {
     this.lockWaitMs = options.lockWaitMs ?? WORK_LOCK_WAIT_MS
     this.lockTiming = options.lock ?? {}
     this.currentRates = options.rates ?? (() => PUBLIC_RATES.EUR)
+    this.now = options.now ?? (() => new Date())
     this.events = new EventLog(this.dir, {
       locks: this.locks,
-      ...(options.now ? { now: options.now } : {}),
+      now: this.now,
       ...(options.eventsRotateBytes ? { rotateBytes: options.eventsRotateBytes } : {}),
     })
   }
@@ -334,6 +336,33 @@ export class Ledger {
     if (!cached || cached.entry.phase === phase || cached.entry.state === "closed") return
     cached.entry = { ...cached.entry, phase }
     await this.saveIndex(this.snapshot())
+  }
+
+  /**
+   * Splits the interval of every open slot work on a shared machine at a membership change, so the interval each lived
+   * keeps the share it was priced at and the interval after it takes the new share. One work joining or closing does not
+   * reprice another's past: the open works on the machine, the newcomer included and the leaver excluded, divide it.
+   */
+  async checkpointSlots(machine: MachineName, region: Region | null, at = this.now()): Promise<void> {
+    const open = (await this.list({})).filter((record) => record.state === "open" && record.slot === true && record.machine === machine && record.region === region)
+    if (open.length === 0) return
+    const share = 1 / open.length
+    const rates = this.currentRates()
+    await this.withWorks(
+      open.map((record) => record.workId),
+      async () => {
+        for (const listed of open) {
+          const record = await this.get(listed.workId)
+          if (!record || record.state !== "open" || !record.hours) continue
+          const last = Date.parse(record.hours.at)
+          // A checkpoint before the record's last change cannot rewind it; that change already used the share it had.
+          if (!Number.isNaN(last) && at.getTime() <= last) continue
+          const hours = countHours(record.hours, record.hours.phase, at, { size: record.size, rates, share })
+          if (record.hours.phase === hours.phase && record.hours.at === hours.at && record.hours.share === hours.share) continue
+          await this.write(record.workId, { ...record, hours })
+        }
+      },
+    )
   }
 
   /**

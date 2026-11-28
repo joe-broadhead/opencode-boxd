@@ -256,4 +256,46 @@ describe("the ledger's machine-hours", () => {
     expect(one.cost + two.cost).toBeCloseTo(machine, 10)
     expect(one.todayCost + two.todayCost).toBeCloseTo(machine, 10)
   })
+
+  test("a slot joining and another closing split the interval, so the machine is still counted once", async () => {
+    const root = tempRoot("boxd-hours-slot-members-")
+    roots.push(root)
+    const clock = { now: new Date(2026, 10, 16, 9, 0, 0) }
+    const ledger = new Ledger(root, { now: () => clock.now, rates: () => EUR })
+    const port = ledgerPort(ledger)
+    const context = { call: { callId: "hours", source: "watcher" as const } }
+    const shared = { slot: true as const, machine: "oc-shared-fleet" as const, size: "2x8" as const }
+    const machine = perHour("busy", "2x8", reading, EUR)
+    const write = async (record: WorkRecord) => port.update([record.workId], async () => ({ write: [record], value: record }), context)
+
+    // `one` runs alone for an hour: its first interval is the whole machine.
+    await write(record("one", { ...shared, createdAt: clock.now.toISOString() }))
+    await port.appendEvent({ at: clock.now.toISOString(), workId: "one", from: null, to: "busy", reading }, context)
+
+    // `two` joins an hour in: `one`'s interval up to now stays whole, and both share from here.
+    clock.now = new Date(clock.now.getTime() + minutes(60))
+    await write(record("two", { ...shared, createdAt: clock.now.toISOString() }))
+    await port.appendEvent({ at: clock.now.toISOString(), workId: "two", from: null, to: "busy", reading }, context)
+    const afterJoin = (await ledger.get("one"))!.hours!
+    expect(afterJoin.share).toBe(0.5)
+    expect(afterJoin.cost).toBeCloseTo(machine, 10)
+
+    // Two hours later `two` closes: both shared interval hours go half, then `one` has the machine again.
+    clock.now = new Date(clock.now.getTime() + minutes(120))
+    const leaving = (await ledger.get("two"))!
+    await write({ ...leaving, state: "closed", closed: { at: clock.now.toISOString(), how: "dropped" } })
+    await port.appendEvent({ at: clock.now.toISOString(), workId: "two", from: "busy", to: "closed" }, context)
+    const afterClose = (await ledger.get("one"))!.hours!
+    expect(afterClose.share).toBe(1)
+    expect(afterClose.cost).toBeCloseTo(machine * 2, 10)
+
+    // One more hour on its own, and the works sum to the four hours the machine ran.
+    clock.now = new Date(clock.now.getTime() + minutes(60))
+    await port.appendEvent({ at: clock.now.toISOString(), workId: "one", from: "busy", to: "idle" }, context)
+    const one = (await ledger.get("one"))!.hours!
+    const two = (await ledger.get("two"))!.hours!
+    expect(one.cost).toBeCloseTo(machine * 3, 10)
+    expect(two.cost).toBeCloseTo(machine, 10)
+    expect(one.cost + two.cost).toBeCloseTo(machine * 4, 10)
+  })
 })

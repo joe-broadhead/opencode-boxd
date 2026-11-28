@@ -60,7 +60,8 @@ None.
   recorded. A change of currency starts `cost` again in the new currency rather than adding two currencies, and an
   interval across local midnight puts only its part after midnight into `todayCost`. A slot work on a shared machine is
   charged its share, the machine's figure divided by the open works on it, so the slots on one machine add up to the
-  machine once. `boxd_status` with `include: ["cost"]` shows
+  machine once. When a work joins or closes, the ledger splits every open slot's interval there, so the time already
+  lived keeps its earlier share and the time after takes the new one. `boxd_status` with `include: ["cost"]` shows
   `hours: { seconds: { existed, running, asleep }, estimate: { amount, currency, ratesSource } }` on each work row beside
   the money figures, and `boxd_job` shows the same on every answer. The cost block sums them for this ledger, for today
   from local midnight, and since the oldest open work was created. The seconds and their estimate are computed from the

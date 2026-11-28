@@ -5,7 +5,8 @@
 - Each work's ledger record counts its machine's existed, running and asleep seconds, and prices every interval at
   boxd's rates as it is counted, in the rates' currency. `boxd_job` and `boxd_status` with `include: ["cost"]` show
   `hours.seconds` and `hours.estimate`, and the cost block sums them for this ledger, today and since the oldest open
-  work; a slot work is charged its share of its shared machine.
+  work; a slot work is charged its share of its shared machine, and a work joining or closing splits every open slot's
+  interval there.
 - The fleet status classifies every machine in the organisation: a work here, another ledger's work, kept by a `keep`
   selector, a golden builder, or an orphan with its reason and whether the plugin may act on it. `boxd_ensure` with
   `select: "orphans"` adopts every actionable orphan from its guest's `describe`, writing a record and this ledger's

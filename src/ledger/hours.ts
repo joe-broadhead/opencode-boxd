@@ -77,7 +77,10 @@ export function countHours(previous: MeteredHours | undefined, phase: Phase, at:
   const today = Math.max(0, now - Math.max(start, startOfDay(at))) / 1000
   const sameDay = previous.day === day
   const sameCurrency = (previous.currency ?? facts.rates.currency) === facts.rates.currency
-  const share = facts.share ?? previous.share ?? 1
+  // The interval was lived at the share recorded when it began; a membership change checkpoints the interval there and
+  // records the new share for what follows (`Ledger.checkpointSlots`).
+  const share = previous.share ?? facts.share ?? 1
+  const nextShare = facts.share ?? share
   const reading = facts.reading ?? previous.reading
   const hour = perHour(previous.phase, facts.size, reading, facts.rates)
   const intervalCost = (elapsed / 3600) * hour * share
@@ -98,7 +101,7 @@ export function countHours(previous: MeteredHours | undefined, phase: Phase, at:
     currency: priced ? facts.rates.currency : (previous.currency ?? facts.rates.currency),
     ratesSource: priced ? facts.rates.source : (previous.ratesSource ?? facts.rates.source),
     ...(reading ? { reading } : {}),
-    share,
+    share: nextShare,
     day,
     phase,
     at: at.toISOString(),
