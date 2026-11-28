@@ -66,6 +66,14 @@ None.
   the money figures, and `boxd_job` shows the same on every answer. The cost block sums them for this ledger, for today
   from local midnight, and since the oldest open work was created. The seconds and their estimate are computed from the
   ledger alone, so they show without an owner's sign-in; boxd's own `today.machines` figure still needs one.
+- **Cost events.** The works source appends one cost event for each work for every local day that ended, and one for its
+  whole life when it closes. A day event says `cost:<YYYY-MM-DD>`, `running-seconds:<n>`, `asleep-seconds:<n>`,
+  `amount:<amount>`, `currency:<code>` and `rates:<usage or public>`; a life event says `cost:life` with the same labels.
+  A cost event keeps `from` equal to `to`, so it never looks like a phase change. The record keeps the last day it
+  reported, so a restart, a second OpenCode process on one ledger or a missed sweep writes no day twice. The record's
+  `product`, `role`, `feature` and `task` labels travel on the event when it holds them, so an automation can sum a
+  product's day from the events alone. Read them with `events_list` and its cursor; no boxd call and no machine is
+  woken.
 - **Machines against the limit.** The `/boxd` report counts the organisation's machines against boxd's limit from the
   all-region listing and the machine limit the fleet read already takes, with no usage read and no owner's sign-in. Its
   `Machines:` line reads, for example, `1,180 of 1,250 in use (40 running, 12 standby, 1,128 hibernated); 31 are this

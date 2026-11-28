@@ -11,7 +11,7 @@ import { createReadStream, mkdirSync } from "node:fs"
 import { open, rename, stat } from "node:fs/promises"
 import { join } from "node:path"
 import { boxdError, isCode } from "../errors.js"
-import type { EventPage } from "../ports.js"
+import { WORK_LABEL_KEYS, type EventPage, type WorkEventCost, type WorkLabels } from "../ports.js"
 import { EVENTS_ROTATE_BYTES, type EventLine } from "./types.js"
 import { errnoOf, FILE_MODE } from "./fsx.js"
 import { acquireLock, type LockSet } from "./lock.js"
@@ -69,6 +69,8 @@ export class EventLog {
         ...(event.warm !== undefined ? { warm: event.warm } : {}),
         ...(event.readySeconds !== undefined && Number.isSafeInteger(event.readySeconds) && event.readySeconds >= 0 ? { readySeconds: event.readySeconds } : {}),
         ...(event.reading !== undefined ? { reading: { residentGiB: event.reading.residentGiB, load1: event.reading.load1 } } : {}),
+        ...(event.cost !== undefined ? { cost: cleanCost(event.cost) } : {}),
+        ...(event.labels !== undefined ? { labels: cleanLabels(event.labels) } : {}),
       }
       // The fence: a sequence number is handed out only while this process still holds the log's lock.
       if (!(await lock.holds())) throw boxdError(this.locks?.disposed ? "CANCELLED" : "LEDGER_LOCKED", "The event log's lock was lost before the append, so nothing was written.")
@@ -199,6 +201,36 @@ const parseSeq = (text: string): number | undefined => {
   } catch {
     return undefined
   }
+}
+
+const DAY = /^\d{4}-\d{2}-\d{2}$/
+const CURRENCY = /^[A-Z]{3}$/
+const whole = (value: number) => (Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0)
+const amount = (value: number) => (Number.isFinite(value) ? Math.max(0, Math.round(value * 10_000) / 10_000) : 0)
+
+/** A cost event's figures, with only the shapes an event may carry; anything malformed is left out. */
+function cleanCost(cost: WorkEventCost): WorkEventCost | undefined {
+  if (cost.day !== "life" && !DAY.test(cost.day)) return undefined
+  if (!CURRENCY.test(cost.currency) || (cost.ratesSource !== "usage" && cost.ratesSource !== "public")) return undefined
+  return {
+    day: cost.day,
+    seconds: { existed: whole(cost.seconds.existed), running: whole(cost.seconds.running), asleep: whole(cost.seconds.asleep) },
+    amount: amount(cost.amount),
+    currency: cost.currency,
+    ratesSource: cost.ratesSource,
+  }
+}
+
+/** A work's labels, filtered to the four the plugin uses and cut to a label value's length. */
+function cleanLabels(labels: WorkLabels): WorkLabels | undefined {
+  const clean: Partial<Record<(typeof WORK_LABEL_KEYS)[number], string>> = {}
+  for (const key of WORK_LABEL_KEYS) {
+    const value = labels[key]
+    if (typeof value !== "string") continue
+    const text = value.trim().slice(0, 64)
+    if (text) clean[key] = text
+  }
+  return Object.keys(clean).length ? clean : undefined
 }
 
 /**

@@ -1,6 +1,6 @@
 /**
- * The `boxd.works` source: `events_list`, every change of every work as one normalised event, and `probe`, whose
- * ledger it is.
+ * The `boxd.works` source: `events_list`, every change of every work as one normalised event, the cost events the
+ * watcher appends for each local day and each work's life, and `probe`, whose ledger it is.
  *
  * - **Local only.** `events_list` reads the ledger's `events.jsonl` through `LedgerPort.eventsSince`, the log the status
  *   report reads its cursor from. It makes no boxd call and no network call, never wakes a machine, and takes no ledger
@@ -39,7 +39,7 @@ import type { MachineIdentity } from "../accounts.js"
 import { ownerOf } from "../accounts.js"
 import type { CallContext } from "../call.js"
 import { BoxdError } from "../errors.js"
-import type { LedgerPort, OpContext, WorkEvent } from "../ports.js"
+import { WORK_LABEL_KEYS, type LedgerPort, type OpContext, type WorkEvent } from "../ports.js"
 import { PROBE_INPUT } from "./schemas.js"
 
 /** The source every event names. */
@@ -112,8 +112,14 @@ const PHASE_WORDS: Readonly<Record<string, string>> = {
   closed: "it is closed",
 }
 
-/** The plugin's own sentence for one change: the work id, then the phase, the outcome, the code and who slept it. */
+/** The plugin's own sentence for one change: a cost figure, or the work id, phase, outcome, code and who slept it. */
 export function titleOf(event: WorkEvent): string {
+  if (event.cost) {
+    const hours = (event.cost.seconds.running / 3600).toFixed(1)
+    return event.cost.day === "life"
+      ? `Work ${event.workId} cost ${event.cost.currency} ${event.cost.amount.toFixed(2)} over its life, ${hours} running hours`
+      : `Work ${event.workId} cost ${event.cost.currency} ${event.cost.amount.toFixed(2)} on ${event.cost.day}, ${hours} running hours`
+  }
   const said =
     event.to === "idle" && event.outcome && OUTCOME_WORDS[event.outcome]
       ? OUTCOME_WORDS[event.outcome]!
@@ -147,7 +153,8 @@ function changeOf(event: WorkEvent): string | undefined {
 
 /** One work event as a contract event. */
 export function eventOf(event: WorkEvent): SourceEvent {
-  const change = changeOf(event)
+  // A cost event is a figure, not a change: it keeps `from` equal to `to` and never carries a `change:` label.
+  const change = event.cost ? undefined : changeOf(event)
   return makeEvent({
     source: SOURCE,
     account: "default",
@@ -158,6 +165,20 @@ export function eventOf(event: WorkEvent): SourceEvent {
     title: titleOf(event),
     labels: [
       ...(change ? [`change:${change}`] : []),
+      ...(event.cost
+        ? [
+            `cost:${event.cost.day}`,
+            `running-seconds:${event.cost.seconds.running}`,
+            `asleep-seconds:${event.cost.seconds.asleep}`,
+            `amount:${event.cost.amount}`,
+            `currency:${event.cost.currency}`,
+            `rates:${event.cost.ratesSource}`,
+          ]
+        : []),
+      ...WORK_LABEL_KEYS.flatMap((key) => {
+        const value = event.labels?.[key]
+        return value ? [`${key}:${value}`] : []
+      }),
       `phase:${event.to}`,
       ...(event.outcome ? [`outcome:${event.outcome}`] : []),
       ...(event.code ? [`code:${event.code}`] : []),

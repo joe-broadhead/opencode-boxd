@@ -90,6 +90,11 @@ it. Drop only finished, saved work. The plugin's automation harvests and hiberna
 their estimate from the ledger, which need no owner's sign-in:
 `hours.seconds.{existed, running, asleep}` and `hours.estimate.{amount, currency, ratesSource}`.
 
+The works source also carries the figures as cost events: one for each local day that ended and one `cost:life` when the
+work closes. Pass the labels `product`, `role`, `feature` and `task` to `ensure` when the work belongs to one, so a cost
+event also says `product:<value>` and the rest; an automation can then sum a product's day from `events_list` alone,
+without reading status on a timer.
+
 A `budget` may cap today's machine cost (`daily`) and today's running hours for this ledger's works (`machineHours`).
 `budget.labels` adds caps for the works that carry one label, such as `{ match: "product=alpha", machines: 6 }`, with
 `machines`, `machineHours` and `daily` measured for that label alone. With `action: "refuse"`, a call that would make a

@@ -147,6 +147,24 @@ export interface MeteredHours {
   readonly at: string
 }
 
+/** Machine time by boxd's billing state, in seconds: the figures a cost event carries. */
+export interface CostSeconds {
+  readonly existed: number
+  readonly running: number
+  readonly asleep: number
+}
+
+/** One local day's priced machine time, which the watcher reports as a cost event. */
+export interface MeteredDay {
+  /** `YYYY-MM-DD` in this machine's local day. */
+  readonly day: string
+  readonly seconds: CostSeconds
+  /** Estimated cost in `currency`, at `ratesSource`'s rates, to 4 decimals. */
+  readonly amount: number
+  readonly currency: string
+  readonly ratesSource: Rates["source"]
+}
+
 export interface WorkRecord {
   readonly format: typeof LEDGER_FORMAT
   readonly workId: string
@@ -202,6 +220,10 @@ export interface WorkRecord {
   readonly reboots?: ReadonlyArray<{ readonly at: string; readonly why: "agent-silent" | "repair" }>
   /** The machine time and its cost the watcher has counted for this work; absent until its first phase change. */
   readonly hours?: MeteredHours
+  /** The local day of the last cost event the watcher wrote, so a restart or a second watcher never writes it twice. */
+  readonly costDay?: string
+  /** The watcher wrote the work's one life cost event at its close. */
+  readonly costLife?: true
   /** When a plugin call last touched the work: automation's `orphanHours` counts from it (§C.3). */
   readonly touchedAt?: string
   /** The `leaseDays` delete-after timer, when the option set one: renewed at most once per 6 hours (§C.2). */

@@ -2,12 +2,13 @@
 // real published ledger in a temp root, a fake host session API that records notices, and the watcher with no timer.
 import { cpSync } from "node:fs"
 import { join } from "node:path"
-import { createCost } from "../../src/cost/index.js"
+import { createCost, internalsOf } from "../../src/cost/index.js"
+import { PUBLIC_RATES } from "../../src/cost/rates.js"
 import { createLedger } from "../../src/ledger/index.js"
 import type { WorkRecord } from "../../src/ledger/types.js"
 import { parseOptions } from "../../src/options.js"
 import { createProvider, type PluginProvider } from "../../src/provider/index.js"
-import type { ChangeTarget, CallTag, LedgerPort, MachineId, MachineName, OpContext } from "../../src/ports.js"
+import type { ChangeTarget, CallTag, LedgerPort, MachineId, MachineName, OpContext, Rates } from "../../src/ports.js"
 import { notBuilt } from "./not-built.js"
 import type { CoreServices, CostPort, FleetServices, SessionAccess } from "../../src/services.js"
 import { createWatch, type Watcher } from "../../src/watch.js"
@@ -101,10 +102,12 @@ export async function startWorld(
       if (problem !== undefined) reports.push({ area, problem })
     },
   }
-  const ledger = createLedger({ ...host, ...runtime })
+  let ratesOf: () => Rates = () => PUBLIC_RATES.EUR
+  const ledger = createLedger({ ...host, ...runtime, rates: () => ratesOf() })
   const core: CoreServices = { ...host, ...runtime, ledger }
-  const watcher = createWatch(core, { autoStart: false, ...(options.changed ? { changed: options.changed } : {}) })
+  const watcher = createWatch(core, { autoStart: false, rates: () => ratesOf(), ...(options.changed ? { changed: options.changed } : {}) })
   const cost = options.cost === "real" ? createCost({ ...core, watch: watcher.watch }) : (options.cost ?? notBuilt<CostPort>("cost"))
+  if (options.cost === "real") ratesOf = internalsOf(cost).rates
   const services: FleetServices = { ...core, watch: watcher.watch, cost }
   const context = (callId: string, source: CallTag["source"] = "boxd_status"): OpContext => ({ call: { callId, source } })
 

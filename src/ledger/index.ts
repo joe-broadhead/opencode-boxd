@@ -67,6 +67,7 @@ export function ledgerPort(store: Ledger): LedgerPort {
       await store.setPhase(line.workId, line.to)
       return line
     },
+    appendEventOnce: (event, claim, key, context) => store.appendEventOnce(event, claim, key, context.signal),
     eventsSince: (cursor, _context): Promise<EventPage> => store.events.since(cursor),
     workFolder: (workId) => store.workDir(workId),
     stageFile: (workId, final, _context) => store.stageFile(workId, final),
