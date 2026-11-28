@@ -22,6 +22,7 @@ import {
   type ServeAnswer,
   type SessionMarks,
   type SetupAnswer,
+  type WarmAnswer,
 } from "../../ports.js"
 import { excerpt, excerptBlock, shortReason } from "../../redact.js"
 
@@ -200,6 +201,10 @@ export function readHealth(answer: Json): HealthAnswer {
 export function readSetup(answer: Json, helperUploaded: boolean): SetupAnswer {
   if ((answer.server !== "up" && answer.server !== "starting") || (answer.workspace !== "ready" && answer.workspace !== "cloning") || !string(answer.opencode)) throw shape("setup")
   return { server: answer.server, opencode: version(answer.opencode) ?? "", workspace: answer.workspace, helperUploaded }
+}
+
+export function readWarm(answer: Json): WarmAnswer {
+  return { path: guestFile("warm", answer.path) }
 }
 
 export function readPrompt(answer: Json): PromptAnswer {

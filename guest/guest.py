@@ -6,10 +6,13 @@ One JSON object on stdin, one JSON line on stdout: {"ok": true, "protocol": 1, .
 ~/.boxd-plugin/guest.py, talks only to the guest's own OpenCode server on localhost, and uses the standard
 library only.
 
-Read actions (serve, phase, read, health, describe) never start, write or upload anything. Change actions (setup, prompt,
-interrupt, upgrade, export, import, git, scrub) first check that this file is the copy the laptop expects (its
-sha256): an older copy answers HELPER_OUTDATED and does nothing, and the laptop uploads the new one. An upload runs
-once with --install, which moves it to the stable path before it acts.
+Read actions (serve, phase, read, health, describe) never start, write or upload anything. Change actions (setup,
+prompt, interrupt, upgrade, export, import, git, warm, scrub) first check that this file is the copy the laptop
+expects (its sha256): an older copy answers HELPER_OUTDATED and does nothing, and the laptop uploads the new one. An
+upload runs once with --install, which moves it to the stable path before it acts.
+
+`warm` keeps a repository's checkout under ~/.boxd-plugin/warm for a golden image, and `setup` starts a work from it
+when the machine has one.
 """
 
 import base64
@@ -59,6 +62,7 @@ SERVER_PID = HELPER_HOME + "/server.pid"
 SETUP_LOG = HELPER_HOME + "/setup.log"
 ENV_NAMES = HELPER_HOME + "/env.json"
 CLONES = HELPER_HOME + "/clones"
+WARM = HELPER_HOME + "/warm"
 EXPORTS = HELPER_HOME + "/exports"
 HARVEST = HELPER_HOME + "/harvest"
 STAGING = HELPER_HOME + "/staging"
@@ -982,10 +986,22 @@ def repo_url(value):
     fail("NAME_INVALID", "repo must be an https://github.com/owner/repo URL")
 
 
-def start_clone(directory, repo, ref):
-    """The clone runs detached, in its own process group with its own bound, so a stopped call never cuts it."""
+def repo_ref(value):
+    if value is not None and (not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9._/-]{1,120}", value)):
+        fail("NAME_INVALID", "bad ref")
+    return value
+
+
+def warm_path(url):
+    """A repository's warm checkout: the helper's own folder, keyed by the hash of its URL."""
+    return os.path.join(WARM, hashlib.sha256(url.encode()).hexdigest()[:16])
+
+
+def start_clone(directory, repo, ref, warm=False):
+    """The clone runs detached, in its own process group with its own bound, so a stopped call never cuts it. With
+    `warm`, the checkout is already in the work folder and the process only fetches and checks out."""
     os.makedirs(CLONES, mode=0o700, exist_ok=True)
-    spec = {"directory": guest(directory), "repo": repo, "ref": ref, "status": "running", "at": time.time()}
+    spec = {"directory": guest(directory), "repo": repo, "ref": ref, "status": "running", "at": time.time(), **({"warm": True} if warm else {})}
     write_clone_state(directory, spec)
     with open(SETUP_LOG, "ab") as log:
         os.chmod(SETUP_LOG, 0o600)
@@ -999,10 +1015,42 @@ def start_clone(directory, repo, ref):
     write_file(os.path.join(CLONES, clone_key(directory) + ".pid"), str(process.pid).encode(), 0o600)
 
 
+def refresh_warm(directory, state):
+    """The detached half of a warm setup: fetch the newest commits and check out the requested ref, or the remote's
+    default branch. The checkout is already in place, so a failure leaves it usable at the commit it held."""
+    ref = state.get("ref")
+    fetch = ["timeout", str(CLONE_SECONDS), "git", "-C", directory, "fetch", "--quiet", "origin"]
+    if ref:
+        fetch.append(ref)
+    fetched = subprocess.run(fetch, capture_output=True, text=True)
+    if fetched.returncode != 0:
+        state.update(status="failed", detail=(fetched.stderr or "git fetch failed").strip()[-300:])
+        state["ended"] = time.time()
+        write_clone_state(directory, state)
+        return
+    if ref:
+        target = "FETCH_HEAD"
+    else:
+        # The remote's default branch can move; set-head reads it after the fetch, and the old one stays when the
+        # remote does not answer.
+        subprocess.run(["timeout", str(CLONE_SECONDS), "git", "-C", directory, "remote", "set-head", "origin", "--auto"], capture_output=True, text=True)
+        target = "origin/HEAD"
+    checked = subprocess.run(["git", "-C", directory, "-c", "advice.detachedHead=false", "checkout", "--quiet", "--detach", target], capture_output=True, text=True)
+    if checked.returncode == 0:
+        state.update(status="done")
+    else:
+        state.update(status="failed", detail=(checked.stderr or "git checkout failed").strip()[-300:])
+    state["ended"] = time.time()
+    write_clone_state(directory, state)
+
+
 def run_clone(directory):
     """The detached clone itself: into a temp folder beside the work folder, then one rename, so a half clone is never
-    taken for a checkout."""
+    taken for a checkout. A warm checkout is already in place; only its fetch and checkout run here."""
     state = clone_state(directory) or {}
+    if state.get("warm"):
+        refresh_warm(directory, state)
+        return
     temp = f"{directory}.clone-{os.getpid()}"
     remove(temp)
     command = ["timeout", str(CLONE_SECONDS), "git", "clone", "--quiet"]
@@ -1133,6 +1181,30 @@ def ensure_done_plugin():
     write_file(PLUGIN_PATH, data, 0o600)
 
 
+def action_warm(request):
+    """A golden build's step: clone a repository into the helper's own folder, where the image keeps it for the works
+    that fork from it. A later setup moves it into a work folder with one rename and brings it up to date."""
+    repo = request.get("repo")
+    url = repo_url(repo.get("url") if isinstance(repo, dict) else None)
+    ref = repo_ref(repo.get("ref") if isinstance(repo, dict) else None)
+    os.makedirs(WARM, mode=0o700, exist_ok=True)
+    os.chmod(WARM, 0o700)
+    destination = warm_path(url)
+    temp = f"{destination}.clone-{os.getpid()}"
+    remove(temp)
+    command = ["timeout", str(CLONE_SECONDS), "git", "clone", "--quiet"]
+    if ref:
+        command += ["--branch", ref]
+    command += ["--", url, temp]
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode != 0 or not os.path.isdir(os.path.join(temp, ".git")):
+        remove(temp)
+        fail("GUEST_WORKSPACE", (result.stderr or "git clone failed").strip()[-300:])
+    remove(destination)
+    os.replace(temp, destination)
+    emit({"path": guest(destination)})
+
+
 def action_setup(request):
     directory = work_directory(request.get("directory"))
     refuse_operator()
@@ -1159,9 +1231,7 @@ def action_setup(request):
             os.makedirs(directory, exist_ok=True)
         else:
             url = repo_url(repo.get("url") if isinstance(repo, dict) else None)
-            ref = repo.get("ref") if isinstance(repo, dict) else None
-            if ref is not None and (not isinstance(ref, str) or not re.fullmatch(r"[A-Za-z0-9._/-]{1,120}", ref)):
-                fail("NAME_INVALID", "bad ref")
+            ref = repo_ref(repo.get("ref") if isinstance(repo, dict) else None)
             existing = clone_state(directory)
             if existing and existing.get("status") == "running":
                 workspace = "cloning"
@@ -1171,8 +1241,35 @@ def action_setup(request):
                 fail("GUEST_WORKSPACE", existing.get("detail") or "the clone failed")
             else:
                 os.makedirs(os.path.dirname(directory), exist_ok=True)
-                start_clone(directory, url, ref)
+                checkout = warm_path(url)
+                if os.path.isdir(os.path.join(checkout, ".git")):
+                    # One rename puts the warm checkout in place; the detached process fetches and checks out.
+                    if os.path.isdir(directory) and not os.listdir(directory):
+                        os.rmdir(directory)
+                    if os.path.exists(directory):
+                        fail("GUEST_WORKSPACE", "the work folder is not empty")
+                    os.replace(checkout, directory)
+                    start_clone(directory, url, ref, warm=True)
+                    workspace = "cloning"
+                else:
+                    start_clone(directory, url, ref)
+                    workspace = "cloning"
+    else:
+        existing = clone_state(directory)
+        if existing and existing.get("status") == "running":
+            workspace = "cloning"
+        elif existing and existing.get("status") == "failed":
+            if existing.get("warm") and existing.get("reported"):
+                # Reported once; the checkout is still in place, so the retry is the same fetch.
+                start_clone(directory, existing.get("repo", ""), existing.get("ref"), warm=True)
                 workspace = "cloning"
+            else:
+                if existing.get("warm"):
+                    existing["reported"] = True
+                    write_clone_state(directory, existing)
+                else:
+                    os.unlink(os.path.join(CLONES, clone_key(directory) + ".json"))
+                fail("GUEST_WORKSPACE", existing.get("detail") or "the clone failed")
     emit({"server": "up" if state == "up" else "starting", "opencode": version or "", "workspace": workspace})
 
 
@@ -1540,9 +1637,33 @@ def has_sessions(request):
         fail("GUEST_FAILED", f"the session database could not be read: {error}")
 
 
+def warm_checkout_has_credential(path):
+    """True when a checkout's git configuration carries a token or a credential helper."""
+    try:
+        with open(os.path.join(path, ".git", "config"), encoding="utf8", errors="replace") as handle:
+            text = handle.read()
+    except OSError:
+        return False
+    return bool(
+        re.search(r"[a-z][a-z0-9+.-]*://[^/\s@]+@", text, re.IGNORECASE)
+        or re.search(r"(?im)^\s*(?:helper|extraheader)\s*=", text)
+    )
+
+
+def has_git_credential():
+    """True when the machine or one of its warm checkouts holds a git credential that must never reach an image."""
+    if os.path.exists(local(HOME + "/.git-credentials")) or os.path.exists(local(HOME + "/.config/gh/hosts.yml")):
+        return True
+    try:
+        names = os.listdir(WARM)
+    except OSError:
+        return False
+    return any(warm_checkout_has_credential(os.path.join(WARM, name)) for name in names)
+
+
 def action_scrub(request):
     """The golden build's last step: nothing of a person, a key or a session stays in the image."""
-    if os.path.exists(local(HOME + "/.local/share/opencode/auth.json")):
+    if os.path.exists(local(HOME + "/.local/share/opencode/auth.json")) or has_git_credential():
         emit({"removed": [], "refused": "has-credential"})
         return
     if has_sessions(request):
@@ -1558,6 +1679,7 @@ def action_scrub(request):
             # boxd writes it as root at every boot; the helper runs as boxd, which has passwordless sudo.
             subprocess.run(["sudo", "-n", "rm", "-f", env_file], check=True, capture_output=True)
         removed.append(env_file)
+    # WARM stays: a warm image carries its repositories' checkouts for the works that fork from it.
     for path in (PASSWORD_PATH, ENV_NAMES, EXPORTS, HARVEST, STAGING, IMPORTS, CLONES, SERVER_LOG, SETUP_LOG, local(WORK_ROOT)):
         if remove(path):
             removed.append(guest(path))
@@ -1575,6 +1697,7 @@ CHANGES = {
     "export": action_export,
     "import": action_import,
     "git": action_git,
+    "warm": action_warm,
     "scrub": action_scrub,
 }
 

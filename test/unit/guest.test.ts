@@ -8,7 +8,7 @@
 // runner's own timeouts, so a test's limit is generous rather than tight, and a wait waits for its event, not a count.
 import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { createHash } from "node:crypto"
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { BoxdError } from "../../src/errors.js"
 import { createBoxdCli } from "../../src/provider/boxd/cli.js"
@@ -87,6 +87,28 @@ async function readTarget(): Promise<ReadTarget> {
 const serveOf = async (directory: string) => runtime.guest.serve(await readTarget(), { directory }, context())
 
 const setup = (input: Partial<Parameters<Runtime["guest"]["setup"]>[1]> = {}) => change((target) => runtime.guest.setup(target, { directory: DIRECTORY, opencode: "2.4.1", ...input }, context()))
+
+/** git in a test repository, failing the test when git itself fails. */
+function gitAt(directory: string, ...args: string[]): string {
+  const result = Bun.spawnSync(["git", "-C", directory, ...args])
+  if (result.exitCode !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr.toString()}`)
+  return result.stdout.toString()
+}
+
+function commitAt(directory: string, file: string, text: string, message: string): void {
+  writeFileSync(join(directory, file), text)
+  gitAt(directory, "add", file)
+  gitAt(directory, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "--quiet", "-m", message)
+}
+
+/** A guest `git` that holds each fetch open for two seconds, so a warm refresh runs while setup is read. */
+function slowFetch(): void {
+  const git = Bun.which("git")
+  if (!git) throw new Error("git is not on PATH")
+  const path = join(fake.dir, "guest-bin", "git")
+  writeFileSync(path, `#!/bin/sh\nfor arg in "$@"; do\n  if [ "$arg" = "fetch" ]; then sleep 2; break; fi\ndone\nexec ${JSON.stringify(git)} "$@"\n`)
+  chmodSync(path, 0o755)
+}
 
 describe("the helper on the machine", () => {
   test("the first change uploads it and it installs itself at the stable path; the next change is one exec", async () => {
@@ -619,6 +641,105 @@ describe("the work tree", () => {
     expect(await cloneEnds(DIRECTORY)).toBe("failed")
     expect((await fail(setup({ repo })))?.code).toBe("GUEST_WORKSPACE")
     expect((await setup({ repo })).workspace).toBe("cloning")
+  })
+
+  test("warm: setup moves a warm checkout with one rename and fetches a commit made after it", async () => {
+    const origin = join(fake.dir, "warm-origin")
+    mkdirSync(origin, { recursive: true })
+    gitAt(origin, "init", "--quiet")
+    commitAt(origin, "f", "one\n", "one")
+    const url = `file://${origin}`
+    const warm = await change((target) => runtime.guest.warm(target, { repo: { url } }, context()))
+    expect(warm.path).toMatch(/^\/home\/boxd\/\.boxd-plugin\/warm\/[0-9a-f]{16}$/)
+    expect(existsSync(onDisk(`${warm.path}/.git`))).toBe(true)
+    commitAt(origin, "f", "two\n", "two")
+    const first = await setup({ repo: { url } })
+    expect(first.workspace).toBe("cloning")
+    expect(existsSync(onDisk(`${warm.path}/.git`))).toBe(false)
+    expect(existsSync(onDisk(`${DIRECTORY}/.git`))).toBe(true)
+    expect(await cloneEnds(DIRECTORY)).toBe("done")
+    expect(readFileSync(onDisk(`${DIRECTORY}/f`), "utf8")).toBe("two\n")
+    expect((await setup({ repo: { url } })).workspace).toBe("ready")
+  })
+
+  test("warm: setup answers cloning while its fetch runs, and a later setup joins it", async () => {
+    const origin = join(fake.dir, "warm-slow-origin")
+    mkdirSync(origin, { recursive: true })
+    gitAt(origin, "init", "--quiet")
+    commitAt(origin, "f", "one\n", "one")
+    const url = `file://${origin}`
+    await change((target) => runtime.guest.warm(target, { repo: { url } }, context()))
+    slowFetch()
+    expect((await setup({ repo: { url } })).workspace).toBe("cloning")
+    expect((await setup({ repo: { url } })).workspace).toBe("cloning")
+    expect(await cloneEnds(DIRECTORY)).toBe("done")
+    expect((await setup({ repo: { url } })).workspace).toBe("ready")
+  })
+
+  test("warm: a failed fetch is reported once by setup, and the next setup retries it", async () => {
+    const origin = join(fake.dir, "warm-failed-origin")
+    mkdirSync(origin, { recursive: true })
+    gitAt(origin, "init", "--quiet")
+    commitAt(origin, "f", "one\n", "one")
+    const url = `file://${origin}`
+    await change((target) => runtime.guest.warm(target, { repo: { url } }, context()))
+    commitAt(origin, "f", "two\n", "two")
+    renameSync(origin, `${origin}.away`)
+    expect((await setup({ repo: { url } })).workspace).toBe("cloning")
+    expect(await cloneEnds(DIRECTORY)).toBe("failed")
+    expect((await fail(setup({ repo: { url } })))?.code).toBe("GUEST_WORKSPACE")
+    renameSync(`${origin}.away`, origin)
+    expect((await setup({ repo: { url } })).workspace).toBe("cloning")
+    expect(await cloneEnds(DIRECTORY)).toBe("done")
+    expect(readFileSync(onDisk(`${DIRECTORY}/f`), "utf8")).toBe("two\n")
+  })
+
+  test("warm: setup checks out a ref other than the default branch, at the commit made after the warm checkout", async () => {
+    const origin = join(fake.dir, "warm-ref-origin")
+    mkdirSync(origin, { recursive: true })
+    gitAt(origin, "init", "--quiet")
+    commitAt(origin, "f", "one\n", "one")
+    const defaultBranch = gitAt(origin, "symbolic-ref", "--short", "HEAD").trim()
+    gitAt(origin, "checkout", "--quiet", "-b", "next")
+    commitAt(origin, "f", "next-one\n", "next one")
+    const url = `file://${origin}`
+    await change((target) => runtime.guest.warm(target, { repo: { url, ref: "next" } }, context()))
+    commitAt(origin, "f", "next-two\n", "next two")
+    const nextTip = gitAt(origin, "rev-parse", "next").trim()
+    const first = await setup({ repo: { url, ref: "next" } })
+    expect(first.workspace).toBe("cloning")
+    expect(await cloneEnds(DIRECTORY)).toBe("done")
+    expect(gitAt(onDisk(DIRECTORY), "rev-parse", "HEAD").trim()).toBe(nextTip)
+    expect(readFileSync(onDisk(`${DIRECTORY}/f`), "utf8")).toBe("next-two\n")
+    expect(gitAt(onDisk(DIRECTORY), "branch", "--show-current").trim()).toBe("")
+    expect(defaultBranch).not.toBe("next")
+  })
+
+  test("scrub refuses a warm checkout with a token, a credential helper or an extra header, and the machine's git credentials; a clean checkout stays", async () => {
+    const origin = join(fake.dir, "warm-scrub-origin")
+    mkdirSync(origin, { recursive: true })
+    gitAt(origin, "init", "--quiet")
+    commitAt(origin, "f", "one\n", "one")
+    const url = `file://${origin}`
+    const warm = await change((target) => runtime.guest.warm(target, { repo: { url } }, context()))
+    const scrub = () => change((target) => runtime.guest.scrub(target, context()))
+    expect((await scrub()).refused).toBeUndefined()
+    expect(existsSync(onDisk(`${warm.path}/.git`))).toBe(true)
+    gitAt(onDisk(warm.path), "remote", "set-url", "origin", "https://x-access-token:secret@github.com/o/r")
+    expect(await scrub()).toEqual({ removed: [], refused: "has-credential" })
+    gitAt(onDisk(warm.path), "remote", "set-url", "origin", url)
+    gitAt(onDisk(warm.path), "config", "credential.helper", "store")
+    expect(await scrub()).toEqual({ removed: [], refused: "has-credential" })
+    gitAt(onDisk(warm.path), "config", "--unset", "credential.helper")
+    gitAt(onDisk(warm.path), "config", "http.https://github.com/.extraheader", "AUTHORIZATION: basic abc")
+    expect(await scrub()).toEqual({ removed: [], refused: "has-credential" })
+    gitAt(onDisk(warm.path), "config", "--unset", "http.https://github.com/.extraheader")
+    writeFileSync(onDisk("/home/boxd/.git-credentials"), "https://user:token@github.com\n")
+    expect(await scrub()).toEqual({ removed: [], refused: "has-credential" })
+    rmSync(onDisk("/home/boxd/.git-credentials"))
+    mkdirSync(onDisk("/home/boxd/.config/gh"), { recursive: true })
+    writeFileSync(onDisk("/home/boxd/.config/gh/hosts.yml"), "github.com:\n")
+    expect(await scrub()).toEqual({ removed: [], refused: "has-credential" })
   })
 })
 
