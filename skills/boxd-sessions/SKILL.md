@@ -34,8 +34,9 @@ before its first call.
 
 Also: `tools.boxd.read({ workId, path })` reads one file, or `log: "server"`, without a harvest; `tools.boxd.exec`
 runs one command with a timeout; `tools.boxd.reassign({ from, to })` moves an unstarted work's machine to a new id;
-`tools.boxd.golden` builds golden images (`ensure` builds a missing one by itself); `tools.boxd.probe` says whose
-ledger this is. `saved` says whether this machine holds the work: `fresh`, `stale` or `none`.
+`tools.boxd.golden` builds golden images (`ensure` builds a missing one by itself), and with `{ repo }`, a repository
+listed in the `warm` option, it builds that repository's warm image from its version's image; `tools.boxd.probe` says
+whose ledger this is. `saved` says whether this machine holds the work: `fresh`, `stale` or `none`.
 
 ## Many works at once
 

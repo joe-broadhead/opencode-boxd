@@ -57,8 +57,9 @@ None.
 - **Changes.** `ensure` makes a work exist and converges it; with `repo` it starts from the repository's warm image when
   one exists, and its answer says `warm` and, for a work this version made, once ready, `readySeconds`. `submit` admits a
   prompt; `harvest` exports the session tree and copies the files back; `sleep` hibernates; `resume` wakes or rebuilds;
-  `reassign` moves an unstarted work's machine to a new id; `golden` builds, lists or prunes golden images. Every one of
-  them emits `changed`.
+  `reassign` moves an unstarted work's machine to a new id; `golden` builds, lists or prunes golden images, and with
+  `repo`, one of the plugin option `warm` repositories, it builds that repository's warm image from its version's image,
+  with the repository's checkout and setup script. Every one of them emits `changed`.
 - **Orphans.** The fleet status classifies every machine as a work here, another ledger's work, kept by a `keep` selector,
   a golden builder, or an orphan with its reason and whether the plugin may act on it. `ensure` with
   `{ select: "orphans" }` adopts every actionable orphan: it reads the guest's `describe`, writes a record and sets this

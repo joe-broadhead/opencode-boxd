@@ -371,6 +371,8 @@ export interface GoldenImage {
   readonly name: string
   readonly opencode: string
   readonly size: Size
+  /** The repository URL, for a warm image. */
+  readonly repo?: string
   readonly seconds?: number
 }
 

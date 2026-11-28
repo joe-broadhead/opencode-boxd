@@ -1,7 +1,8 @@
 // Package C1's test kit: the plugin's own services (the provider on the fake boxd CLI and the ledger as the plugin
 // builds them) with a fake guest server, narrow fakes for the watcher, cost and the host's sessions, and C1's runs. A test seeds machines, snapshots and faults on the fake, and reads back the calls, the spawns and the
 // ledger.
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs"
+import { createHash } from "node:crypto"
+import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { boxdError } from "../../src/errors.js"
@@ -100,6 +101,17 @@ export async function startKit(input: KitInput = {}): Promise<Kit> {
     ...runtime.guest,
     serve: async (...args: Parameters<typeof runtime.guest.serve>) => (refuse(), runtime.guest.serve(...args)),
     phase: async (...args: Parameters<typeof runtime.guest.phase>) => (refuse(), runtime.guest.phase(...args)),
+    // The real helper's `warm` (issue #72) is a clone; the kit's fake leaves its checkout on the machine's disk so a
+    // golden build can run the repository's setup inside it, and records the order the build ran its steps in.
+    warm: async (target: ChangeTarget, input: { readonly repo: { readonly url: string; readonly ref?: string } }) => {
+      const key = createHash("sha256").update(input.repo.url).digest("hex").slice(0, 16)
+      const home = join(counter.fake.disk(target.machineId), "home/boxd")
+      const directory = join(home, ".boxd-plugin/warm", key)
+      mkdirSync(join(directory, ".git"), { recursive: true })
+      writeFileSync(join(directory, "warm.txt"), `${input.repo.url}\n${input.repo.ref ?? ""}\n`)
+      appendFileSync(join(home, "order.log"), "warm\n")
+      return { path: `/home/boxd/.boxd-plugin/warm/${key}` }
+    },
   }
   const services: FleetServices = {
     ...host,

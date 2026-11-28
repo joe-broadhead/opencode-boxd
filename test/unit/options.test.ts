@@ -14,6 +14,7 @@ const DEFAULTS: Options = {
   size: "2x8",
   goldenPrefix: "oc-golden",
   goldenBase: "stock",
+  warm: [],
   buildGolden: "auto",
   notices: "wake",
   autoHibernateMinutes: 120,
@@ -48,6 +49,19 @@ describe("plugin options", () => {
       goldenPrefix: "team-golden",
       goldenBase: "opencode-golden",
       goldenSetup: "/srv/setup.sh",
+    })
+    expect(
+      parseOptions({
+        warm: [
+          { repo: "https://github.com/we-the-rebel-alliance/boxd-plugin.git", ref: "main", setup: "/srv/warm.sh" },
+          { repo: "https://github.com/we-the-rebel-alliance/engineering-plugin" },
+        ],
+      }),
+    ).toMatchObject({
+      warm: [
+        { repo: "https://github.com/we-the-rebel-alliance/boxd-plugin", ref: "main", setup: "/srv/warm.sh" },
+        { repo: "https://github.com/we-the-rebel-alliance/engineering-plugin" },
+      ],
     })
     expect(parseOptions({ allowedRoots: ["/srv/work"], allowUntestedHost: true })).toMatchObject({ allowedRoots: ["/srv/work"], allowUntestedHost: true })
     for (const automation of ["auto", "on", "off"]) expect(parseOptions({ automation })).toMatchObject({ automation })
@@ -90,6 +104,12 @@ describe("plugin options", () => {
       { goldenPrefix: "x".repeat(40) },
       { goldenBase: "Not A Snapshot" },
       { goldenSetup: "relative/setup.sh" },
+      { warm: "https://github.com/o/r" },
+      { warm: [{ repo: "not a url" }] },
+      { warm: [{ repo: "https://github.com/o/r", setup: "relative/setup.sh" }] },
+      { warm: [{ repo: "https://github.com/o/r", ref: "bad ref" }] },
+      { warm: [{ repo: "https://github.com/o/r", extra: true }] },
+      { warm: [{ repo: "https://github.com/o/r" }, { repo: "https://github.com/o/r.git" }] },
       { buildGolden: "always" },
       { notices: "loud" },
       { autoHibernateMinutes: 29 },

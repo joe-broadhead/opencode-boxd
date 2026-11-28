@@ -82,7 +82,7 @@ export const CODES = {
   GOLDEN_BUILD_FAILED: {
     state: "failed",
     message: "A golden image build failed at the step the message names, or its base holds an OpenCode session.",
-    next: "Read the message; fix goldenSetup or the base, then boxd_golden again.",
+    next: "Read the message; fix goldenSetup, the repository's warm setup script, or the base, then boxd_golden again.",
   },
   GOLDEN_HAS_CREDENTIAL: {
     state: "refused",
