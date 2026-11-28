@@ -1,18 +1,53 @@
 // `events_list`: one page at a time with a bound cursor, an expired log answers one gap, another source is refused,
 // and a title shaped like a secret is refused rather than listed. It reads only the ledger: no CLI, no guest.
 import { describe, expect, test } from "bun:test"
-import { listWorks, probeWorks } from "../../src/handlers/events.js"
+import { eventOf, listWorks, probeWorks } from "../../src/handlers/events.js"
 import type { WorkEvent } from "../../src/ports.js"
 
 const owner = { id: "os-user:ana@studio", label: "ana on studio" }
 const at = (minute: number) => new Date(Date.UTC(2026, 10, 16, 10, minute)).toISOString()
 const event = (seq: number, over: Partial<WorkEvent> = {}): WorkEvent => ({ seq, at: at(seq), workId: "review-api", from: null, to: "ready", ...over })
+const change = (over: Partial<WorkEvent>): string | undefined => eventOf(event(1, over)).labels.find((label) => label.startsWith("change:"))
 const deps = (events: readonly WorkEvent[], options: { cursorExpired?: boolean; cursor?: number } = {}) => ({
   ledger: {
     eventsSince: async (q: number) => ({ events: events.filter((item) => item.seq > q), cursor: options.cursor ?? events.at(-1)?.seq ?? 0, cursorExpired: options.cursorExpired ?? false }),
   },
   identity: () => owner,
   now: () => new Date("2026-11-16T11:00:00.000Z"),
+})
+
+describe("a work event's change label", () => {
+  test("names each phase, outcome and wait that matters, and leaves the other phases unlabelled", () => {
+    const cases: ReadonlyArray<{ readonly over: Partial<WorkEvent>; readonly change: string | undefined }> = [
+      { over: { from: "ready", to: "busy" }, change: "change:started" },
+      { over: { from: null, to: "busy" }, change: "change:started" },
+      { over: { from: "busy", to: "busy" }, change: undefined },
+      { over: { from: "ready", to: "busy", needsInput: "permission" }, change: "change:waiting" },
+      { over: { from: "busy", to: "busy", needsInput: "form" }, change: "change:waiting" },
+      { over: { from: "busy", to: "idle", outcome: "completed" }, change: "change:finished" },
+      { over: { from: "busy", to: "idle", outcome: null, done: true }, change: "change:finished" },
+      { over: { from: "busy", to: "idle", outcome: "failed", done: true }, change: "change:finished" },
+      { over: { from: "busy", to: "idle", outcome: "failed", code: "RUN_FAILED" }, change: "change:failed" },
+      { over: { from: "busy", to: "idle", outcome: "aborted" }, change: "change:failed" },
+      { over: { from: "busy", to: "unreachable" }, change: "change:failed" },
+      { over: { from: "asleep", to: "gone" }, change: "change:failed" },
+      { over: { from: "busy", to: "idle", outcome: null }, change: "change:idle" },
+      { over: { from: "busy", to: "idle" }, change: "change:idle" },
+      { over: { from: "busy", to: "idle", outcome: "completed", needsInput: "form" }, change: "change:waiting" },
+      { over: { from: "idle", to: "ready" }, change: "change:idle" },
+      { over: { from: null, to: "creating" }, change: undefined },
+      { over: { from: "creating", to: "starting" }, change: undefined },
+      { over: { from: "ready", to: "asleep" }, change: undefined },
+      { over: { from: "idle", to: "closed" }, change: undefined },
+    ]
+    for (const item of cases) expect(change(item.over), JSON.stringify(item.over)).toBe(item.change)
+  })
+
+  test("keeps every existing label beside the change", () => {
+    const labels = eventOf(event(1, { from: "busy", to: "idle", outcome: "failed", code: "RUN_FAILED", needsInput: "permission", warm: true, readySeconds: 42, done: true })).labels
+    expect(labels).toEqual(["change:waiting", "phase:idle", "outcome:failed", "code:RUN_FAILED", "needs:permission", "warm:true", "ready-seconds:42", "done"])
+    expect(eventOf(event(2, { from: "ready", to: "asleep", asleepBy: "boxd_sleep" })).labels).toEqual(["phase:asleep", "asleep-by:boxd_sleep"])
+  })
 })
 
 describe("events_list", () => {

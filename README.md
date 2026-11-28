@@ -132,7 +132,7 @@ status.
 - [Capabilities](docs/capabilities.md): every method, source, action and bus event, with notes.
 - [Configuration](docs/configuration.md): every option and examples.
 - [Accounts](docs/accounts.md): no plugin-held accounts, and the local identity probe reports.
-- [Automations](docs/automations.md): the timer recipe for the works source.
+- [Automations](docs/automations.md): the timer and event recipes for the works source.
 - [Architecture](docs/architecture.md): layers, the provider client, caches and host APIs.
 - [Security](docs/security.md): what leaves the machine, redaction and the drop guard.
 - [plugin-contract](https://github.com/we-the-rebel-alliance/plugin-contract): the manifest, accounts, methods and access

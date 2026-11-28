@@ -45,6 +45,11 @@ None.
   to the plugin, the source and the local identity; it makes no boxd call and never wakes a machine. `job` reads one
   work or many live.
   `read` reads one file or the guest's server log without a harvest. `probe` says whose ledger this is.
+- **Work events.** Each event carries at most one `change:` label, so an automation keys on one word: `change:started`
+  when a work goes `busy`, `change:waiting` when it waits on a person, `change:finished` when its run completes or the
+  guest declares it done, `change:failed` when its run fails or stops, or it is `unreachable` or `gone`, and
+  `change:idle` when it is `idle` with no outcome or `ready`. An event that fits none, such as `creating`, `starting`,
+  `asleep` or `closed`, carries no `change:` label. The existing `phase:`, `outcome:`, `needs:` and `done` labels stay.
 - **The works list.** `status` with `{ list: "works" }` answers the `boxd.works.list` snapshot: at most 50 works, newest
   activity first, as the contract's `list` output.
 - **Machine-hours.** Each work's record carries the time its machine existed and the time it ran, in seconds, counted by
