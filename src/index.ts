@@ -99,9 +99,9 @@ export function createBoxdPlugin(seam: BoxdSeam = {}) {
         watcher.dispose,
       ]
       const registration = await register(ctx, manifest, createHandlers({ runs, selectors, source, status }))
-      // A work that becomes done appends its event; this tells every subscriber that the works source changed.
+      // A tick or sweep that appends or tails a work event tells every subscriber that the works source changed.
       nudge = async () => {
-        await registration.bus.emit("changed", { capability: CHANGED_CAPABILITY, account: "default", reason: "done" })
+        await registration.bus.emit("changed", { capability: CHANGED_CAPABILITY, account: "default", reason: "phase" })
       }
       stops.push(registration.dispose)
       stops.push(
