@@ -62,6 +62,12 @@ None.
   `byState` (`running`, `starting`, `standby`, `hibernated`, `stopped`, `other`), `works` (the machines this ledger's
   open works name) and each region's own row in `perRegion`. When the limit cannot be read the counts still show and
   `limit` and `free` are null; when the listing cannot be read the report says so instead of showing a zero.
+- **The done signal.** A coordinator tells each work to finish with the guest's `boxd_done({ summary, prs })` tool: a
+  short summary and its pull request URLs or `owner/repo#n`. `status` and `job` show `done: true` once the guest declares
+  the whole task, subagents included, finished; `job` carries `summary` and `prs`. The manifest names the guest tool under
+  `guestTools`, so the static tool check accepts its name in the skill. The works list shows `done` on each work, and a
+  done, unsaved work appears in `attention`. `outcome: completed` without `done` means the turn ended, not the task; a
+  new `submit` clears the report.
 - **Changes.** `ensure` makes a work exist and converges it; with `repo` it starts from the repository's warm image when
   one exists, and its answer says `warm` and, for a work this version made, once ready, `readySeconds`. `submit` admits a
   prompt; `harvest` exports the session tree and copies the files back; `sleep` hibernates; `resume` wakes or rebuilds;

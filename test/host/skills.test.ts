@@ -47,6 +47,11 @@ test("the real host registers every skills/<name>/SKILL.md with the YAML descrip
       expect(expected.trim()).not.toBe("")
       for (const marker of MARKERS) expect(expected.trim()).not.toBe(marker)
       expect(String(skill!.description)).toBe(expected)
+      expect(expected.length).toBeLessThanOrEqual(300)
+      if (id === "boxd-sessions") {
+        expect(String(skill!.content)).toContain("boxd_done({ summary, prs })")
+        expect(String(skill!.content)).toContain("done: true")
+      }
     }
 
     // A registered skill under the plugin's skills/ tree must have its file; a file that is not registered already

@@ -1,11 +1,12 @@
 // The boxd-sessions skill: its name, its description within the fixed-context budget, and the methods it names.
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { manifest } from "../../src/manifest.js"
 import { readSkills } from "../../src/skills.js"
 
+const ROOT = join(import.meta.dir, "..", "..")
 const methods = new Set(Object.keys(manifest.methods))
 const roots: string[] = []
 
@@ -33,15 +34,37 @@ describe("the boxd-sessions skill", () => {
     expect(skill.description.length).toBeGreaterThan(30)
     expect(skill.description.length).toBeLessThanOrEqual(300)
     expect(skill.content.length).toBeGreaterThan(200)
-    expect(skill.path).toBe(join(import.meta.dir, "..", "..", "skills", "boxd-sessions", "SKILL.md"))
+    expect(skill.path).toBe(join(ROOT, "skills", "boxd-sessions", "SKILL.md"))
   })
 
   test("names only declared methods, as tools.boxd.<method>, and the real fields", () => {
     const text = readSkills()[0]!.content
     for (const [, method] of text.matchAll(/tools\.boxd\.([a-z][a-z0-9_]*)/g)) expect({ method, known: methods.has(method!) }).toEqual({ method, known: true })
     for (const field of ["workId", "works", "select", "localDirectory", "since"]) expect(text).toContain(field)
-    // No tool reference outside the namespace.
-    expect(text.match(/\bboxd_([a-z_]+)\b/g) ?? []).toEqual([])
+    // No tool reference outside the namespace, except the guest tools the manifest declares under guestTools.
+    const guestTools = new Set((manifest.guestTools ?? []).map((name) => `boxd_${name}`))
+    expect([...guestTools]).toContain("boxd_done")
+    expect((text.match(/\bboxd_([a-z_]+)\b/g) ?? []).filter((name) => !guestTools.has(name))).toEqual([])
+  })
+
+  test("teaches the done signal from the guest tool, not a text marker", () => {
+    const text = readSkills()[0]!.content
+    expect(text).toContain("boxd_done({ summary, prs })")
+    expect(text).toContain("done: true")
+    expect(text).toContain("outcome: completed")
+    expect(text).toContain("summary")
+    expect(text).toContain("prs")
+    const docs = [
+      join(ROOT, "README.md"),
+      join(ROOT, "AGENTS.md"),
+      ...readdirSync(join(ROOT, "docs")).filter((name) => name.endsWith(".md")).map((name) => join(ROOT, "docs", name)),
+      join(ROOT, "skills", "boxd-sessions", "SKILL.md"),
+    ]
+    for (const file of docs) expect(readFileSync(file, "utf8")).not.toMatch(/\bLANE-DONE\b/)
+    const capabilities = readFileSync(join(ROOT, "docs", "capabilities.md"), "utf8")
+    expect(capabilities).toContain("boxd_done({ summary, prs })")
+    expect(capabilities).toContain("done: true")
+    expect(capabilities).toContain("outcome: completed")
   })
 
   test("states the account, the access levels and the error form", () => {

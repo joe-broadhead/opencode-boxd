@@ -448,6 +448,9 @@
         ]
       }
     },
+    "guestTools": [
+      "done"
+    ],
     "sources": [
       {
         "id": "boxd.works",
@@ -523,7 +526,7 @@
     "@opencode/sdk": "2.4.1",
     "@types/bun": "1.4.4",
     "@types/node": "24.19.2",
-    "@we-the-rebel-alliance/plugin-contract": "github:we-the-rebel-alliance/plugin-contract#v0.0.0",
+    "@we-the-rebel-alliance/plugin-contract": "github:we-the-rebel-alliance/plugin-contract#252e19fb9f7eedf3cdd37bb8ea2859fbaa162cd0",
     "esbuild": "0.28.2",
     "typescript": "5.9.3",
     "yaml": "2.9.1"
