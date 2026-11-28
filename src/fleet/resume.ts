@@ -146,6 +146,9 @@ async function rebuild(
   context: ItemContext,
   op: OpContext,
 ): Promise<{ readonly target: ChangeTarget; readonly record: WorkRecord; readonly landed: Landed } | { readonly building: string }> {
+  if (record.slot === true) {
+    throw boxdError("SLOT_UNSUPPORTED", `Rebuilding ${record.machine} would move the work off its shared machine. Acting on one slot is not available until boxd-plugin#99 lands.`)
+  }
   const { boxd, options, hostVersion } = machines.services
   const current = imageName(options.goldenPrefix, hostVersion, record.size)
   const snapshots = await machines.golden.images(op)

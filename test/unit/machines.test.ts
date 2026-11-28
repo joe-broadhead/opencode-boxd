@@ -1623,4 +1623,20 @@ describe("boxd_ensure: a slot on a shared machine", () => {
     const other = await errorOf(k.runs.boxd_ensure({ workId: "slot", machine: "other" }, k.call()))
     expect(other).toMatchObject({ code: "NAME_INVALID", details: { field: "machine" } })
   })
+
+  test("resume refuses to rebuild a slot work onto a machine of its own, until #99", async () => {
+    const k = await kit()
+    await k.golden("fra")
+    const made = (await k.runs.boxd_ensure({ workId: "docs", machine: "common", region: "fra" }, k.call())) as EnsureResult
+    k.counter.fake.update((state) => {
+      state.machines.find((machine) => machine.name === "oc-shared-common")!.status = "destroyed"
+    })
+    k.reset()
+    const refused = await errorOf(k.runs.boxd_resume({ workId: "docs" }, k.call()))
+    expect(refused).toMatchObject({ code: "SLOT_UNSUPPORTED" })
+    expect(refused.what).toContain("#99")
+    expect(k.calls().some((entry) => entry.startsWith("machine new"))).toBe(false)
+    expect(k.counter.fake.read().machines.filter((machine) => machine.name === "oc-docs")).toEqual([])
+    expect(await k.record("docs")).toMatchObject({ slot: true, machine: "oc-shared-common", machineId: made.machineId })
+  })
 })
