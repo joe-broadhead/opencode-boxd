@@ -141,6 +141,8 @@ export function eventOf(event: WorkEvent): SourceEvent {
       ...(event.code ? [`code:${event.code}`] : []),
       ...(event.asleepBy ? [`asleep-by:${event.asleepBy}`] : []),
       ...(event.needsInput ? [`needs:${event.needsInput}`] : []),
+      ...(event.warm !== undefined ? [`warm:${event.warm}`] : []),
+      ...(event.readySeconds !== undefined ? [`ready-seconds:${event.readySeconds}`] : []),
     ],
   })
 }

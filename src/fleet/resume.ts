@@ -47,6 +47,7 @@ import {
 import { imageName, STILL_BUILDING } from "./golden.js"
 import { listCall, runList, runOne, type ItemContext } from "./list.js"
 import { inUseOf, pickRegion, regionsText } from "./regions.js"
+import { isWarmImage } from "./warm.js"
 
 const WORK_ID = /^[a-z][a-z0-9-]{0,24}$/
 /** Where the helper's `import` reads exports from: beside the helper, under its own folder. */
@@ -170,7 +171,7 @@ async function rebuild(
           })
   // The recorded image only while it is this laptop's OpenCode's: the transcript must import into the same version.
   const recorded = record.image.opencode === hostVersion && snapshots.some((row) => row.region === want && row.name === record.image.name)
-  const image = recorded ? record.image.name : current
+  let image = recorded ? record.image.name : current
   // A picked region is reserved at once, and claimed in the record before anything is built or created, so a second
   // call makes no second machine.
   let reserved: ((landed: boolean) => void) | undefined = record.region === null ? machines.inFlight.reserve(want) : undefined
@@ -183,6 +184,9 @@ async function rebuild(
       reserved?.(false)
       reserved = undefined
     }
+    // A warm image is never built here. A concurrent claim can land in another region than the one whose warm image was
+    // recorded, and then the work falls back to the version's image, as ensure does.
+    if (isWarmImage(options.goldenPrefix, image) && !snapshots.some((row) => row.region === region && row.name === image)) image = current
     if (!snapshots.some((row) => row.region === region && row.name === image)) {
       // A landed work is rebuilt in its own region even outside the allowlist: building the image there is part of that
       // recovery, not new placement. A claim that never landed was refused above, before anything was claimed here.
@@ -203,12 +207,15 @@ async function rebuild(
   // The new id at once; the session is imported next, so the old root is cleared until it is.
   const next = await patch(machines, record.workId, op, (now) => {
     const base = now ?? record
-    const { pendingCreate: _created, slept: _slept, ...rest } = base
+    const { pendingCreate: _created, slept: _slept, warm: wasWarm, ...rest } = base
+    // A rebuild from the version's image is no longer a warm one; its record says so from now on.
+    const warm = landed.created ? isWarmImage(options.goldenPrefix, image) : wasWarm === true
     return {
       ...rest,
       region,
       machineId: landed.info.id,
       ...(landed.created ? { image: { name: image, opencode: hostVersion }, session: base.session?.notify ? { notify: base.session.notify } : {} } : {}),
+      ...(warm ? { warm: true } : {}),
       ...(lease ? { lease } : {}),
     } as WorkRecord
   })
@@ -289,8 +296,12 @@ export async function resumeOne(machines: Machines, workId: string, context: Ite
         }
       }
     }
-    if (rebuilt) await recordPhase(machines, workId, "gone", current.session?.rootId ? "idle" : "ready", op)
-    else if (woke) await recordPhase(machines, workId, "asleep", current.session?.rootId ? "idle" : "ready", op)
+    const warm = current.warm === true
+    const readySeconds =
+      current.tracked === true && current.readyAt !== undefined ? Math.max(0, Math.round((Date.parse(current.readyAt) - Date.parse(current.createdAt)) / 1000)) : undefined
+    const facts = { warm, ...(readySeconds !== undefined ? { readySeconds } : {}) }
+    if (rebuilt) await recordPhase(machines, workId, "gone", current.session?.rootId ? "idle" : "ready", op, current.session?.rootId ? { warm } : facts)
+    else if (woke) await recordPhase(machines, workId, "asleep", current.session?.rootId ? "idle" : "ready", op, current.session?.rootId ? { warm } : facts)
     await patch(machines, workId, op, (now) => ({ ...(now ?? current), touchedAt: new Date(machines.now()).toISOString() }))
 
     return {

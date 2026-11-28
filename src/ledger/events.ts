@@ -65,6 +65,8 @@ export class EventLog {
         ...(event.code !== undefined ? { code: isCode(event.code) ? event.code : "RUN_FAILED" } : {}),
         ...(event.asleepBy !== undefined ? { asleepBy: event.asleepBy } : {}),
         ...(event.needsInput !== undefined ? { needsInput: event.needsInput } : {}),
+        ...(event.warm !== undefined ? { warm: event.warm } : {}),
+        ...(event.readySeconds !== undefined && Number.isSafeInteger(event.readySeconds) && event.readySeconds >= 0 ? { readySeconds: event.readySeconds } : {}),
         ...(event.reading !== undefined ? { reading: { residentGiB: event.reading.residentGiB, load1: event.reading.load1 } } : {}),
       }
       // The fence: a sequence number is handed out only while this process still holds the log's lock.

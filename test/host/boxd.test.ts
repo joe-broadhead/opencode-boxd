@@ -4,6 +4,7 @@
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
+import { warmImageName } from "../../src/fleet/warm.js"
 import { agentRules, attempt, cleanup, effect, HOST_VERSION, session, startHost, statusThroughRpc, until } from "./harness.js"
 
 setDefaultTimeout(120_000)
@@ -128,6 +129,28 @@ describe("the plugin on OpenCode 2.4.1", () => {
       // exec asks even at all: an effect that narrows the level.
       expect(await effect(host, "build", "boxd.exec")).toBe("ask")
       expect(await effect(host, "build", "boxd.sleep")).toBe("allow")
+    } finally {
+      await host.close()
+    }
+  })
+
+  test("ensure with a repo starts a work from the repository's warm image", async () => {
+    const host = await startHost()
+    try {
+      const workId = "warm-host"
+      const repo = "https://github.com/we-the-rebel-alliance/boxd-plugin"
+      const image = warmImageName("oc-golden", repo, HOST_VERSION, "2x8")
+      // The image carries the work's checkout, so the guest's setup reaches ready without a clone.
+      const disk = join(host.ledger, "..", "warm-disk")
+      mkdirSync(join(disk, "home", "boxd", "work", workId, ".git"), { recursive: true })
+      host.boxd.fake.snapshot({ region: "fra", name: image, disk })
+      const sessionID = await session(host, "build")
+      const answer = await attempt(host, sessionID, "build", "boxd_ensure", "reject", { workId, repo, region: "fra" })
+      expect(answer.ok).toBe(true)
+      expect(answer.output).toMatchObject({ state: "ready", workId, region: "fra", image, warm: true, created: true })
+      expect(typeof answer.output?.["readySeconds"]).toBe("number")
+      expect(host.boxd.calls().find((entry) => entry.startsWith(`machine new oc-${workId}`))).toContain(`--from-snapshot ${image}`)
+      expect(host.boxd.calls().some((entry) => entry.startsWith("machine new oc-gb-"))).toBe(false)
     } finally {
       await host.close()
     }

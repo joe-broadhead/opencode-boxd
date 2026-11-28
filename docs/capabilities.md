@@ -54,9 +54,11 @@ None.
   The cost block sums them for this ledger, for today from local midnight, and since the oldest open work was created.
   The hours are computed from the ledger alone, so they show without an owner's sign-in; the money figures stay `null`
   without one.
-- **Changes.** `ensure` makes a work exist and converges it; `submit` admits a prompt; `harvest` exports the session
-  tree and copies the files back; `sleep` hibernates; `resume` wakes or rebuilds; `reassign` moves an unstarted work's
-  machine to a new id; `golden` builds, lists or prunes golden images. Every one of them emits `changed`.
+- **Changes.** `ensure` makes a work exist and converges it; with `repo` it starts from the repository's warm image when
+  one exists, and its answer says `warm` and, for a work this version made, once ready, `readySeconds`. `submit` admits a
+  prompt; `harvest` exports the session tree and copies the files back; `sleep` hibernates; `resume` wakes or rebuilds;
+  `reassign` moves an unstarted work's machine to a new id; `golden` builds, lists or prunes golden images. Every one of
+  them emits `changed`.
 - **Orphans.** The fleet status classifies every machine as a work here, another ledger's work, kept by a `keep` selector,
   a golden builder, or an orphan with its reason and whether the plugin may act on it. `ensure` with
   `{ select: "orphans" }` adopts every actionable orphan: it reads the guest's `describe`, writes a record and sets this
