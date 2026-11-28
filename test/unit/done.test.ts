@@ -103,21 +103,27 @@ describe("the done report in a work", () => {
     expect(seen.summary).toBeUndefined()
   })
 
-  test("an idle event carries done, the record keeps it, and the watcher nudges the works source once", async () => {
+  test("an idle event carries done, the record keeps it, and the watcher nudges the works source for every event", async () => {
     await world.work("watched", { busy: true })
     const done = report(at())
     reportsDone(world, "watched", done)
-    const changed: string[] = []
-    const watcher = createWatch({ ...world.services }, { autoStart: false, changed: (workId) => void changed.push(workId) })
+    let changed = 0
+    const watcher = createWatch({ ...world.services }, {
+      autoStart: false,
+      changed: () => {
+        changed += 1
+      },
+    })
     const events: Array<{ workId: string; to: string; done?: true }> = []
     watcher.watch.subscribe((event) => events.push({ workId: event.workId, to: event.to, ...(event.done ? { done: event.done } : {}) }))
     await watcher.tick()
     expect(events).toEqual([{ workId: "watched", to: "busy" }])
+    expect(changed).toBe(1)
     world.guest.complete("ses_watched")
     world.clock.now = new Date(world.clock.now.getTime() + 61_000)
     await watcher.tick()
     expect(events.at(-1)).toEqual({ workId: "watched", to: "idle", done: true })
-    expect(changed).toEqual(["watched"])
+    expect(changed).toBe(2)
     expect((await world.ledger.get("watched", world.context("read")))?.done).toEqual(done)
     await watcher.dispose()
   })

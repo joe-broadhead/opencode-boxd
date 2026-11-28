@@ -35,7 +35,8 @@ export default {
   `CURSOR_INVALID`. A log rotation answers `gap: { reason: "expired", since }` and starts again at the oldest kept event.
 - `events_list` never calls boxd and never wakes a machine. A change that needs a decision is a `boxd_job` or `/boxd`
   read, not an event's text.
-- A write method emits `changed`, so an app can also re-read on the bus event instead of polling.
+- A write method, and the watcher for every work event it appends or tails, emits `changed`, so an app can also re-read
+  on the bus event instead of polling.
 
 ## The event recipe
 

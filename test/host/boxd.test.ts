@@ -82,6 +82,38 @@ describe("the plugin on OpenCode 2.4.1", () => {
     }
   })
 
+  test("a work that goes busy nudges the works source on the bus", async () => {
+    const host = await startHost()
+    const abort = new AbortController()
+    const changed: Array<{ type: string; data?: { reason?: string } }> = []
+    const client = host.client as unknown as {
+      event: { subscribe: (options: { types: string[]; signal: AbortSignal }) => AsyncIterable<{ type: string; data?: { reason?: string } }> }
+    }
+    const subscription = (async () => {
+      try {
+        for await (const event of client.event.subscribe({ types: ["rpc.boxd.changed"], signal: abort.signal })) changed.push(event)
+      } catch {
+        // The subscription ends when the test aborts it.
+      }
+    })()
+    try {
+      // Let the watcher seed from the empty log first, so the work's events are news it tails rather than its start.
+      await Bun.sleep(2_000)
+      const sessionID = await session(host, "build")
+      const ready = await attempt(host, sessionID, "build", "boxd_ensure", "reject", { workId: "nudged" })
+      expect(ready.ok).toBe(true)
+      const sent = await attempt(host, sessionID, "build", "boxd_submit", "reject", { workId: "nudged", text: "Start the work." })
+      expect(sent.ok).toBe(true)
+      // The watcher's next tick appends the phase event and nudges the bus once, after the fake guest is busy.
+      const nudged = await until("the watcher nudges the bus for a work's phase", async () => changed.find((event) => event.data?.reason === "phase"), 90_000)
+      expect(nudged).toMatchObject({ type: "rpc.boxd.changed", data: { capability: "boxd.works", account: "default", reason: "phase" } })
+    } finally {
+      abort.abort()
+      await subscription
+      await host.close()
+    }
+  })
+
   test("has parity with v0.1.4: every old tool, the renamed skill, the /boxd command, and the documented removals", async () => {
     const host = await startHost()
     try {
