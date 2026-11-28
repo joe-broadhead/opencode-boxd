@@ -76,8 +76,8 @@ export function classifyMachines(machines: readonly MachineRow[], records: reado
     })
 }
 
-/** Every machine's class counted, with the orphans listed and capped, actionable first. */
-export function machineSummary(classified: readonly Classified[], limit: number): MachineSummary {
+/** Every machine's class counted, with the orphans listed and capped, actionable first; the limit figures are the caller's. */
+export function machineSummary(classified: readonly Classified[], limit: number): Pick<MachineSummary, "counts" | "orphans" | "more"> {
   const counts: Record<MachineClass, number> = { work: 0, "other-ledger": 0, kept: 0, golden: 0, orphan: 0 }
   const found: OrphanMachine[] = []
   for (const item of classified) {

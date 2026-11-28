@@ -162,7 +162,7 @@ async function rebuild(
         ? refuseClaim(claimed, allowed)
         : pickRegion({
             choice: options.region,
-            limits: await boxd.machineLimit(op),
+            limits: (await boxd.machineLimit(op)).regions,
             keepFree: options.keepFree,
             inFlight: machines.inFlight,
             used,
